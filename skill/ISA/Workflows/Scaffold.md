@@ -20,8 +20,8 @@ Generate a fresh ISA from a prompt at a specified effort tier. The output is a p
 ## Output
 
 A markdown file at one of:
-- `~/.claude/isa/{slug}/ISA.md` — the ISA (slug = `YYYYMMDD-HHMMSS_kebab-task-description`)
-- `~/.claude/isa/{slug}/_ephemeral/<feature>.md` — when `ephemeral_feature` is set
+- `~/.isa/<project>/{slug}/ISA.md` — the ISA (slug = `YYYYMMDD-HHMMSS_kebab-task-description`)
+- `~/.isa/<project>/{slug}/_ephemeral/<feature>.md` — when `ephemeral_feature` is set
 
 ## Procedure
 
@@ -211,7 +211,7 @@ When `ephemeral_feature` is set:
    - `## Test Strategy` entries matching those ISCs
    - `## Decisions` filtered to entries mentioning this feature's ISC IDs (optional)
    - No `## Verification` section yet — Append creates it with the first entry (empty sections never appear)
-4. Write to `~/.claude/isa/{slug}/_ephemeral/<feature>.md`.
+4. Write to `~/.isa/<project>/{slug}/_ephemeral/<feature>.md`.
 5. Add a header comment: `<!-- EPHEMERAL FEATURE FILE — derived from <master-isa-path>. Reconcile via Skill("ISA", "reconcile <this-path> → <master-path>"). Do not hand-edit master from this file. -->`
 
 ## Failure modes

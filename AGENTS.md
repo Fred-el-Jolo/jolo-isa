@@ -7,7 +7,8 @@ This folder is a port of the **ISA (Ideal State Artifact) skill** out of LifeOS,
 1. **Port the ISA skill.** One markdown file (`ISA.md`) per task states what "done" means as testable criteria. The model writes it at the start and keeps it updated as the work goes.
 2. **Keep the core ISA rules** (file shape, lifecycle, the five workflows) and the specs the skill directly depends on. Those specs are refined later.
 3. **Drop all LifeOS infrastructure:** the Pulse dashboard, voice notifications, the `PROJECTS.md` routing, the LifeOS status line, the router and nudge hooks, and the `MEMORY/WORK` paths.
-4. **Future, not built yet:**
+4. **Enforce it in every session.** A skill loads only when the model decides to, so hooks do the deciding: Claude Code hooks (user scope) and a pi extension call one shared engine that refuses mutations until an ISA exists and passes the gate, lints every ISA edit, and refuses once per prompt to end a turn while the ISA is stale. See § Enforcement.
+5. **Future, not built yet:**
    - A: memory. Learn from completed ISAs and reuse those learnings when scaffolding new ones, with the user approving each item. See `future/MEMORY.md`.
    - B: an "ISA status" status line. See `future/STATUSLINE.md`.
    - C (possible, not planned): project ISAs, a living per-repo spec. Removed from the skill; see `future/project-isa/`.
@@ -27,8 +28,21 @@ isa-skill-export/
 │       ├── IsaSystem.md          ← conceptual frame
 │       ├── IsaHierarchy.md       ← multi-ISA trees (rare, load on demand)
 │       └── IsaLoop.md            ← the work loop around the ISA (distilled from the LifeOS Algorithm)
+├── runtime/                      ← the engine, installed to ~/.local/share/isa/runtime (Python stdlib only)
+│   ├── bin/isa                   ← CLI launcher, symlinked to ~/.local/bin/isa
+│   └── isa/
+│       ├── engine.py             ← harness-neutral decisions: session_start, prompt, pre_tool, post_tool, stop
+│       ├── classify.py           ← read / write / unknown for tool calls and Bash commands
+│       ├── lint.py               ← the gate (same checks as CheckCompleteness can decide mechanically)
+│       ├── state.py              ← ~/.isa layout, project keys, per-session state, prompt log
+│       ├── yamlish.py            ← the YAML subset ISA files use (no PyYAML)
+│       ├── cli.py                ← `isa ls|new|where|lint|hook`; the Claude Code adapter lives here
+│       └── protocol.md           ← the text injected into every session
+├── adapters/pi/isa.ts            ← pi extension → `isa hook pi` (installed to ~/.pi/agent/extensions/)
+├── install.py                    ← install / --uninstall / --dry-run for both harnesses
+├── tests/                        ← unit + end-to-end tests of the hooks, classifier, installer, YAML, lint parity
 ├── tools/
-│   └── lint_isa.py               ← mechanical gate check for ISA files (dev only, not installed; needs PyYAML)
+│   └── lint_isa.py               ← wrapper around runtime/isa/lint.py (repo convenience)
 └── future/
     ├── MEMORY.md                 ← Future A: how LifeOS learns from ISAs today + target design
     ├── STATUSLINE.md             ← Future B: data contract for an ISA status line
@@ -39,28 +53,43 @@ isa-skill-export/
 ## Install on a fresh machine
 
 ```bash
-mkdir -p ~/.claude/skills ~/.claude/isa
-cp -r skill/ISA ~/.claude/skills/ISA
+python3 install.py --dry-run   # see what changes
+python3 install.py             # install / update (idempotent)
+python3 install.py --uninstall # remove everything except the ISAs in ~/.isa
 ```
 
-Then start Claude Code. The skill loads from its `description` (it triggers on "ISA", "ideal state", "definition of done", …). You can also call it directly: `Skill("ISA", "scaffold from prompt: <...> at tier E3")`.
+Needs `python3` (standard library only) and, for pi, the pi agent at `~/.pi/agent`. The installer copies the runtime and the skill, links `~/.local/bin/isa`, merges hook entries and permissions (`Bash(isa:*)`, `Read`/`Edit(~/.isa/**)`, `Read(~/.claude/skills/ISA/**)`, `additionalDirectories: ~/.isa`) into `~/.claude/settings.json` — keeping every other entry and backing the file up first — and copies the pi extension. New sessions are gated from the start; a running Claude Code session picks the hooks up live.
 
-The skill has no hooks, no scripts, and no other dependencies. It is prompts only.
-
-Optionally, add one line to `~/.claude/CLAUDE.md` so the loop is used on real work without having to ask each time:
-
-```markdown
-For non-trivial work, write done down first: use the ISA skill (`~/.claude/skills/ISA/References/IsaLoop.md`) and keep the ISA true as the work proceeds.
-```
+The skill still loads from its description, and can be called directly (`Skill("ISA", "scaffold from prompt: <...> at tier E3")`), but nothing depends on that any more: the injected protocol tells the model to read `SKILL.md` whenever it writes an ISA.
 
 ## Where ISA files go
 
 | Kind | Path |
 |------|------|
-| Task ISA | `~/.claude/isa/{YYYYMMDD-HHMMSS_kebab-slug}/ISA.md` |
-| Ephemeral slice | `~/.claude/isa/{slug}/_ephemeral/<feature>.md` |
+| Task ISA | `~/.isa/<project>/{YYYYMMDD-HHMMSS_kebab-slug}/ISA.md` |
+| Ephemeral slice | `~/.isa/<project>/{slug}/_ephemeral/<feature>.md` |
+| Hook state | `~/.isa/_state/` (sessions, raw prompt log, `errors.log`) |
 
-This replaces LifeOS's `~/.claude/LIFEOS/MEMORY/WORK/{slug}/ISA.md`. It's a decision I made for this export and it's easy to change: search and replace `~/.claude/isa/` in `skill/`.
+`<project>` is the git work-tree root (or the directory) relative to `$HOME`, with `/` → `-`: `~/dev/jolo-isa` → `dev-jolo-isa`. `isa ls` lists the current project's ISAs, `isa ls --all` every project's. This replaces LifeOS's `~/.claude/LIFEOS/MEMORY/WORK/{slug}/ISA.md`. The first export used `~/.claude/isa/`, but Claude Code treats everything under `~/.claude/` as sensitive and blocks writes there, so the home moved out. Override with `ISA_HOME`.
+
+## Enforcement
+
+One engine (`runtime/isa/engine.py`), two thin adapters. Every decision is deterministic code — no model calls in hooks — and each hook runs in < 50 ms.
+
+| Step | Claude Code hook | pi event | What the engine does |
+|------|------------------|----------|----------------------|
+| Protocol known | `SessionStart` (every source) | `before_agent_start`, first run | Injects `protocol.md` (~20 lines), the session's bound ISA and this project's open ISAs. After compaction it re-injects the Goal and open ISCs. |
+| Verbatim goal | `UserPromptSubmit` | `before_agent_start` | Logs the raw prompt. `stated_goal` must be a substring of a logged prompt (checked once, then remembered next to the ISA). |
+| Done written first | `PreToolUse` (all tools) | `tool_call` → `block` | Refuses any `write`/`unknown` call until an ISA is bound **and** passes the articulation lint. Reads, ISA-folder writes, and temp-dir writes outside the project always pass. |
+| Binding | `PostToolUse` | `tool_result` | Writing/editing `~/.isa/**/ISA.md` binds it to the session (no session id reaches the model). |
+| ISA kept true | `PostToolUse` | `tool_result` → appended text | Lints every ISA edit and feeds the errors back; nudges every 5 project changes without an ISA update; nudges on failed commands. |
+| No false "done" | `Stop` (exit 2) | `agent_before_settle` → `continue: true` | Blocks once per prompt if project files changed after the last ISA edit, or the ISA fails lint / the close gate. The second time it lets the turn end with a visible warning. |
+
+Classification (`classify.py`): file tools are judged by path (project / temp / ISA folder); Bash commands are tokenized and each segment judged — an allowlist of read-only commands and read-only `git`/`gh` subcommands, known mutators (`rm`, `git commit`, `npm install`, redirects to project files, `sed -i`, …), and everything else `unknown` (gated before an ISA exists, not counted as staleness). MCP tools are judged by verb in the tool name. A project that lives under `/tmp` is still a project. The agent's own memory folder (`~/.claude/projects/*/memory/`) is agent state, like the ISA folder: never gated and never counted as a change, even when the project is `~/.claude` itself.
+
+Failure policy: a hook that crashes fails **open** with a user-visible message and a line in `~/.isa/_state/errors.log` (a gate bug must not stop all work on the machine). pi blocks tools when a `tool_call` handler throws, so the extension catches its own errors.
+
+There is no self-exemption: the model can't switch the gate off. A trivial change costs an E1 ISA (`## Goal` + `## Criteria` with one `Anti:`).
 
 ## What was kept, changed, dropped
 
@@ -110,9 +139,9 @@ This replaces LifeOS's `~/.claude/LIFEOS/MEMORY/WORK/{slug}/ISA.md`. It's a deci
 
 Pulse and `work.json`; voice; `PROJECTS.md` routing; TELOS (Scaffold now draws Principles from "the user's stated values and past preferences"); the `[arch]` decision harvest; optimize/ideate/loop modes; cross-vendor audit agents (Forge/Cato/Grok), now "an independent second look"; all LifeOS skill bindings in probes (browser automation, hardening, evals); `IsaHtmlMirror.md` and `ISARender.ts` (the HTML mirror); the `CreateSkill` cross-reference.
 
-## Hooks: how LifeOS wired the ISA, and what I ported (nothing)
+## Hooks: how LifeOS wired the ISA (for reference)
 
-No hook ever called the skill, and the skill never called a hook. They only met at the file path `…/MEMORY/WORK/<slug>/ISA.md`. None of these hooks are ported:
+No hook ever called the skill, and the skill never called a hook. They only met at the file path `…/MEMORY/WORK/<slug>/ISA.md`. None of these hooks were ported as-is; § Enforcement is the redesign (it covers the PreCompact/RestoreContext and LoadContext roles, and replaces the nudges and the VerificationGate idea with the Stop check):
 
 | Hook (LifeOS `settings.json`) | Event | Role | Why it's not ported |
 |-----|-------|------|------------------|
@@ -170,6 +199,8 @@ Exported 2026-09-22 from a LifeOS 7.1.1 install:
 
 ## Working rules for this folder
 
-- The only thing that installs is `skill/ISA/`. `future/` and this file are design notes.
+- What installs: `skill/ISA/`, `runtime/`, `adapters/pi/isa.ts` (via `install.py`). `future/` and this file are design notes.
+- Run the tests before installing: `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install` and `node --test adapters/pi/test/extension.test.ts`. With PyYAML on `PYTHONPATH`, also `tests/test_yamlish.py` and `tests/test_lint_parity.py`.
+- Keep `runtime/` standard-library only (`python3 tests/check_stdlib.py runtime/`).
 - Keep it free of LifeOS: no `LIFEOS/` paths, no `localhost:31337`, no personal data. Check with `rg -n -i 'lifeos|31337|MEMORY/WORK|\btelos\b|\bpulse\b' skill/`. Expected: zero hits. Provenance lives only in this file (§ Source provenance), never inside `skill/`.
 - When the skill's prose and `References/IsaFormat.md` disagree, fix both on purpose and note it here.

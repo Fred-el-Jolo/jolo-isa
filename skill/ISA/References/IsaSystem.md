@@ -39,7 +39,7 @@ The first three are author-stated. **Anti-criteria are derived** — they are ho
 
 ## Where ISAs live
 
-One ISA per piece of work, at `~/.claude/isa/{slug}/ISA.md`: created at the start, closed at `phase: complete`. A long-lived per-repo "project ISA" is a possible future feature, not supported now.
+One ISA per piece of work, at `~/.isa/<project>/{slug}/ISA.md`: created at the start, closed at `phase: complete`. A long-lived per-repo "project ISA" is a possible future feature, not supported now.
 
 ## Ephemeral Feature Files
 

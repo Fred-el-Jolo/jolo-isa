@@ -40,8 +40,8 @@ Load-bearing: - [ ] ISC-N: Email arrives in primary inbox (not Promotions/Spam) 
 
 ## Filename and Location
 
-- **ISA:** `~/.claude/isa/{slug}/ISA.md` — one per piece of work (a long-lived per-repo project ISA is not supported; possible future feature). Created at the start of the work (`mkdir -p`), closed at `phase: complete`.
-- **Ephemeral feature slices:** `~/.claude/isa/{slug}/_ephemeral/<feature>.md`. Archived to `_ephemeral/.archive/<feature>-<YYYY-MM-DD>.md` after Reconcile.
+- **ISA:** `~/.isa/<project>/{slug}/ISA.md` — one per piece of work (a long-lived per-repo project ISA is not supported; possible future feature). Created at the start of the work (`mkdir -p`), closed at `phase: complete`.
+- **Ephemeral feature slices:** `~/.isa/<project>/{slug}/_ephemeral/<feature>.md`. Archived to `_ephemeral/.archive/<feature>-<YYYY-MM-DD>.md` after Reconcile.
 
 ## Frontmatter (YAML)
 

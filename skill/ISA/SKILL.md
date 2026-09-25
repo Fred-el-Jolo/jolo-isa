@@ -25,7 +25,9 @@ The ISA is a single markdown file with YAML frontmatter and a locked fourteen-se
 
 ## Where ISA files live
 
-Every ISA is a **task ISA**: `~/.claude/isa/{slug}/ISA.md`, with `slug = YYYYMMDD-HHMMSS_kebab-description`. It is created at the start of a piece of work and closed at `phase: complete`. Ephemeral feature slices live beside it at `~/.claude/isa/{slug}/_ephemeral/<feature>.md`.
+Every ISA is a **task ISA**: `~/.isa/<project>/{slug}/ISA.md`, with `slug = YYYYMMDD-HHMMSS_kebab-description`. It is created at the start of a piece of work and closed at `phase: complete`. Ephemeral feature slices live beside it at `~/.isa/<project>/{slug}/_ephemeral/<feature>.md`. `<project>` is the project key — the git work-tree root (or the directory) as a path relative to `$HOME` with `/` → `-` (`~/dev/app` → `dev-app`); `isa where` prints it, `isa ls` lists that project's ISAs, `isa new <slug>` prints a fresh path.
+
+When the ISA hooks are installed (see the repo's `install.py`), the harness enforces this loop in every session: mutating tool calls are refused until an ISA is bound and passes the articulation gate, every ISA edit is linted, and a turn can't end (once per prompt) while the ISA is stale or a `complete` claim fails the close gate. Writing or editing an `ISA.md` under `~/.isa/` is what binds it to the session.
 
 (A long-lived per-repo "project ISA" is not supported — it is a possible future feature, not part of this skill.)
 

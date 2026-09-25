@@ -12,7 +12,7 @@ Deterministic merge of an ephemeral feature-file excerpt back into the master IS
 
 | Input | Required | Description |
 |-------|----------|-------------|
-| ephemeral_path | yes | Path to the ephemeral feature file (`~/.claude/isa/{slug}/_ephemeral/<feature>.md`) |
+| ephemeral_path | yes | Path to the ephemeral feature file (`~/.isa/<project>/{slug}/_ephemeral/<feature>.md`) |
 | master_path | yes | Path to the master ISA the ephemeral was derived from |
 | dry_run | no | Default false. If true, report planned changes without writing. |
 
@@ -28,7 +28,7 @@ applied:
   deferred_added: 1                                         # [DEFERRED-VERIFY] lines carried over (no flip)
   decisions_added: 2                                        # Decisions entries appended
   changelog_added: 1                                        # Changelog entries appended
-archived_to: ~/.claude/isa/.../_ephemeral/.archive/AuthSystem-2026-04-15.md
+archived_to: ~/.isa/<project>/.../_ephemeral/.archive/AuthSystem-2026-04-15.md
 errors:
   - isc: ISC-99
     reason: not present in master — ephemeral references unknown ID

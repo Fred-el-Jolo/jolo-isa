@@ -26,7 +26,7 @@ The target is the user getting exactly the output they wanted, in the right amou
 ## A run is complete when
 
 1. **The stated goal survives verbatim** in `stated_goal` (immutable unless the user explicitly revises it; `null` only when the literal is contentless), and every claim traces to it or a named derived claim. Optimize for its intent, not its surface. **At close, the goal itself is checked:** re-read the verbatim goal against the finished result and write `- Goal: yes|no — <evidence>` in `## Verification`; `no` blocks `complete`. This is the frame-drift check — every ISC passing does not prove the ISC *set* still covers what was asked.
-2. **Done existed in writing before building** — an ISA at `~/.claude/isa/{slug}/ISA.md`, claims each naming the probe that would falsify them. A trivial task may write a minimal Goal + Criteria ISA.
+2. **Done existed in writing before building** — an ISA at `~/.isa/<project>/{slug}/ISA.md`, claims each naming the probe that would falsify them. A trivial task may write a minimal Goal + Criteria ISA.
 3. **What must not happen is written down** — at least one `Anti:` claim.
 4. **Experiential goals name an antecedent** — at least one `Antecedent:` claim.
 5. **External prerequisites were probed before execution** — tokens, logins, service config, deploy targets. Missing ones blocked or were deferred with a Decisions row.
