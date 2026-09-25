@@ -1,5 +1,3 @@
-<!-- Fictitious example. "ColorlessCLI" is a teaching project name; any resemblance to real products or organizations is coincidental. -->
-
 ---
 task: "Add a --no-color flag to a CLI tool"
 slug: 20260428-141500_no-color-flag
@@ -9,6 +7,8 @@ progress: 0/4
 started: 2026-04-28T21:15:00Z
 updated: 2026-04-28T21:15:00Z
 ---
+
+<!-- Fictitious example. "ColorlessCLI" is a teaching project name; any resemblance to real products or organizations is coincidental. -->
 
 ## Goal
 

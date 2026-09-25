@@ -182,15 +182,15 @@ The highest-information-density part of this skill. Each entry captures a non-ob
 
 ## Examples
 
-The `Examples/` directory holds reference ISAs spanning the tier (E1–E5) × domain (code / art / design / ops / marketplace / enterprise) matrix. (Written before Dependencies/Bridge Criteria and the closing `Goal:` line existed, so some show a twelve-section body, probes written inline in criterion text, and no Goal line in Verification; the rules in this file and `References/IsaFormat.md` win on shape.) Read the canonical showpiece before scaffolding a new ISA — copy its section headers, then populate. Pick the example closest to your domain + scale as a template.
+The `Examples/` directory holds reference ISAs spanning the tier (E1–E5) × domain (code / art / design / ops / marketplace / enterprise) matrix. Every example passes the completeness gate for its tier and phase: one Test Strategy entry per leaf ISC, probes out of the criterion text (except at E1, which has no Test Strategy), ticks backed by Verification lines. None is part of a hierarchy, so none shows Dependencies or Bridge Criteria — see `References/IsaHierarchy.md`. Read the canonical showpiece before scaffolding a new ISA — copy its section headers, then populate. Pick the example closest to your domain + scale as a template; read `e3-project.md` to see what a closed ISA looks like.
 
 | File | Tier | Purpose |
 |------|------|---------|
-| `Examples/canonical-isa.md` | E5 | **BeanLine** — peer-to-peer specialty-coffee marketplace. The showpiece, every section populated, real-feeling Decisions and a four-piece C/R/L Changelog. Read first. |
+| `Examples/canonical-isa.md` | E5 | **BeanLine** — peer-to-peer specialty-coffee marketplace. The showpiece: every standalone section populated, a verbatim `stated_goal` with every probe anchored to it (`anchors_to`), nested ISCs, property probes, real-feeling Decisions and a four-piece C/R/L Changelog. Read first. |
 | `Examples/e1-minimal.md` | E1 | Add a `--no-color` flag to a CLI tool. Goal + 4 ISCs only — the fast-path floor. |
 | `Examples/e2-backup-verify.md` | E2 | SHA-256 verification for a backup CLI's `--verify` mode. 18 ISCs. |
 | `Examples/e2-rotate-credential.md` | E2 | Rotate a production deploy credential in CI — the ISA applied to ops/runbook work. |
-| `Examples/e3-project.md` | E3 | An arxiv metadata extractor CLI. Mid-size project, eight sections. |
+| `Examples/e3-project.md` | E3 | An arxiv metadata extractor CLI — **closed** (`phase: complete`). Every ISC verified, one user waiver, a Changelog entry, and the closing `Goal:` line. |
 | `Examples/e3-essay.md` | E3 | A 1500-word essay. Experiential goal, antecedent ISCs, post-publish reception probes. |
 | `Examples/e3-help-redesign.md` | E3 | Redesign a CLI's `--help` output. Antecedents + usability tests. |
 | `Examples/e4-api-migration.md` | E4 | REST → GraphQL with 6-month backwards-compat. 73 ISCs, every section populated. |

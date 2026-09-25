@@ -1,14 +1,15 @@
-<!-- Fictitious example. "ApiBridge" is a teaching project name; any resemblance to real products or organizations is coincidental. The example.org domain is RFC 2606 reserved. -->
 ---
-task: "Migrate ApiBridge public API from REST to GraphQL with deprecation runway"
+task: "Migrate the ApiBridge public API from REST to GraphQL"
 slug: 20260112-091500_apibridge-rest-to-graphql-migration
 project: ApiBridge
 effort: E4
 phase: execute
-progress: 23/72
+progress: 30/73
 started: 2026-01-12T17:15:00Z
 updated: 2026-04-22T03:48:00Z
 ---
+
+<!-- Fictitious example. "ApiBridge" is a teaching project name; any resemblance to real products or organizations is coincidental. The example.org domain is RFC 2606 reserved. -->
 
 ## Problem
 
@@ -56,12 +57,13 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
 
 - [x] ISC-1: `schema/api.graphql` exists, validates against `graphql-schema-linter`, and covers all 14 REST endpoint shapes.
 - [x] ISC-2: GraphQL endpoint responds with `200` and a valid introspection result for `query { __schema { queryType { name } } }`.
-- [x] ISC-3: All 14 REST endpoints have a corresponding query or mutation in the schema (probe: `node scripts/coverage-check.ts` exits 0).
+- [x] ISC-3: All 14 REST endpoints have a corresponding query or mutation in the schema.
 - [x] ISC-4: Schema codegen produces typed resolver stubs at `src/generated/resolvers.ts`.
-- [x] ISC-5: 100% of read-side resolvers return data byte-identical to the matching REST endpoint for a 1,000-row golden fixture (probe: `bun test parity/read.test.ts`).
-- [ ] ISC-6: 100% of write-side resolvers produce identical database side-effects to the matching REST mutation for the golden fixture (probe: `bun test parity/write.test.ts`).
-- [x] ISC-7: GraphQL p95 latency for the 5 most common query shapes is ≤ matching REST p95 + 10ms under 200 rps load.
-- [ ] ISC-7.1: GraphQL p95 latency for the 20 next-most-common query shapes is ≤ matching REST p95 + 25ms under 200 rps load.
+- [x] ISC-5: 100% of read-side resolvers return data byte-identical to the matching REST endpoint for a 1,000-row golden fixture.
+- [ ] ISC-6: 100% of write-side resolvers produce identical database side-effects to the matching REST mutation for the golden fixture.
+- [ ] ISC-7: GraphQL p95 latency stays within its REST budget per query-shape tier.
+  - [x] ISC-7.1: GraphQL p95 latency for the 5 most common query shapes is ≤ matching REST p95 + 10ms under 200 rps load.
+  - [ ] ISC-7.2: GraphQL p95 latency for the 20 next-most-common query shapes is ≤ matching REST p95 + 25ms under 200 rps load.
 - [ ] ISC-8: GraphQL p99 latency under 1000 rps load remains under 800ms.
 - [x] ISC-9: REST responses include `Sunset: Wed, 22 Oct 2026 00:00:00 GMT` header.
 - [x] ISC-10: REST responses include `Deprecation: true` header.
@@ -73,18 +75,18 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
 - [ ] ISC-16: Migration emails sent to partner technical contacts at T-90, T-60, T-30, T-14, T-7, T-1 days from cutover.
 - [x] ISC-17: GraphQL playground at `api.apibridge.example.org/graphql` loads in a browser with example queries pre-populated.
 - [x] ISC-18: Documentation site shows GraphQL and REST side-by-side for every endpoint.
-- [ ] ISC-19: Anti: REST endpoints return shape-changed responses during the deprecation window (probe: `bun test parity/rest-stability.test.ts` runs daily).
-- [ ] ISC-20: Anti: GraphQL endpoint accepts queries deeper than 8 levels (probe: depth-limit middleware blocks query at depth 9 with `400`).
-- [ ] ISC-21: Anti: GraphQL endpoint accepts queries with cost > 1000 (probe: cost analysis middleware blocks high-cost query with `400`).
-- [ ] ISC-22: Anti: introspection is enabled in production (probe: `query { __schema { types { name } } }` returns `403` against `api.apibridge.example.org/graphql` with non-admin token).
-- [ ] ISC-23: Anti: any partner is silently cut off (probe: cutover script requires partner-confirmed migration date in `partner-status.json` for every active partner_id).
+- [ ] ISC-19: Anti: REST endpoints return shape-changed responses during the deprecation window.
+- [ ] ISC-20: Anti: GraphQL endpoint accepts queries deeper than 8 levels.
+- [ ] ISC-21: Anti: GraphQL endpoint accepts queries with cost > 1000.
+- [x] ISC-22: Anti: introspection is enabled in production.
+- [ ] ISC-23: Anti: any partner is silently cut off.
 - [x] ISC-24: Feature flag `graphql_endpoint_enabled` defaults to `false` and is explicitly enabled per environment.
 - [x] ISC-25: Feature flag `rest_sunset_headers_enabled` defaults to `false` until April 22, 2026.
 - [ ] ISC-26: Rollback runbook at `docs/runbooks/graphql-rollback.md` exists and has been dry-run executed in staging.
-- [x] ISC-27: Schema changes go through PR review with at least one API-team approver (probe: `.github/CODEOWNERS` lists `schema/` under `@api-team`).
+- [x] ISC-27: Schema changes go through PR review with at least one API-team approver.
 - [x] ISC-28: Every resolver has a Datadog APM span tagged with `graphql.operation_name` and `graphql.field_name`.
-- [ ] ISC-29: Authorization middleware enforces the same scopes on GraphQL fields as the matching REST endpoint requires (probe: `bun test auth/scope-parity.test.ts`).
-- [ ] ISC-30: Rate limits applied per partner at the GraphQL layer match the REST layer (probe: `bun test rate-limit/parity.test.ts`).
+- [ ] ISC-29: Authorization middleware enforces the same scopes on GraphQL fields as the matching REST endpoint requires.
+- [ ] ISC-30: Rate limits applied per partner at the GraphQL layer match the REST layer.
 - [ ] ISC-31: Error responses follow the structured GraphQL error spec with `extensions.code` set per error class.
 - [x] ISC-32: REST request logs include `Accept-Migration` header value when partner sends it (used to track partners actively testing GraphQL).
 - [ ] ISC-33: Partner status file `partner-status.json` lists every `partner_id` with fields `confirmed_migration_date`, `last_rest_request`, `first_graphql_request`, `migration_pct`.
@@ -98,8 +100,8 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
 - [ ] ISC-41: Load test simulating partner-realistic query patterns (mix of 60% reads, 30% writes, 10% complex nested queries) sustains 500 rps for 1 hour without error rate exceeding 0.5%.
 - [x] ISC-42: GraphQL endpoint enforces request body size limit of 100KB.
 - [x] ISC-43: GraphQL endpoint enforces query timeout of 10 seconds at the resolver layer.
-- [ ] ISC-44: Anti: REST endpoint `/v1/orgs/:id/projects` returns 404 before October 22, 2026 (probe: synthetic monitor pings every 5 minutes).
-- [ ] ISC-45: Anti: any GraphQL field returns PII not present in the matching REST endpoint (probe: `bun test parity/pii-coverage.test.ts`).
+- [ ] ISC-44: Anti: REST endpoint `/v1/orgs/:id/projects` returns 404 before October 22, 2026.
+- [ ] ISC-45: Anti: any GraphQL field returns PII not present in the matching REST endpoint.
 - [ ] ISC-46: Cutover dry-run executed at T-30 against staging with all 47 partner integrations simulated.
 - [ ] ISC-47: Sentry release tag `graphql-cutover-v1` exists.
 - [ ] ISC-48: PagerDuty escalation policy `graphql-launch` is on-call rotation for the 2 weeks following October 22, 2026.
@@ -116,13 +118,13 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
 - [ ] ISC-59: At least 3 partners using APQ in production by October 1, 2026.
 - [ ] ISC-60: GraphQL access logs are retained for 90 days in the existing log retention bucket.
 - [ ] ISC-61: Audit log for schema changes is queryable via `bun scripts/schema-history.ts`.
-- [x] ISC-62: Anti: a single resolver makes more than 3 sequential database calls without batching via DataLoader (probe: lint rule `no-sequential-db-calls` runs in CI).
-- [x] ISC-63: DataLoader instances are created per-request, not per-process (probe: `bun test dataloader/scope.test.ts`).
+- [x] ISC-62: Anti: a single resolver makes more than 3 sequential database calls without batching via DataLoader.
+- [x] ISC-63: DataLoader instances are created per-request, not per-process.
 - [ ] ISC-64: Schema documentation generated from SDL comments and published to docs site.
 - [ ] ISC-65: Partner-specific cost limits enforced (cost ≤ 500 for free tier, cost ≤ 2000 for paid tier, cost ≤ 5000 for enterprise tier).
 - [x] ISC-66: GraphQL errors are scrubbed of internal stack traces in production responses.
 - [ ] ISC-67: External health check at `api.apibridge.example.org/graphql/health` returns `200` with schema version.
-- [ ] ISC-68: Anti: deprecation cutover proceeds with any partner still showing > 100 REST requests/day in the 7 days before cutover (probe: cutover script blocks).
+- [ ] ISC-68: Anti: deprecation cutover proceeds with any partner still showing > 100 REST requests/day in the 7 days before cutover.
 - [ ] ISC-69: Extended support contract template exists at `legal/extended-rest-support-template.md` for partners needing a paid runway past October 22, 2026.
 - [ ] ISC-70: At most 3 partners are on extended support after October 22, 2026.
 - [ ] ISC-71: Public status page at `status.apibridge.example.org` has a `graphql` component and a `rest` component, each with independent uptime SLOs.
@@ -131,11 +133,29 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
 ## Test Strategy
 
 ```yaml
+- isc: ISC-1
+  type: bash
+  check: schema lint + REST shape coverage
+  threshold: 0 lint errors, 14/14 shapes
+  tool: graphql-schema-linter schema/api.graphql && node scripts/coverage-check.ts --shapes
+
+- isc: ISC-2
+  type: bash
+  check: minimal introspection query
+  threshold: 200 + queryType.name == "Query"
+  tool: "curl -s -X POST https://api.apibridge.example.org/graphql -H \"Authorization: Bearer $ADMIN\" -d '{\"query\":\"{ __schema { queryType { name } } }\"}' | jq -r '.data.__schema.queryType.name'"
+
 - isc: ISC-3
-  type: coverage-probe
+  type: bash
   check: every REST endpoint maps to a GraphQL field
-  threshold: 14/14
+  threshold: 14/14, exit 0
   tool: node scripts/coverage-check.ts
+
+- isc: ISC-4
+  type: bash
+  check: codegen output is current
+  threshold: file exists, empty git diff after regeneration
+  tool: bun run codegen && git diff --exit-code src/generated/resolvers.ts
 
 - isc: ISC-5
   type: parity-test
@@ -143,47 +163,419 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   threshold: 1000/1000
   tool: bun test parity/read.test.ts
 
-- isc: ISC-7
+- isc: ISC-6
+  type: parity-test
+  check: DB side-effects of each mutation vs its REST twin on the golden fixture
+  threshold: identical row diffs for every write
+  tool: bun test parity/write.test.ts
+
+- isc: ISC-7.1
   type: load
   check: GraphQL p95 vs REST p95 for top-5 query shapes
   threshold: GraphQL p95 ≤ REST p95 + 10ms at 200 rps
-  tool: k6 run loadtests/p95-parity.js
+  tool: k6 run loadtests/p95-parity.js --env SHAPES=top5
+
+- isc: ISC-7.2
+  type: load
+  check: GraphQL p95 vs REST p95 for shapes 6–25
+  threshold: GraphQL p95 ≤ REST p95 + 25ms at 200 rps
+  tool: k6 run loadtests/p95-parity.js --env SHAPES=next20
+
+- isc: ISC-8
+  type: load
+  check: p99 at 1000 rps
+  threshold: < 800ms
+  tool: k6 run loadtests/p99-1000rps.js --summary-export=/tmp/p99.json && jq '.metrics.http_req_duration["p(99)"]' /tmp/p99.json
 
 - isc: ISC-9
-  type: header-probe
-  check: every REST 2xx response includes Sunset header
-  threshold: 100% of sampled responses
-  tool: synthetic monitor + grep
+  type: bash
+  check: Sunset header on every REST route
+  threshold: 14/14 routes carry the exact value
+  tool: bash scripts/rest-header-audit.sh Sunset 'Wed, 22 Oct 2026 00:00:00 GMT'
+
+- isc: ISC-10
+  type: bash
+  check: Deprecation header on every REST route
+  threshold: 14/14
+  tool: bash scripts/rest-header-audit.sh Deprecation 'true'
+
+- isc: ISC-11
+  type: bash
+  check: successor-version Link header on every REST route
+  threshold: 14/14
+  tool: bash scripts/rest-header-audit.sh Link '<https://docs.apibridge.example.org/graphql>; rel="successor-version"'
+
+- isc: ISC-12
+  type: screenshot
+  check: dashboard per-partner table
+  threshold: columns REST count, GraphQL count, migration % — one row per partner_id
+  tool: screenshot of internal.apibridge.example.org/deprecation, viewed
+
+- isc: ISC-13
+  type: screenshot
+  check: top-5 deprecated endpoints panel
+  threshold: panel present with 5 rows for a sample partner
+  tool: screenshot of the partner drill-down, viewed
+
+- isc: ISC-14
+  type: bash
+  check: alert rule fires on synthetic week-over-week REST growth
+  threshold: 1 alert in the test channel
+  tool: bun scripts/replay-traffic.ts --partner test-p1 --rest-growth 20% --alert-dry-run
+
+- isc: ISC-15
+  type: bash
+  check: request-log lines without partner_id over the last 24h
+  threshold: "0"
+  tool: logcli query '{app="api"} | json | partner_id=""' --since 24h --quiet | wc -l
+
+- isc: ISC-16
+  type: bash
+  check: scheduled migration emails per partner
+  threshold: 6 sends (T-90, -60, -30, -14, -7, -1) for each of 47 partners
+  tool: bun scripts/email-schedule.ts --campaign graphql-migration --json | jq '[group_by(.partner_id)[] | length == 6] | all'
+
+- isc: ISC-17
+  type: screenshot
+  check: playground with example queries
+  threshold: editor shows the pre-populated example tabs
+  tool: screenshot of api.apibridge.example.org/graphql, viewed
+
+- isc: ISC-18
+  type: bash
+  check: docs pages with both GraphQL and REST samples
+  threshold: 14/14
+  tool: bun scripts/docs-audit.ts --require-tabs graphql,rest
 
 - isc: ISC-19
   type: regression-probe
   check: REST shape diff vs frozen golden bodies
   threshold: zero diffs
-  tool: bun test parity/rest-stability.test.ts (daily cron)
+  tool: bun test parity/rest-stability.test.ts   # daily cron
 
 - isc: ISC-20
-  type: anti-probe
+  type: bash
   check: depth-limit middleware blocks deep queries
-  threshold: 400 response on depth=9
-  tool: curl + jq
+  threshold: 400 on depth 9
+  tool: |-
+    curl -s -o /dev/null -w '%{http_code}' -X POST https://api.apibridge.example.org/graphql -H "Authorization: Bearer $PARTNER" --data @test/queries/depth9.json
+
+- isc: ISC-21
+  type: bash
+  check: cost-analysis middleware blocks expensive queries
+  threshold: 400 on cost 1001
+  tool: |-
+    curl -s -o /dev/null -w '%{http_code}' -X POST https://api.apibridge.example.org/graphql -H "Authorization: Bearer $PARTNER" --data @test/queries/cost1001.json
 
 - isc: ISC-22
-  type: anti-probe
+  type: bash
   check: introspection disabled in production
   threshold: 403 on __schema query with non-admin token
   tool: bun test security/introspection.test.ts
 
 - isc: ISC-23
-  type: anti-probe
+  type: bash
   check: cutover requires partner confirmation
-  threshold: cutover.ts exits non-zero if any active partner_id missing confirmed_migration_date
-  tool: bun scripts/cutover.ts --dry-run
+  threshold: cutover.ts exits non-zero if any active partner_id lacks confirmed_migration_date
+  tool: bun scripts/cutover.ts --dry-run --fixture test/fixtures/partner-status-missing-one.json; test $? -ne 0
+
+- isc: ISC-24
+  type: bash
+  check: flag default and per-env overrides
+  threshold: default false; enabled only in the envs listed
+  tool: bun scripts/flags.ts show graphql_endpoint_enabled --json | jq '.default == false and (.overrides | length > 0)'
+
+- isc: ISC-25
+  type: bash
+  check: sunset-header flag default
+  threshold: "false"
+  tool: bun scripts/flags.ts show rest_sunset_headers_enabled --json | jq '.default'
+
+- isc: ISC-26
+  type: bash
+  check: runbook exists and staging dry-run is logged
+  threshold: file exists + 1 dry-run record
+  tool: |-
+    test -f docs/runbooks/graphql-rollback.md && rg -c 'dry-run: staging' docs/runbooks/graphql-rollback.md
+
+- isc: ISC-27
+  type: bash
+  check: CODEOWNERS entry for schema/
+  threshold: 1 line
+  tool: rg -c '^/?schema/\s+@api-team' .github/CODEOWNERS
+
+- isc: ISC-28
+  type: unit-test
+  check: every resolver emits a span with both tags
+  threshold: test passes for every field in the schema
+  tool: bun test tracing/spans.test.ts
+
+- isc: ISC-29
+  type: parity-test
+  check: required scopes per GraphQL field vs matching REST route
+  threshold: identical for every pair
+  tool: bun test auth/scope-parity.test.ts
+
+- isc: ISC-30
+  type: parity-test
+  check: per-partner rate limits GraphQL vs REST
+  threshold: identical limits for every tier
+  tool: bun test rate-limit/parity.test.ts
+
+- isc: ISC-31
+  type: property
+  property: "∀ error class e: a GraphQL error of class e has extensions.code == code(e)"
+  generator: "one trigger per error class in src/errors.ts × random valid-looking inputs"
+  runs: 500
+  tool: bun test errors/codes.property.test.ts
+
+- isc: ISC-32
+  type: bash
+  check: Accept-Migration echoed into the request log
+  threshold: log line carries the sent value
+  tool: "curl -s -H 'Accept-Migration: graphql-testing' https://api.apibridge.example.org/v1/orgs/test-org >/dev/null && logcli query '{app=\"api\"} |= \"graphql-testing\"' --since 1m --quiet | wc -l"
+
+- isc: ISC-33
+  type: bash
+  check: every partner_id has all four fields
+  threshold: jq prints true
+  tool: jq '[.[] | has("confirmed_migration_date") and has("last_rest_request") and has("first_graphql_request") and has("migration_pct")] | all' partner-status.json
+
+- isc: ISC-34
+  type: bash
+  check: age of partner-status.json
+  threshold: < 26 hours
+  tool: echo $(( ($(date +%s) - $(stat -c %Y partner-status.json)) / 3600 ))
+
+- isc: ISC-35
+  type: bash
+  check: runbook question count with GraphQL snippets
+  threshold: ≥ 10 `### Q` headings, each followed by a graphql code block
+  tool: bun scripts/runbook-audit.ts docs/runbooks/partner-migration-support.md --min 10
+
+- isc: ISC-36
+  type: bash
+  check: availability changelog entry with an example query
+  threshold: entry present + ≥ 1 graphql code block
+  tool: curl -s https://docs.apibridge.example.org/changelog | rg -c 'GraphQL (is )?available'
+
+- isc: ISC-37
+  type: bash
+  check: deprecation changelog entry names the sunset date
+  threshold: ≥ 1 match
+  tool: curl -s https://docs.apibridge.example.org/changelog | rg -c 'October 22, 2026'
+
+- isc: ISC-38
+  type: bash
+  check: published schema equals repo schema
+  threshold: empty diff
+  tool: diff <(curl -s https://schema.apibridge.example.org/api.graphql) schema/api.graphql
+
+- isc: ISC-39
+  type: bash
+  check: CI gate on a branch with a breaking change
+  threshold: job fails without the flag, passes with it
+  tool: bash ci/test-schema-gate.sh
+
+- isc: ISC-40
+  type: bash
+  check: SQL/query-builder calls inside resolvers
+  threshold: zero matches (rg exits 1)
+  tool: rg -n 'db\.(query|select|insert|update)\(' src/graphql/resolvers/
 
 - isc: ISC-41
   type: load
-  check: 1-hour soak at 500 rps mixed workload
+  check: 1-hour soak at 500 rps, 60/30/10 read/write/nested mix
   threshold: error rate < 0.5%
   tool: k6 run loadtests/soak.js
+
+- isc: ISC-42
+  type: bash
+  check: 101KB request body
+  threshold: HTTP 413
+  tool: head -c 103424 /dev/zero | tr '\0' 'a' | curl -s -o /dev/null -w '%{http_code}' -X POST --data-binary @- https://api.apibridge.example.org/graphql
+
+- isc: ISC-43
+  type: unit-test
+  check: resolver that sleeps 11s
+  threshold: aborted at 10s with TIMEOUT code
+  tool: bun test resolvers/timeout.test.ts
+
+- isc: ISC-44
+  type: bash
+  check: synthetic monitor status for /v1/orgs/:id/projects, last 7 days
+  threshold: zero 404 results before 2026-10-22
+  tool: bun scripts/monitor-history.ts rest-projects --since 7d --status 404 --count
+
+- isc: ISC-45
+  type: parity-test
+  check: PII-tagged fields reachable via GraphQL vs REST per endpoint
+  threshold: GraphQL set ⊆ REST set for every endpoint
+  tool: bun test parity/pii-coverage.test.ts
+
+- isc: ISC-46
+  type: bash
+  check: T-30 staging dry-run report
+  threshold: 47/47 simulated partners pass
+  tool: jq '.partners | map(select(.result=="pass")) | length' reports/cutover-dryrun-T30.json
+
+- isc: ISC-47
+  type: bash
+  check: Sentry release exists
+  threshold: exit 0
+  tool: sentry-cli releases info graphql-cutover-v1
+
+- isc: ISC-48
+  type: bash
+  check: on-call schedule window
+  threshold: covers 2026-10-22 through 2026-11-05
+  tool: pd schedule show graphql-launch --json | jq '.start <= "2026-10-22" and .end >= "2026-11-05"'
+
+- isc: ISC-49
+  type: bash
+  check: partner_id in GraphQL access log matches token claim
+  threshold: equal
+  tool: bash scripts/log-claim-check.sh graphql
+
+- isc: ISC-50
+  type: bash
+  check: REST routes resolved through the adapter
+  threshold: 14/14 route registrations import src/rest/adapter.ts
+  tool: rg -l "from '../rest/adapter'" src/rest/routes/ | wc -l
+
+- isc: ISC-51
+  type: load
+  check: adapter overhead vs direct handler, same fixture
+  threshold: p95 delta < 5ms
+  tool: k6 run loadtests/adapter-overhead.js
+
+- isc: ISC-52
+  type: bash
+  check: legacy direct handlers
+  threshold: directory absent
+  tool: test ! -d src/rest/handlers
+
+- isc: ISC-53
+  type: bash
+  check: rollout steps recorded for rest_via_adapter_enabled
+  threshold: steps are multiples of 10%
+  tool: bun scripts/flags.ts history rest_via_adapter_enabled --json | jq '[.[].percent % 10 == 0] | all'
+
+- isc: ISC-54
+  type: bash
+  check: date the adapter flag reached 100%
+  threshold: before 2026-04-22
+  tool: bun scripts/flags.ts history rest_via_adapter_enabled --json | jq -r 'map(select(.percent==100))[0].at'
+
+- isc: ISC-55
+  type: bash
+  check: retrospective file and its first commit date
+  threshold: exists, committed ≤ 2026-11-01
+  tool: git log --diff-filter=A --format=%as -- docs/retrospectives/graphql-migration.md
+
+- isc: ISC-56
+  type: unit-test
+  check: breaker opens at 5% errors over 60s
+  threshold: open state after injected 6% error rate
+  tool: bun test gateway/circuit-breaker.test.ts
+
+- isc: ISC-57
+  type: bash
+  check: breaker section in the incident runbook
+  threshold: ≥ 1 match
+  tool: rg -c -i '^#+ .*circuit.breaker' docs/runbooks/incident-response.md
+
+- isc: ISC-58
+  type: bash
+  check: APQ hash-only request after registration
+  threshold: data returned, no PersistedQueryNotFound
+  tool: bash scripts/apq-smoke.sh
+
+- isc: ISC-59
+  type: bash
+  check: distinct partners sending APQ hashes in production
+  threshold: ≥ 3 by 2026-10-01
+  tool: logcli query '{app="api"} | json | apq="true"' --since 7d --quiet | jq -r .partner_id | sort -u | wc -l
+
+- isc: ISC-60
+  type: bash
+  check: retention rule on the access-log bucket
+  threshold: 90 days
+  tool: aws s3api get-bucket-lifecycle-configuration --bucket apibridge-logs | jq '.Rules[] | select(.Filter.Prefix=="graphql/") | .Expiration.Days'
+
+- isc: ISC-61
+  type: bash
+  check: schema-history script lists past changes
+  threshold: exit 0 + ≥ 1 row
+  tool: bun scripts/schema-history.ts --limit 1
+
+- isc: ISC-62
+  type: bash
+  check: CI lint rule for sequential DB calls
+  threshold: rule enabled + 0 violations
+  tool: |-
+    bunx eslint --rule 'apibridge/no-sequential-db-calls: error' src/graphql/
+
+- isc: ISC-63
+  type: unit-test
+  check: two concurrent requests share no DataLoader cache
+  threshold: test passes
+  tool: bun test dataloader/scope.test.ts
+
+- isc: ISC-64
+  type: bash
+  check: every SDL type documented on the docs site
+  threshold: 0 undocumented types
+  tool: bun scripts/docs-audit.ts --sdl schema/api.graphql --missing
+
+- isc: ISC-65
+  type: property
+  property: "∀ tier t, ∀ query cost c: accepted ⇔ c ≤ limit(t), with limits free 500 / paid 2000 / enterprise 5000"
+  generator: "tiers × costs around each limit (limit−1, limit, limit+1) plus random costs 0–10000"
+  runs: 1000
+  tool: bun test cost/tier-limits.property.test.ts
+
+- isc: ISC-66
+  type: bash
+  check: forced resolver error in production mode
+  threshold: response has no "at " stack frames
+  tool: NODE_ENV=production bun test errors/scrub.test.ts
+
+- isc: ISC-67
+  type: bash
+  check: external health check
+  threshold: 200 + schema_version present
+  tool: curl -s https://api.apibridge.example.org/graphql/health | jq -e '.schema_version'
+
+- isc: ISC-68
+  type: bash
+  check: cutover with one partner above 100 REST req/day
+  threshold: script exits non-zero
+  tool: bun scripts/cutover.ts --dry-run --fixture test/fixtures/partner-high-rest.json; test $? -ne 0
+
+- isc: ISC-69
+  type: bash
+  check: contract template exists
+  threshold: exit 0
+  tool: test -s legal/extended-rest-support-template.md
+
+- isc: ISC-70
+  type: bash
+  check: partners with extended_support after cutover
+  threshold: ≤ 3
+  tool: jq '[.[] | select(.extended_support == true)] | length' partner-status.json
+
+- isc: ISC-71
+  type: bash
+  check: status-page components and their SLOs
+  threshold: graphql and rest components, each with its own SLO
+  tool: curl -s https://status.apibridge.example.org/api/v2/components.json | jq '[.components[] | select(.name=="graphql" or .name=="rest") | .slo] | length'
+
+- isc: ISC-72
+  type: bash
+  check: postmortem page and publish date
+  threshold: live, dated ≤ 2026-11-05
+  tool: curl -s https://docs.apibridge.example.org/postmortems/graphql-cutover | rg -o 'datetime="\K[0-9-]+'
 ```
 
 ## Features
@@ -239,7 +631,7 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
 - 2026-01-26 14:30: REST adapter layer (one resolver path, two transports) rather than maintaining REST handlers in parallel. Eliminates parity drift by construction. Cost: adapter overhead measured at ~3ms p95 in early prototype, well under the ISC-51 budget of 5ms.
 - 2026-02-03 11:00: ❌ DEAD END: Tried Apollo Federation v2 to split the schema across 3 services owned by different product teams. Reverted after week-long spike — gateway introspection added 40ms p95 overhead and the team boundary was nominal (all 3 services share the same database). Single monolithic schema, owned by api-team, reviewed by product-team approvers per CODEOWNERS.
 - 2026-02-10 09:45: 6-month deprecation window over 3 months. Partner survey (37 of 47 responded) showed 4 partners with quarterly release trains where a 3-month window would force an emergency rollout. Cost is real (longer parity guarantees, more telemetry overhead) but cheaper than 4 angry partners.
-- 2026-02-18 16:20: refined: ISC-7 split into ISC-7 (top-5 query shapes, +10ms budget) and ISC-7.1 (next-20 shapes, +25ms budget). The two budgets reflect that the top-5 are tightly optimized REST paths while the next-20 are over-fetching today and GraphQL will already be faster on those by virtue of asking for fewer fields.
+- 2026-02-18 16:20: refined: ISC-7 split into ISC-7.1 (top-5 query shapes, +10ms budget) and ISC-7.2 (next-20 shapes, +25ms budget); ISC-7 stays as their parent. The two budgets reflect that the top-5 are tightly optimized REST paths while the next-20 are over-fetching today and GraphQL will already be faster on those by virtue of asking for fewer fields.
 - 2026-02-25 21:00: ❌ DEAD END: Considered exposing GraphQL at `api-v2.apibridge.example.org` so the cutover would be a DNS swap. Rejected — partner integrations using URL-based service discovery would have to change config rather than client library, and the URL change would have meant more breaking surface than the protocol change.
 - 2026-03-04 10:00: APQ for partners that opt in, not mandatory. Mandatory APQ would force every partner to ship a registration step before going live; the migration cost is already non-trivial and APQ value is largest for the high-volume partners who will adopt it voluntarily.
 - 2026-03-12 13:30: Cost limits per partner tier (500/2000/5000) calibrated against the most expensive REST endpoints' equivalent cost in the cost-analysis prototype; free-tier cap of 500 is ~2x the heaviest current REST call to leave migration headroom without leaving DoS surface.
@@ -249,7 +641,7 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
 
 ## Changelog
 
-- 2026-02-18 conjectured: a single +10ms p95 budget would cover all GraphQL query shapes vs REST. / refuted by: prototype load test (k6, 200 rps) showed top-5 already at +8ms while shapes 6-25 ranged +12ms to +22ms — single budget would fail on hot paths and over-budget on long-tail. / learned: REST is irregularly optimized; the top-5 shapes have hand-tuned indexes, the rest don't. GraphQL inherits this asymmetry. / criterion now: ISC-7 (top-5, +10ms) + ISC-7.1 (next-20, +25ms) — two budgets reflecting the underlying optimization asymmetry.
+- 2026-02-18 conjectured: a single +10ms p95 budget would cover all GraphQL query shapes vs REST. / refuted by: prototype load test (k6, 200 rps) showed top-5 already at +8ms while shapes 6-25 ranged +12ms to +22ms — single budget would fail on hot paths and over-budget on long-tail. / learned: REST is irregularly optimized; the top-5 shapes have hand-tuned indexes, the rest don't. GraphQL inherits this asymmetry. / criterion now: ISC-7 → ISC-7.1 (top-5, +10ms) + ISC-7.2 (next-20, +25ms) — two budgets reflecting the underlying optimization asymmetry.
 
 - 2026-02-25 conjectured: a `/v2` URL split would make cutover a clean DNS-level swap with no client code changes. / refuted by: partner survey identified 11 integrations using URL-based service discovery (env vars or config files); URL change would force config-file edits and re-deploy, while protocol change touches only the client library. / learned: URL stability is a stronger contract than transport stability for service-discovery-based partners. / criterion now: GraphQL co-located at `api.apibridge.example.org/graphql`; no `/v2`, no subdomain split — preserved as a Constraint.
 
@@ -259,11 +651,33 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
 
 ## Verification
 
-- ISC-1: `graphql-schema-linter schema/api.graphql` exits 0; output `0 errors, 0 warnings`. Verified 2026-02-04.
+- ISC-1: `graphql-schema-linter schema/api.graphql` exits 0; output `0 errors, 0 warnings`; `coverage-check --shapes` → `14/14`. Verified 2026-02-04.
 - ISC-2: `curl -s -X POST api.apibridge.example.org/graphql -H "Authorization: Bearer $T" -d '{"query":"{ __schema { queryType { name } } }"}' | jq -r '.data.__schema.queryType.name'` returns `Query`. Verified 2026-02-12 (staging) and 2026-03-04 (production behind feature flag).
 - ISC-3: `node scripts/coverage-check.ts` outputs `14/14 REST endpoints have a matching GraphQL field`. Verified 2026-02-15.
+- ISC-4: `bun run codegen && git diff --exit-code src/generated/resolvers.ts` — exit 0. Verified 2026-02-15.
 - ISC-5: `bun test parity/read.test.ts` reports `1000 passed, 0 failed`. Verified 2026-03-08.
-- ISC-7: k6 run output for top-5 query shapes — REST p95: 87ms / GraphQL p95: 91ms (+4ms, well within +10ms budget). Verified 2026-03-22.
-- ISC-9, ISC-10, ISC-11: `curl -I api.apibridge.example.org/v1/orgs/test-org` shows `Sunset: Wed, 22 Oct 2026 00:00:00 GMT`, `Deprecation: true`, `Link: <https://docs.apibridge.example.org/graphql>; rel="successor-version"`. Verified 2026-04-22.
+- ISC-7.1: k6 run output for top-5 query shapes — REST p95: 87ms / GraphQL p95: 91ms (+4ms, well within +10ms budget). Verified 2026-03-22.
+- ISC-9: `rest-header-audit.sh Sunset …` — `14/14 routes: Sunset: Wed, 22 Oct 2026 00:00:00 GMT`. Verified 2026-04-22.
+- ISC-10: `rest-header-audit.sh Deprecation true` — `14/14`. Verified 2026-04-22.
+- ISC-11: `rest-header-audit.sh Link …` — `14/14 routes: rel="successor-version"`. Verified 2026-04-22.
+- ISC-15: `logcli query '{app="api"} | json | partner_id=""' --since 24h` — 0 lines. Verified 2026-03-01.
+- ISC-17: screenshot `shots/playground-2026-03-04.png` viewed — three example tabs (`orgs`, `projects`, `createProject`) pre-populated. Verified 2026-03-04.
+- ISC-18: `bun scripts/docs-audit.ts --require-tabs graphql,rest` — `14/14 pages OK`. Verified 2026-03-10.
 - ISC-22: introspection probe with non-admin token returns `403 Forbidden` with body `{"errors":[{"message":"Introspection disabled in production","extensions":{"code":"INTROSPECTION_DISABLED"}}]}`. Verified 2026-03-04.
-- ISC-50, ISC-52: `git log --oneline src/rest/handlers/` shows final commit deleting all 14 legacy direct handlers; `src/rest/adapter.ts` is the sole REST entry point. Verified 2026-04-10.
+- ISC-24: `flags.ts show graphql_endpoint_enabled` — `default: false`, overrides `staging: true`, `production: true`. Verified 2026-03-04.
+- ISC-25: `flags.ts show rest_sunset_headers_enabled` — `default: false`. Verified 2026-03-04.
+- ISC-27: `rg '^/?schema/' .github/CODEOWNERS` — `/schema/  @api-team`. Verified 2026-02-02.
+- ISC-28: `bun test tracing/spans.test.ts` — `52 passed` (one per schema field). Verified 2026-03-12.
+- ISC-32: log query for `graphql-testing` after a tagged request — 1 line, `accept_migration="graphql-testing"`. Verified 2026-03-18.
+- ISC-38: `diff <(curl -s https://schema.apibridge.example.org/api.graphql) schema/api.graphql` — empty. Verified 2026-03-04.
+- ISC-40: `rg -n 'db\.(query|select|insert|update)\(' src/graphql/resolvers/` — no matches. Verified 2026-04-10.
+- ISC-42: 101KB body → `413`. Verified 2026-03-04.
+- ISC-43: `bun test resolvers/timeout.test.ts` — `1 passed` (aborted at 10.00s, code `TIMEOUT`). Verified 2026-03-04.
+- ISC-49: `log-claim-check.sh graphql` — 500/500 sampled lines match the token claim. Verified 2026-03-18.
+- ISC-50: `rg -l "from '../rest/adapter'" src/rest/routes/ | wc -l` — `14`. Verified 2026-04-10.
+- ISC-52: `test ! -d src/rest/handlers` — exit 0 (final commit `9f3e2a1` deleted all 14 legacy handlers). Verified 2026-04-10.
+- ISC-56: `bun test gateway/circuit-breaker.test.ts` — `3 passed` (open at 6% injected errors, half-open after 30s). Verified 2026-03-25.
+- ISC-58: `apq-smoke.sh` — hash-only request returned data after registration, no `PersistedQueryNotFound`. Verified 2026-04-02.
+- ISC-62: `eslint --rule 'apibridge/no-sequential-db-calls: error' src/graphql/` — 0 problems. Verified 2026-04-10.
+- ISC-63: `bun test dataloader/scope.test.ts` — `2 passed`. Verified 2026-03-12.
+- ISC-66: `NODE_ENV=production bun test errors/scrub.test.ts` — `4 passed`, no stack frames in any response. Verified 2026-03-12.

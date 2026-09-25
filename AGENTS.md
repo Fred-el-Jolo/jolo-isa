@@ -21,12 +21,14 @@ isa-skill-export/
 ├── skill/ISA/                    ← copy this to ~/.claude/skills/ISA/
 │   ├── SKILL.md                  ← entry point: homes, frontmatter, 14 sections, tier gate, lifecycle rules, routing, gotchas
 │   ├── Workflows/                ← Scaffold, Interview, CheckCompleteness, Reconcile, Append
-│   ├── Examples/                 ← 12 reference ISAs (E1–E5 × code/art/design/ops/enterprise), originals lightly cleaned
+│   ├── Examples/                 ← 12 reference ISAs (E1–E5 × code/art/design/ops/enterprise), all passing tools/lint_isa.py
 │   └── References/
 │       ├── IsaFormat.md          ← file-shape contract (wins on contradiction)
 │       ├── IsaSystem.md          ← conceptual frame
 │       ├── IsaHierarchy.md       ← multi-ISA trees (rare, load on demand)
 │       └── IsaLoop.md            ← the work loop around the ISA (distilled from the LifeOS Algorithm)
+├── tools/
+│   └── lint_isa.py               ← mechanical gate check for ISA files (dev only, not installed; needs PyYAML)
 └── future/
     ├── MEMORY.md                 ← Future A: how LifeOS learns from ISAs today + target design
     ├── STATUSLINE.md             ← Future B: data contract for an ISA status line
@@ -71,7 +73,7 @@ This replaces LifeOS's `~/.claude/LIFEOS/MEMORY/WORK/{slug}/ISA.md`. It's a deci
 - The four-part Changelog, with partial entries refused.
 - Verbatim capture of the stated goal (`stated_goal`, the 4 detection signals, the minimum-content rule) and the ambiguity check (at most 3 questions, `proceed` accepts defaults).
 - Ephemeral slices and a deterministic Reconcile.
-- All 12 examples (lightly cleaned — see Open notes).
+- All 12 examples, brought up to the spec (see Changed).
 
 ### Changed
 
@@ -101,6 +103,7 @@ This replaces LifeOS's `~/.claude/LIFEOS/MEMORY/WORK/{slug}/ISA.md`. It's a deci
 | Ephemeral slices | No frontmatter, yet Append always updated `updated` / `progress`; slices also got an empty Verification section | Append skips frontmatter on slices (Reconcile recomputes master's); Verification appears with the first entry |
 | Scaffold questions vs Interview | Interview listed Scaffold's ambiguity check as one of its invocations, so the 3 quick questions could set `interview_ran` and pass the E5 gate | Scaffold asks its own questions ("Question mechanics"), recorded as `interview_invoked` only; Interview.md says it is not used for them |
 | The Algorithm | `LIFEOS/ALGORITHM/v8.4.0.md`, 15 completion rules plus LifeOS telemetry, audits and agents | `References/IsaLoop.md`: the same 15 rules minus LifeOS plumbing, plus the phase table and the nudge questions as standing questions |
+| Examples | Written against older specs: probes inline in criterion text, ~94 Test Strategy entries for ~446 leaf ISCs, `progress` values that didn't match the checkboxes, ticked ISCs with no evidence, a comment above the frontmatter, YAML that didn't parse, horizontal Features in `e3-project` | All pass `tools/lint_isa.py`: one Test Strategy entry per leaf ISC (probes moved out of the criteria, except at E1), `progress` recomputed, every tick backed by a Verification line, compound ISCs split with IDs kept (canonical ISC-23/24/25/33, api-migration ISC-7), E5 examples carry `interview_ran`. Canonical now shows `stated_goal` + `anchors_to`; `e3-project` is now a **closed** ISA (waiver, Changelog, `Goal:` line) |
 | `IsaFormat.md` / `IsaSystem.md` | Full, including version history, Pulse sync, the `[arch]` harvest tag, optimize mode | Trimmed to the file contract and the concepts |
 
 ### Dropped
@@ -147,7 +150,7 @@ Each removed block was checked against one question: does anything in the skill,
 
 ## Open notes
 
-1. **The examples are older than the spec.** Some still show a 12-section body. Removed keys (`effort_source`, `mode:`), old effort names (`standard…comprehensive` → `E1…E5`), count-floor remarks, browser-automation probes and LifeOS jargon were cleaned out of them; everything else is original. New examples come with testing.
+1. **Examples are checked mechanically.** Run `python3 tools/lint_isa.py skill/ISA/Examples/*.md` after any change to them or to the gate rules; expected: every file `ok`. The linter covers what a script can decide (sections, tier gate, Test Strategy coverage, `progress`, ticks vs evidence, close rules); atomicity and the honesty of a `Goal:` line stay judgment calls. It warns, without failing, on criteria over 20 words — about 60 remain in the E4/E5 files. No example is part of a hierarchy, so Dependencies / Bridge Criteria are shown nowhere yet.
 2. **Criteria heading.** Write `## Criteria`. A future parser (status line) should also accept `## ISC Criteria` and `## IDEAL STATE CRITERIA`, which the LifeOS tooling emitted.
 
 ## Later (ideas noted, not planned yet)

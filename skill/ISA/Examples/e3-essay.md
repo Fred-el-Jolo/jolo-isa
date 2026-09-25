@@ -1,15 +1,15 @@
-<!-- Fictitious example. The essay topic is a teaching placeholder; any resemblance to real essays or authors is coincidental. -->
-
 ---
-task: "Write a 1500-word essay on why most productivity advice fails first-time founders"
+task: "Write an essay on why productivity advice fails founders"
 slug: 20260317-203000_essay-productivity-fails-founders
 project: ProductivityEssay
 effort: E3
 phase: execute
-progress: 12/34
+progress: 5/34
 started: 2026-03-17T03:30:00Z
 updated: 2026-03-21T15:00:00Z
 ---
+
+<!-- Fictitious example. The essay topic is a teaching placeholder; any resemblance to real essays or authors is coincidental. -->
 
 ## Problem
 
@@ -52,100 +52,274 @@ Ship a 1400–1600-word essay in three sections that opens with a concrete first
 
 ### Word count and structure
 
-- [x] ISC-1: Final word count ∈ [1400, 1600] (probe: `wc -w essay.md` minus frontmatter).
-- [x] ISC-2: Exactly three top-level sections, no subheaders (probe: `rg -c "^##" essay.md` returns 3 — opening header, middle header, close header).
-- [ ] ISC-3: Each section is 350–700 words (probe: word count per section between header lines).
-- [ ] ISC-4: Reading time ≤ 8 minutes at 200wpm (computed: `wc -w / 200`).
+- [x] ISC-1: Final body word count falls between 1400 and 1600.
+- [x] ISC-2: Exactly three `##` section headers, and no deeper subheaders.
+- [ ] ISC-3: Each section is 350–700 words.
+- [ ] ISC-4: Reading time is ≤ 8 minutes at 200 words per minute.
 
 ### Argument structure
 
-- [x] ISC-5: Opening section ends with a one-sentence thesis statement (probe: human review confirms last sentence of opening section is the thesis).
-- [ ] ISC-6: Middle section advances the thesis through ≥ 3 distinct examples (probe: human review confirms three concrete situations, none requiring outside knowledge).
-- [ ] ISC-7: Close section names a specific calibration tool (the one-question filter) the reader can apply within 24 hours.
-- [ ] ISC-8: Through-line test: a reader can articulate the thesis in ≤ 20 words after a single read (probe: 3 unfamiliar readers each summarize the thesis; ≥ 2/3 land within ±10 words of the same summary).
+- [x] ISC-5: Opening section ends with a one-sentence thesis statement.
+- [ ] ISC-6: Middle section advances the thesis through ≥ 3 distinct concrete examples.
+- [ ] ISC-7: Close names one calibration tool a reader can apply within 24 hours.
+- [ ] ISC-8: Through-line test: a reader can state the thesis in ≤ 20 words after one read.
 
 ### Voice and tone
 
-- [x] ISC-9: Zero occurrences of "Here's the thing", "It turns out", "Not just X — it's Y" (AI-writing-pattern probe: rg against AI_WRITING_PATTERNS list returns 0).
-- [ ] ISC-10: Zero footnotes, zero numeric citations, zero "as <person> says" formulations (probe: `rg "\[?\^?\d+\]" essay.md` returns 0; `rg "as [A-Z]" essay.md` returns 0).
-- [ ] ISC-11: Sentence-length variance: at least one sentence ≤ 8 words and at least one ≥ 28 words in each section (probe: per-section sentence-length histogram).
-- [ ] ISC-12: First-person plural ("we", "us") count ≤ 5 across the whole essay (probe: `rg -wc "we|us|our" essay.md`).
+- [x] ISC-9: Zero occurrences of the listed AI-writing tics ("Here's the thing", "It turns out", …).
+- [ ] ISC-10: Zero footnotes, numeric citations, or "as <person> says" formulations.
+- [ ] ISC-11: Every section has one sentence ≤ 8 words and one ≥ 28 words.
+- [ ] ISC-12: First-person plural ("we", "us", "our") appears at most 5 times.
 
 ### Antecedent ISCs (preconditions for the target experience)
 
-- [x] ISC-13: **Antecedent:** the second paragraph contains a concrete situation that 60%+ of first-time founders will recognize as their own within 30 seconds (probe: 5 unfamiliar founder readers, ≥ 3/5 mark "yes, that's me" on a post-read 1-question survey).
-- [ ] ISC-14: **Antecedent:** the thesis sentence (end of opening) is hard-to-vary — replacing any noun or verb in it with a synonym detectably weakens the argument (probe: human review of 3 paraphrases shows clear semantic loss).
-- [ ] ISC-15: **Antecedent:** the close's calibration tool (the one-question filter) is concrete enough that a reader can apply it without re-reading the essay (probe: 5 readers given only the close section can articulate what to do; ≥ 4/5 succeed).
+- [x] ISC-13: Antecedent: the second paragraph opens on a situation most first-time founders recognize as theirs.
+- [ ] ISC-14: Antecedent: synonym-swapping any noun or verb in the thesis visibly weakens it.
+- [ ] ISC-15: Antecedent: the close's one-question filter is usable without re-reading the essay.
 
 ### Minimal-structure discipline
 
-- [ ] ISC-16: No paragraph could be moved to a different essay without rewriting at least its first sentence (probe: paragraph-portability review — every paragraph has at least one phrase that anchors it to this essay's specific argument).
-- [ ] ISC-17: No sentence is filler — removing any single sentence detectably weakens the argument or rhythm (probe: read-aloud test, 3 sentences flagged at random, removal test).
+- [ ] ISC-16: No paragraph could move to another essay without rewriting its first sentence.
+- [ ] ISC-17: Removing any sampled sentence detectably weakens the argument or rhythm.
 
 ### Anti-criteria
 
-- [ ] ISC-18: Anti: out of scope — the essay does NOT include a numbered list of productivity hacks (probe: `rg "^\d\." essay.md` returns 0).
-- [ ] ISC-19: Anti: regression — no sentence longer than 50 words (probe: longest sentence ≤ 50 words; a single 50+ -word sentence is the canary that the writing has drifted into academic register).
-- [ ] ISC-20: Anti: voice — the essay does NOT name a specific famous founder (e.g., "as Paul Graham wrote") (probe: `rg -i "paul graham|sam altman|peter thiel|naval|elon|jeff bezos|steve jobs"` returns 0).
-- [ ] ISC-21: Anti: scope — the essay does NOT propose a new productivity framework or system (probe: human review confirms zero "Introducing the X method" formulations).
+- [ ] ISC-18: Anti: out of scope — the essay contains no numbered list of productivity hacks.
+- [ ] ISC-19: Anti: regression — no sentence runs longer than 50 words.
+- [ ] ISC-20: Anti: voice — the essay names no famous founder as an authority.
+- [ ] ISC-21: Anti: scope — the essay proposes no new named productivity framework or method.
 
 ### Iteration discipline
 
-- [ ] ISC-22: At least 3 drafts captured in `drafts/` directory before final (probe: `ls drafts/ | wc -l` ≥ 3).
-- [ ] ISC-23: Final draft was read aloud once before publishing (probe: Decisions entry confirming read-aloud pass).
-- [ ] ISC-24: At least 2 unfamiliar readers (not friends-being-nice) gave first-impression feedback before publishing (probe: Decisions entries citing reader IDs/initials).
+- [ ] ISC-22: At least 3 drafts exist in `drafts/` before the final.
+- [ ] ISC-23: The final draft was read aloud once before publishing.
+- [ ] ISC-24: At least 2 unfamiliar readers gave first-impression feedback before publishing.
 
 ### Publishing
 
-- [ ] ISC-25: Final file is `essay.md` at the project root with frontmatter `title`, `published_at`, `word_count`, `reading_time_min`.
-- [ ] ISC-26: Markdown renders cleanly on the target publishing platform (probe: preview render shows three sections, no broken formatting).
-- [ ] ISC-27: A 280-character pull-quote is captured for social syndication (probe: file `pullquote.txt` exists with content ≤ 280 chars).
-- [ ] ISC-28: An "if I had to cut 200 more words" note is captured for future re-reads (probe: file `cuts-on-deck.md` lists candidate cuts).
+- [ ] ISC-25: `essay.md` frontmatter holds `title`, `published_at`, `word_count`, `reading_time_min`.
+- [ ] ISC-26: The platform preview renders three sections with no broken formatting.
+- [ ] ISC-27: A pull-quote of ≤ 280 characters is saved in `pullquote.txt`.
+- [ ] ISC-28: `cuts-on-deck.md` lists candidate cuts for a 200-words-shorter version.
 
 ### Post-publish delight probes
 
-- [ ] ISC-29: Within 7 days, ≥ 1 reader reports they identified one piece of advice they're going to drop (probe: replies/comments/messages search).
-- [ ] ISC-30: Within 14 days, ≥ 1 reader forwards the essay to a fellow founder unprompted (probe: web analytics referrer or direct report).
+- [ ] ISC-29: Within 7 days, ≥ 1 reader names one piece of advice they'll drop.
+- [ ] ISC-30: Within 14 days, ≥ 1 reader forwards the essay to a founder unprompted.
 
 ### Personal discipline
 
-- [ ] ISC-31: A "what I cut" file is preserved at `cuts.md` showing what was edited out (probe: file exists, ≥ 500 words of cuts).
-- [ ] ISC-32: The frontmatter `started` and `published_at` timestamps reflect the actual ≥ 4-day gestation (probe: timestamps).
-- [ ] ISC-33: A short Decisions entry captures which paragraph caused the most rewriting and why (lessons for next essay).
-- [ ] ISC-34: At least one ❌ DEAD END Decisions entry exists (a draft direction that was tried and abandoned).
+- [ ] ISC-31: `cuts.md` preserves at least 500 words of edited-out material.
+- [ ] ISC-32: `started` and `published_at` are at least 4 days apart.
+- [ ] ISC-33: A Decisions entry names the paragraph that caused the most rewriting.
+- [ ] ISC-34: At least one ❌ DEAD END Decisions entry records an abandoned draft direction.
 
 ## Test Strategy
 
 ```yaml
 - isc: ISC-1
-  type: word-count
-  check: total words in body
-  threshold: 1400-1600
+  type: bash
+  check: total words in body (frontmatter excluded)
+  threshold: 1400–1600
   tool: awk '/^---$/{c++; next} c==2' essay.md | wc -w
 
+- isc: ISC-2
+  type: bash
+  check: header counts
+  threshold: 3 `##` headers, 0 `###`+ headers
+  tool: rg -c '^## ' essay.md; rg -c '^###' essay.md
+
+- isc: ISC-3
+  type: bash
+  check: words per section
+  threshold: every section 350–700
+  tool: awk '/^## /{if(n)print n; n=0; next} {n+=NF} END{print n}' essay.md
+
+- isc: ISC-4
+  type: bash
+  check: body words / 200
+  threshold: ≤ 8.0
+  tool: echo "scale=1; $(awk '/^---$/{c++; next} c==2' essay.md | wc -w) / 200" | bc
+
+- isc: ISC-5
+  type: manual
+  check: last sentence of the opening section is the thesis
+  threshold: author and one reader both point to the same sentence
+  tool: read the opening section; ask one reader "which sentence is the claim?"
+
+- isc: ISC-6
+  type: manual
+  check: count of distinct concrete situations in the middle section, none needing outside knowledge
+  threshold: ≥ 3
+  tool: read the middle section and list each example in one line
+
+- isc: ISC-7
+  type: manual
+  check: the close ends on one named, applicable tool
+  threshold: the tool can be written as one question
+  tool: read the close section
+
 - isc: ISC-8
-  type: reader-comprehension
-  check: 3 unfamiliar readers articulate thesis in ≤ 20 words within ±10 of each other
-  threshold: ≥ 2/3 cluster
+  type: manual
+  check: 3 unfamiliar readers each summarize the thesis in ≤ 20 words
+  threshold: ≥ 2/3 summaries agree within ±10 words
   tool: send essay to 3 reader-test slots, collect 1-sentence summaries
 
 - isc: ISC-9
-  type: ai-writing-pattern
-  check: AI-writing-pattern density
-  threshold: 0 occurrences from P0 list
+  type: bash
+  check: AI-writing tics
+  threshold: zero matches (rg exits 1)
   tool: rg -i "here's the thing|it turns out|not just .* — it's" essay.md
 
+- isc: ISC-10
+  type: bash
+  check: footnotes, numeric citations, appeal-to-person phrasing
+  threshold: zero matches (rg exits 1)
+  tool: rg '\[\^?\d+\]|\bas [A-Z][a-z]+ (says|said|wrote)' essay.md
+
+- isc: ISC-11
+  type: bash
+  check: min and max sentence length per section
+  threshold: every section min ≤ 8 and max ≥ 28
+  tool: python3 scripts/sentence-lengths.py essay.md --per-section
+
+- isc: ISC-12
+  type: bash
+  check: first-person plural count
+  threshold: ≤ 5
+  tool: rg -o -w -i 'we|us|our' essay.md | wc -l
+
 - isc: ISC-13
-  type: antecedent-probe
-  check: 5 founder readers say "yes, that's me" to second paragraph
-  threshold: ≥ 3/5
-  tool: 5-person reader test, post-read 1-q survey
+  type: manual
+  check: 5 unfamiliar founder readers answer "is this you?" about paragraph two
+  threshold: ≥ 3/5 say yes
+  tool: 5-person reader test, post-read 1-question survey
+
+- isc: ISC-14
+  type: manual
+  check: 3 synonym-swapped paraphrases of the thesis, read side by side with the original
+  threshold: each paraphrase loses meaning a reader can name
+  tool: write the 3 paraphrases, then hand all 4 to one reader
+
+- isc: ISC-15
+  type: manual
+  check: 5 readers given only the close section say what to do next
+  threshold: ≥ 4/5 describe the filter correctly
+  tool: close-only reader test
+
+- isc: ISC-16
+  type: manual
+  check: paragraph-portability review
+  threshold: every paragraph has a phrase anchoring it to this essay's argument
+  tool: read each paragraph in isolation
+
+- isc: ISC-17
+  type: manual
+  check: read-aloud removal test on 3 randomly chosen sentences
+  threshold: each removal is noticed as a loss
+  tool: shuf -n 3 on the sentence list, read aloud with and without each
+
+- isc: ISC-18
+  type: bash
+  check: numbered list items
+  threshold: zero matches (rg exits 1)
+  tool: rg '^\d+\. ' essay.md
+
+- isc: ISC-19
+  type: bash
+  check: longest sentence
+  threshold: ≤ 50 words
+  tool: python3 scripts/sentence-lengths.py essay.md --max
+
+- isc: ISC-20
+  type: bash
+  check: famous-founder names
+  threshold: zero matches (rg exits 1)
+  tool: rg -i 'paul graham|sam altman|peter thiel|naval|elon|jeff bezos|steve jobs' essay.md
+
+- isc: ISC-21
+  type: bash
+  check: framework-introduction phrasing
+  threshold: zero matches (rg exits 1)
+  tool: rg -i 'introducing the|the [A-Z][a-z]+ (method|framework|system)\b' essay.md
+
+- isc: ISC-22
+  type: bash
+  check: draft count
+  threshold: ≥ 3
+  tool: ls drafts/ | wc -l
+
+- isc: ISC-23
+  type: bash
+  check: read-aloud Decisions row
+  threshold: ≥ 1 match
+  tool: rg -c -i 'read.aloud' ISA.md
+
+- isc: ISC-24
+  type: bash
+  check: Decisions rows citing a reader before publish
+  threshold: ≥ 2 distinct reader initials
+  tool: rg -o 'reader [A-Z]{2}' ISA.md | sort -u | wc -l
+
+- isc: ISC-25
+  type: bash
+  check: required frontmatter keys
+  threshold: 4 of 4 present
+  tool: awk '/^---$/{c++; next} c==1' essay.md | rg -c '^(title|published_at|word_count|reading_time_min):'
+
+- isc: ISC-26
+  type: screenshot
+  check: platform preview of the final draft
+  threshold: three section headers visible, no raw markdown, no broken links
+  tool: screenshot of the platform preview, viewed
+
+- isc: ISC-27
+  type: bash
+  check: pull-quote length
+  threshold: 1–280 characters
+  tool: test -s pullquote.txt && test $(wc -m < pullquote.txt) -le 280
+
+- isc: ISC-28
+  type: bash
+  check: candidate-cut list exists and is non-empty
+  threshold: ≥ 1 list item
+  tool: rg -c '^- ' cuts-on-deck.md
 
 - isc: ISC-29
-  type: post-publish
-  check: ≥ 1 reader names a specific advice they're dropping
+  type: manual
+  check: ≥ 1 reader names a specific piece of advice they're dropping
   threshold: 1 within 7 days
   tool: monitor replies, comments, DMs for 7 days
+
+- isc: ISC-30
+  type: manual
+  check: unprompted forward to another founder
+  threshold: ≥ 1 within 14 days
+  tool: referrer report from web analytics, or a direct message saying so
+
+- isc: ISC-31
+  type: bash
+  check: words of preserved cuts
+  threshold: ≥ 500
+  tool: wc -w < cuts.md
+
+- isc: ISC-32
+  type: bash
+  check: days between started and published_at
+  threshold: ≥ 4
+  tool: python3 -c "import yaml,sys,datetime as d; f=yaml.safe_load(open('essay.md').read().split('---')[1]); print((f['published_at']-f['started']).days)"
+
+- isc: ISC-33
+  type: bash
+  check: most-rewritten-paragraph Decisions row
+  threshold: ≥ 1 match
+  tool: rg -c -i 'most rewriting|most rewritten' ISA.md
+
+- isc: ISC-34
+  type: bash
+  check: dead-end Decisions rows
+  threshold: ≥ 1
+  tool: rg -c 'DEAD END' ISA.md
 ```
 
 ## Features

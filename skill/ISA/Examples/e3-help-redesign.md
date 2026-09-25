@@ -1,15 +1,15 @@
-<!-- Fictitious example. "duck" is a teaching placeholder for an existing CLI tool whose --help output we are redesigning. -->
-
 ---
-task: "Redesign the duck CLI's --help output for first-encounter clarity"
+task: "Redesign the duck CLI's --help for first-encounter clarity"
 slug: 20260411-191500_duck-help-redesign
 project: DuckHelpRedesign
 effort: E3
 phase: execute
-progress: 16/36
+progress: 5/36
 started: 2026-04-11T02:15:00Z
 updated: 2026-04-15T18:00:00Z
 ---
+
+<!-- Fictitious example. "duck" is a teaching placeholder for an existing CLI tool whose --help output we are redesigning. -->
 
 ## Problem
 
@@ -52,123 +52,297 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
 
 ### Length and layout
 
-- [x] ISC-1: `duck --help | wc -l` returns ≤ 100 lines (current baseline 187).
-- [x] ISC-2: Every line in `duck --help` is ≤ 80 columns (probe: `awk 'length>80' < (duck --help) | wc -l` returns 0).
-- [ ] ISC-3: Output has exactly three top-level sections: Summary+Examples block, Flag Reference, See Also (probe: count of section header rules `═` or `─`).
+- [x] ISC-1: `duck --help` prints ≤ 100 lines (current baseline 187).
+- [x] ISC-2: Every line of `duck --help` is ≤ 80 columns.
+- [ ] ISC-3: Output has exactly three sections: Summary+Examples, Flag Reference, See Also.
 
 ### Top-section content
 
-- [x] ISC-4: First non-blank line is a one-sentence description ≤ 80 chars (probe: line 1 length, sentence-end period).
-- [ ] ISC-5: Examples block contains exactly 2 invocations, each annotated with a one-line "what this does" gloss.
-- [ ] ISC-6: Each example invocation is a real, currently-supported command (probe: copy-paste each example, run it, assert exit 0 against test fixtures).
+- [x] ISC-4: First non-blank line is one sentence of ≤ 80 characters.
+- [ ] ISC-5: Examples block holds exactly 2 invocations, each with a one-line gloss.
+- [ ] ISC-6: Each example invocation runs and exits 0 against the test fixtures.
 
 ### Flag reference
 
-- [ ] ISC-7: Flags are grouped into ≤ 4 categories with clear headers (e.g., `Common`, `Output Control`, `Filtering`, `Diagnostics`).
-- [ ] ISC-8: Each flag's entry is exactly 2 lines: `--flag, -f <ARG>` on line 1 (left-aligned, fixed-width), description on line 2 indented 4 spaces.
-- [ ] ISC-9: Within each category, flags are alphabetized.
-- [ ] ISC-10: Every flag from the current 187-line help is present in the new layout (probe: `diff <(rg "^  --" old-help.txt | sort -u) <(rg "^  --" new-help.txt | sort -u)` returns empty).
+- [ ] ISC-7: Flags are grouped under at most 4 category headers.
+- [ ] ISC-8: Each flag entry is exactly 2 lines: signature, then 4-space-indented description.
+- [ ] ISC-9: Within each category, flags are in alphabetical order.
+- [ ] ISC-10: Every flag from the old 187-line help appears in the new layout.
 
 ### See-also footer
 
-- [ ] ISC-11: Footer contains exactly: man page reference, docs URL, version + build short-sha.
-- [ ] ISC-12: Footer URL is on a single line and ≤ 80 chars.
+- [ ] ISC-11: Footer holds exactly three items: man page, docs URL, version + short-sha.
+- [ ] ISC-12: Footer URL sits on a single line of ≤ 80 characters.
 
 ### Backwards-compat
 
-- [x] ISC-13: `duck --help | rg "\-\-each-flag-name"` returns ≥ 1 line for every flag (verified across all flags).
-- [x] ISC-14: `duck --help` exit code stays 0 (probe: `duck --help; echo $?`).
-- [ ] ISC-15: Pre-existing `man duck` still references "see `--help` for usage" — and the reference still resolves to a useful Examples block.
+- [x] ISC-13: The existing per-flag grep finds every flag name in the new output.
+- [x] ISC-14: `duck --help` still exits 0.
+- [ ] ISC-15: `man duck` still points to `--help`, and that output opens with Examples.
 
 ### Performance
 
-- [ ] ISC-16: First-time-user help-to-first-command time drops from 95s median to ≤ 30s (probe: 5 new-user usability sessions, time from `duck --help` to first non-help command).
-- [ ] ISC-17: Help-screen render time stays < 50ms (template is compiled-in, not parsed at runtime).
+- [ ] ISC-16: New-user median time from `--help` to first real command is ≤ 30s.
+- [ ] ISC-17: Help-screen render time stays under 50ms.
 
 ### Antecedent ISCs (experiential preconditions)
 
-- [ ] ISC-18: **Antecedent:** the one-sentence description (line 1) is hard-to-vary — replacing any verb or noun with a synonym makes the description either inaccurate or weaker (probe: 3 paraphrase attempts reviewed, all detectably worse).
-- [ ] ISC-19: **Antecedent:** the two examples in the Examples block are the two highest-frequency invocations from the last 30 days of telemetry (probe: cross-reference invocation-frequency log).
-- [ ] ISC-20: **Antecedent:** the flag categories are intuitive — given only the four category names, a new user can guess which category contains a randomly-chosen flag with ≥ 70% accuracy (probe: 5 users, 10 random flags each, ≥ 70% category-guess accuracy).
+- [ ] ISC-18: Antecedent: every synonym swap in the line-1 description makes it less accurate or weaker.
+- [ ] ISC-19: Antecedent: the two examples are the top two invocations from 30 days of telemetry.
+- [ ] ISC-20: Antecedent: new users guess a random flag's category from its name ≥ 70% of the time.
 
 ### Voice and tone
 
-- [ ] ISC-21: Each flag description is ≤ 80 chars and reads as imperative (e.g., "Print version and exit", not "This flag prints the version").
-- [ ] ISC-22: Zero "Note:" preambles (probe: `rg "^    Note:" new-help.txt` returns 0).
-- [ ] ISC-23: Zero "Please" appearances (probe: `rg -wi "please" new-help.txt` returns 0).
+- [ ] ISC-21: Each flag description is ≤ 80 characters and written in imperative mood.
+- [ ] ISC-22: Zero "Note:" preambles appear in the help output.
+- [ ] ISC-23: The word "please" appears nowhere in the help output.
 
 ### Anti-criteria
 
-- [ ] ISC-24: Anti: out of scope — no new flag was introduced (probe: flag count is unchanged from baseline).
-- [ ] ISC-25: Anti: regression — `duck --help -h` and `duck -h` and `duck help` all still produce the same output (probe: `diff <(duck --help) <(duck -h) <(duck help)` returns identical).
-- [ ] ISC-26: Anti: footer drift — version + build sha line is automatically generated, not hand-edited (probe: source template uses `{{VERSION}}` `{{SHA}}` placeholders, build pipeline injects).
-- [ ] ISC-27: Anti: density creep — no flag description is split across two description lines (probe: every description is exactly 1 line of ≤ 80 chars).
+- [ ] ISC-24: Anti: out of scope — the flag count is unchanged from the baseline.
+- [ ] ISC-25: Anti: regression — `duck --help`, `duck -h`, and `duck help` print identical output.
+- [ ] ISC-26: Anti: footer drift — version and sha come from build-time placeholders, never hand-edited.
+- [ ] ISC-27: Anti: density creep — no flag description wraps onto a second line.
 
 ### Migration discipline
 
-- [ ] ISC-28: A diff between old and new template is captured in `docs/help-redesign-diff.md`.
-- [ ] ISC-29: A blog post or release note draft (≤ 300 words) explaining the redesign exists at `docs/release-notes/help-redesign.md`.
-- [ ] ISC-30: The 5 user-test session recordings (anonymized) are saved at `research/user-tests/help-redesign-2026-04/`.
+- [ ] ISC-28: `docs/help-redesign-diff.md` captures the old-vs-new template diff.
+- [ ] ISC-29: A release note of ≤ 300 words exists at `docs/release-notes/help-redesign.md`.
+- [ ] ISC-30: Five anonymized user-test recordings are saved under `research/user-tests/help-redesign-2026-04/`.
 
 ### Minimal-structure discipline
 
-- [ ] ISC-31: No section of the new help is shorter than 4 lines or longer than 70 lines (probe: per-section line count).
-- [ ] ISC-32: Examples block does NOT include a "useful flag combinations" appendix (probe: human review — the discipline is two examples, not five).
+- [ ] ISC-31: Every help section is between 4 and 70 lines long.
+- [ ] ISC-32: The Examples block has no "useful flag combinations" appendix.
 
 ### Publishing
 
-- [ ] ISC-33: New template is committed to `templates/help.txt` with a commit message linking the redesign decision in Decisions.
-- [ ] ISC-34: The change ships behind a build flag for one release before becoming default (probe: build flag exists, default-on commit lands one release after introduction).
-- [ ] ISC-35: Pre-existing CI test `test/help-grep.sh` (which greps for each flag) passes against the new template.
+- [ ] ISC-33: The `templates/help.txt` commit message links the redesign Decisions entry.
+- [ ] ISC-34: The new help ships behind a build flag for one release before default.
+- [ ] ISC-35: Existing CI test `test/help-grep.sh` passes against the new template.
 
 ### Long-tail observation
 
-- [ ] ISC-36: 30 days post-ship, help-to-first-command median time has dropped to the ISC-16 threshold and stays there (probe: telemetry comparison day-30 vs day-0).
+- [ ] ISC-36: At day 30 after ship, the ISC-16 median still holds at ≤ 30s.
 
 ## Test Strategy
 
 ```yaml
 - isc: ISC-1
-  type: line-count
+  type: bash
   check: --help line count
   threshold: ≤ 100
   tool: duck --help | wc -l
 
+- isc: ISC-2
+  type: bash
+  check: lines longer than 80 columns
+  threshold: "0"
+  tool: duck --help | awk 'length>80' | wc -l
+
+- isc: ISC-3
+  type: bash
+  check: section rule lines
+  threshold: "3"
+  tool: duck --help | rg -c '^[═─]{10,}'
+
+- isc: ISC-4
+  type: bash
+  check: first non-blank line is one sentence ≤ 80 chars
+  threshold: prints ok
+  tool: duck --help | awk 'NF{print; exit}' | awk 'length<=80 && /\.$/ && gsub(/\. /,"&")==0 {print "ok"}'
+
+- isc: ISC-5
+  type: bash
+  check: invocation lines and gloss lines in the Examples block
+  threshold: 2 lines starting with "$ duck", each followed by an indented gloss
+  tool: duck --help | sed -n '/^Examples/,/^[═─]/p' | rg -c -A1 '^  \$ duck'
+
 - isc: ISC-6
-  type: integration
+  type: bash
   check: each example actually runs
   threshold: exit 0 on all
   tool: bash test/help-examples.sh
 
+- isc: ISC-7
+  type: bash
+  check: category header count in Flag Reference
+  threshold: 1–4
+  tool: duck --help | sed -n '/^Flag Reference/,/^See Also/p' | rg -c '^[A-Z][A-Za-z ]+:$'
+
+- isc: ISC-8
+  type: unit-test
+  check: every flag entry is signature line + one 4-space description line
+  threshold: test passes
+  tool: bun test test/help-layout.test.ts -t "two-line entries"
+
+- isc: ISC-9
+  type: unit-test
+  check: flag order inside each category
+  threshold: equal to sorted order
+  tool: bun test test/help-layout.test.ts -t "alphabetized"
+
 - isc: ISC-10
-  type: completeness
+  type: bash
   check: every old flag is in new help
   threshold: empty diff
-  tool: diff <(rg "^\s*--" old-help.txt | sort -u) <(rg "^\s*--" new-help.txt | sort -u)
+  tool: diff <(rg -o '^\s*--[a-z-]+' old-help.txt | tr -d ' ' | sort -u) <(rg -o '^\s*--[a-z-]+' new-help.txt | tr -d ' ' | sort -u)
+
+- isc: ISC-11
+  type: bash
+  check: See Also footer lines
+  threshold: 3 lines matching man / https / version patterns, in that order
+  tool: duck --help | sed -n '/^See Also/,$p' | rg -c '^  (man duck|https://|duck v[0-9.]+ \([0-9a-f]{7}\))'
+
+- isc: ISC-12
+  type: bash
+  check: footer URL line length
+  threshold: ≤ 80
+  tool: duck --help | rg '^  https://' | awk '{print length}'
+
+- isc: ISC-13
+  type: bash
+  check: existing per-flag grep
+  threshold: exit 0
+  tool: bash test/help-grep.sh
+
+- isc: ISC-14
+  type: bash
+  check: exit code
+  threshold: "0"
+  tool: duck --help >/dev/null; echo $?
+
+- isc: ISC-15
+  type: bash
+  check: man page reference and Examples-first output
+  threshold: both greps exit 0
+  tool: man duck | grep -q 'see `--help`' && duck --help | awk 'NF' | sed -n 3p | grep -q '^Examples'
 
 - isc: ISC-16
-  type: usability-test
+  type: manual
   check: median help-to-first-command time
   threshold: ≤ 30s median across 5 users
   tool: 5 user-test sessions, time-stamped recordings
 
+- isc: ISC-17
+  type: bash
+  check: render time
+  threshold: mean < 50 ms
+  tool: hyperfine --warmup 3 --export-json /tmp/h.json 'duck --help' && jq '.results[0].mean*1000' /tmp/h.json
+
 - isc: ISC-18
-  type: antecedent
-  check: one-sentence description is hard-to-vary
-  threshold: 3 paraphrase attempts all detectably worse
-  tool: human review by 3 unfamiliar reviewers
+  type: manual
+  check: 3 synonym-swapped paraphrases of line 1
+  threshold: all 3 reviewers rate every paraphrase worse
+  tool: review by 3 unfamiliar reviewers
+
+- isc: ISC-19
+  type: bash
+  check: top two invocations in the last 30 days of telemetry
+  threshold: equal to the two example commands
+  tool: diff <(duck-telemetry top-invocations --days 30 -n 2) <(duck --help | rg -o '^  \$ \K.*')
 
 - isc: ISC-20
-  type: antecedent
-  check: category names are intuitive
-  threshold: ≥ 70% guess accuracy across 5 users × 10 flags
-  tool: structured user test
+  type: manual
+  check: category-guess accuracy
+  threshold: ≥ 70% across 5 users × 10 flags
+  tool: structured user test with the four category names only
+
+- isc: ISC-21
+  type: eval
+  check: description length and imperative mood
+  threshold: 100% of descriptions ≤ 80 chars and judged imperative
+  tool: bun test test/help-voice.test.ts   # length check + LLM-judge rubric "starts with an imperative verb"
+
+- isc: ISC-22
+  type: bash
+  check: "Note: preambles"
+  threshold: zero matches (rg exits 1)
+  tool: rg '^\s*Note:' new-help.txt
+
+- isc: ISC-23
+  type: bash
+  check: the word please
+  threshold: zero matches (rg exits 1)
+  tool: rg -wi 'please' new-help.txt
+
+- isc: ISC-24
+  type: bash
+  check: flag count old vs new
+  threshold: equal
+  tool: test $(rg -c '^\s*--' old-help.txt) -eq $(rg -c '^\s*--' new-help.txt)
 
 - isc: ISC-25
-  type: backwards-compat
-  check: --help -h and help all match
-  threshold: identical output
-  tool: diff <(duck --help) <(duck -h) <(duck help)
+  type: bash
+  check: --help, -h and help all match
+  threshold: both diffs empty
+  tool: diff <(duck --help) <(duck -h) && diff <(duck --help) <(duck help)
+
+- isc: ISC-26
+  type: bash
+  check: placeholders in the template, no literal version
+  threshold: 2 placeholders found, zero literal version strings
+  tool: rg -c '\{\{(VERSION|SHA)\}\}' templates/help.txt && ! rg -q 'v[0-9]+\.[0-9]+\.[0-9]+' templates/help.txt
+
+- isc: ISC-27
+  type: unit-test
+  check: description lines per flag
+  threshold: exactly 1 for every flag
+  tool: bun test test/help-layout.test.ts -t "single-line descriptions"
+
+- isc: ISC-28
+  type: bash
+  check: diff document exists and holds a diff
+  threshold: ≥ 1 line starting with + or -
+  tool: rg -c '^[+-]' docs/help-redesign-diff.md
+
+- isc: ISC-29
+  type: bash
+  check: release note word count
+  threshold: 1–300
+  tool: wc -w < docs/release-notes/help-redesign.md
+
+- isc: ISC-30
+  type: bash
+  check: recording count
+  threshold: "5"
+  tool: ls research/user-tests/help-redesign-2026-04/*.mp4 | wc -l
+
+- isc: ISC-31
+  type: unit-test
+  check: lines per section
+  threshold: every section 4–70
+  tool: bun test test/help-layout.test.ts -t "section lengths"
+
+- isc: ISC-32
+  type: bash
+  check: combinations appendix
+  threshold: zero matches (rg exits 1)
+  tool: duck --help | rg -i 'combination|recipes|more examples'
+
+- isc: ISC-33
+  type: bash
+  check: commit message references the Decisions entry
+  threshold: ≥ 1 match
+  tool: git log -1 --format=%B -- templates/help.txt | rg -c 'Decisions 2026-04'
+
+- isc: ISC-34
+  type: bash
+  check: build flag introduced one release before it defaults on
+  threshold: tag distance = 1
+  tool: bash scripts/flag-release-distance.sh NEW_HELP
+
+- isc: ISC-35
+  type: bash
+  check: CI grep test against the new template
+  threshold: exit 0
+  tool: bash test/help-grep.sh templates/help.txt
+
+- isc: ISC-36
+  type: bash
+  check: day-30 median help-to-first-command time
+  threshold: ≤ 30s
+  tool: duck-telemetry help-to-first-command --since-ship 30d --stat median
 ```
 
 ## Features
