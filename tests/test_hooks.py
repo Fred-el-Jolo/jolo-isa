@@ -108,6 +108,25 @@ class TestPrompt(HookCase):
         self.assertIn("lint ok", self.ctx(out))
 
 
+class TestFitNote(HookCase):
+    REVIEW = "Review the whole auth module for security issues and make sure every endpoint checks the session."
+
+    def test_fit(self):
+        _, out, _ = self.hook("UserPromptSubmit", prompt=self.REVIEW)
+        self.assertIn("ISA fit: strong", self.ctx(out))
+        _, out, _ = self.hook("UserPromptSubmit", prompt="what time is it?")
+        self.assertNotIn("ISA fit", self.ctx(out))
+
+    def test_fit_never_blocks(self):
+        self.hook("UserPromptSubmit", prompt=self.REVIEW)
+        for tool, ti in [("Read", {"file_path": "/etc/hosts"}), ("Grep", {"pattern": "session"}),
+                         ("Bash", {"command": "rg -n session src/"})]:
+            _, out, _ = self.hook("PreToolUse", tool_name=tool, tool_input=ti)
+            self.assertIsNone(self.decision(out), tool)
+        code, _, err = self.hook("Stop", stop_hook_active=False)
+        self.assertEqual((code, err), (0, ""))
+
+
 class TestGate(HookCase):
     def test_deny_unbound(self):
         code, out, _ = self.edit_project()
@@ -241,6 +260,56 @@ class TestStop(HookCase):
         codes = [self.hook("Stop", stop_hook_active=False)[0] for _ in range(3)]
         self.assertEqual(codes, [2, 0, 0])
         self.pid = "p2"  # a new prompt gets one new retry
+        self.assertEqual(self.hook("Stop", stop_hook_active=False)[0], 2)
+
+
+class TestShellIsaEdit(HookCase):
+    """The bound ISA edited from a shell (no file-tool path names it) counts as an ISA edit."""
+
+    def shell_edit(self, path, text, command):
+        st = os.stat(path)
+        with open(path, "w") as f:
+            f.write(text)
+        os.utime(path, (st.st_atime, st.st_mtime + 1))  # a visible mtime step on any filesystem
+        return self.hook("PostToolUse", tool_name="Bash", tool_input={"command": command}, tool_response={})
+
+    def session(self):
+        with open(os.path.join(self.home, "_state", "sessions", f"claude-{self.sid}.json")) as f:
+            return json.load(f)
+
+    def test_heredoc_edit_then_stop_passes(self):
+        path = self.write_isa(E1)
+        self.post_edit_project()
+        _, out, _ = self.shell_edit(path, E1.replace("- [ ] ISC-1:", "- [x] ISC-1:").replace("0/4", "1/4"),
+                                    "python3 - <<'EOF'\nopen('ISA.md','w')\nEOF")
+        self.assertIn("lint ok", self.ctx(out))
+        self.assertEqual(self.hook("Stop", stop_hook_active=False)[0], 0)
+
+    def test_sed_on_isa_after_project_edit_clears_staleness(self):
+        path = self.write_isa(E1)
+        self.post_edit_project()
+        self.shell_edit(path, E1.replace("- [ ] ISC-1:", "- [x] ISC-1:").replace("0/4", "1/4"),
+                        f"sed -i 's/- \\[ \\] ISC-1:/- [x] ISC-1:/' {path}")
+        self.assertEqual(self.hook("Stop", stop_hook_active=False)[0], 0)
+
+    def test_shell_edit_is_linted(self):
+        path = self.write_isa(E1)
+        _, out, _ = self.shell_edit(path, E1.replace("progress: 0/4", "progress: 9/9"), f"sed -i s/x/y/ {path}")
+        self.assertIn("ISA lint — ", self.ctx(out))
+        self.assertIn("progress", self.ctx(out))
+
+    def test_shell_edit_resets_stale_counter(self):
+        path = self.write_isa(E1)
+        for _ in range(3):
+            self.post_edit_project()
+        self.assertEqual(self.session()["since_isa"], 3)
+        self.shell_edit(path, E1, f"sed -i s/x/y/ {path}")
+        self.assertEqual(self.session()["since_isa"], 0)
+
+    def test_untouched_isa_still_stale(self):
+        self.write_isa(E1)
+        self.post_edit_project()
+        self.hook("PostToolUse", tool_name="Bash", tool_input={"command": "ls"}, tool_response={})
         self.assertEqual(self.hook("Stop", stop_hook_active=False)[0], 2)
 
 

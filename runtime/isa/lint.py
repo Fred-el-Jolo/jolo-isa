@@ -35,6 +35,10 @@ PHASES = {"observe", "think", "plan", "build", "execute", "verify", "learn", "co
 TS_KEYS = {"isc", "anchors_to", "type", "check", "threshold", "tool",
            "property", "generator", "runs"}
 FEATURE_KEYS = {"name", "description", "satisfies", "depends_on", "parallelizable"}
+# Test Strategy types a machine can't run: their ticks are self-attested (evidence.py)
+SELF_ATTESTED = {"manual", "screenshot", "eval"}
+# a probe that still holds a placeholder can't be run as written: `<session-id>`, `…`
+PLACEHOLDER = re.compile(r"<[A-Za-z_][\w -]*>|…")
 
 ISC_RE = re.compile(r"^\s*- \[( |x|X)\] (ISC-\d+(?:\.\d+)*): ?(.*)$")
 SLUG_RE = re.compile(r"^\d{8}-\d{6}_[a-z0-9-]+$")
@@ -91,6 +95,70 @@ def sections(body):
         elif cur is not None:
             cur[1].append(line)
     return [(n, "\n".join(ls)) for n, ls in out]
+
+
+def collect_iscs(content):
+    """({id: (checked, text, section)} in file order, [duplicate ids]) from Criteria + Bridge Criteria."""
+    iscs, dupes = {}, []
+    for sec in ("Criteria", "Bridge Criteria"):
+        for line in content.get(sec, "").splitlines():
+            m = ISC_RE.match(line)
+            if m:
+                iid = m.group(2)
+                if iid in iscs:
+                    dupes.append(iid)
+                iscs[iid] = (m.group(1).lower() == "x", m.group(3), sec)
+    return iscs, dupes
+
+
+def leaf_iscs(iscs, decisions):
+    """(parents, leaves, counted): leaves drop parents and `[DROPPED` tombstones; counted also
+    drops ISCs waived in Decisions — the set `progress` is computed over."""
+    dropped = {i for i, (_, t, _) in iscs.items() if t.startswith("[DROPPED")}
+    parents = {i for i in iscs if any(j.startswith(i + ".") for j in iscs)}
+    leaves = [i for i in iscs if i not in parents and i not in dropped]
+    waived = set(re.findall(r"waived: (ISC-\d+(?:\.\d+)*)", decisions))
+    return parents, leaves, [i for i in leaves if i not in waived]
+
+
+def parse(text, path="<text>"):
+    """The parts of an ISA other modules read (status, evidence), parsed exactly as `lint` does.
+    Never raises on a malformed file: missing parts come back empty."""
+    r = Report(path)
+    fm, body = split_frontmatter(text, r)
+    content = dict(sections(strip_comments_and_fences(body)))
+    iscs, _ = collect_iscs(content)
+    parents, leaves, counted = leaf_iscs(iscs, content.get("Decisions", ""))
+    ts = yaml_block(content["Test Strategy"], r, "Test Strategy") if "Test Strategy" in content else []
+    feats = yaml_block(content["Features"], r, "Features") if "Features" in content else []
+    return {"fm": fm, "content": content, "iscs": iscs, "leaves": leaves, "counted": counted,
+            "test_strategy": {e["isc"]: e for e in ts if isinstance(e, dict) and "isc" in e},
+            "features": [f for f in feats if isinstance(f, dict)]}
+
+
+def dependency_cycle(features):
+    """The first `depends_on` cycle among Features, as [A, B, …, A], or None."""
+    deps = {f.get("name"): [d for d in f.get("depends_on") or []] for f in features if isinstance(f, dict)}
+    state = {}
+
+    def visit(n, path):
+        if state.get(n) == "done" or n not in deps:
+            return None
+        if state.get(n) == "open":
+            return path[path.index(n):] + [n]
+        state[n] = "open"
+        for d in deps[n]:
+            found = visit(d, path + [n])
+            if found:
+                return found
+        state[n] = "done"
+        return None
+
+    for n in deps:
+        found = visit(n, [])
+        if found:
+            return found
+    return None
 
 
 def yaml_block(text, r, section):
@@ -179,23 +247,12 @@ def lint(path, moment="auto", text=None, prompts=None):
             r.err("gate E5/close: `interview_ran` not set")
 
     # --- criteria
-    iscs = {}  # id -> (checked, text, section)
-    for sec in ("Criteria", "Bridge Criteria"):
-        for line in content.get(sec, "").splitlines():
-            m = ISC_RE.match(line)
-            if m:
-                iid = m.group(2)
-                if iid in iscs:
-                    r.err(f"criteria: duplicate id {iid}")
-                iscs[iid] = (m.group(1).lower() == "x", m.group(3), sec)
+    iscs, dupes = collect_iscs(content)
+    for iid in dupes:
+        r.err(f"criteria: duplicate id {iid}")
     if not iscs:
         r.err("criteria: no `- [ ] ISC-N:` lines")
-    dropped = {i for i, (_, t, _) in iscs.items() if t.startswith("[DROPPED")}
-    parents = {i for i in iscs if any(j.startswith(i + ".") for j in iscs)}
-    leaves = [i for i in iscs if i not in parents and i not in dropped]
-    decisions = content.get("Decisions", "")
-    waived = set(re.findall(r"waived: (ISC-\d+(?:\.\d+)*)", decisions))
-    counted = [i for i in leaves if i not in waived]
+    parents, leaves, counted = leaf_iscs(iscs, content.get("Decisions", ""))
     m_checked = sum(1 for i in counted if iscs[i][0])
     expect = f"{m_checked}/{len(counted)}"
     if str(fm.get("progress", "")).strip() != expect:
@@ -233,6 +290,10 @@ def lint(path, moment="auto", text=None, prompts=None):
             for k in need:
                 if k not in e:
                     r.err(f"Test Strategy: {e['isc']} missing `{k}`")
+            tool = e.get("tool")
+            if e.get("type") not in SELF_ATTESTED and isinstance(tool, str) and PLACEHOLDER.search(tool):
+                r.err(f"Test Strategy: {e['isc']} `tool:` holds a placeholder "
+                      f"(`{PLACEHOLDER.search(tool).group(0)}`) — write the exact command `isa verify` will run")
             if fm.get("stated_goal") and "anchors_to" not in e:
                 r.err(f"Test Strategy: {e['isc']} missing `anchors_to` (stated_goal is set)")
             if iscs.get(e["isc"], (None, ""))[1].startswith("Bridge:") and \
@@ -244,7 +305,9 @@ def lint(path, moment="auto", text=None, prompts=None):
 
     # --- features
     if "Features" in content:
-        for f in yaml_block(content["Features"], r, "Features"):
+        feats = yaml_block(content["Features"], r, "Features")
+        names = {f.get("name") for f in feats if isinstance(f, dict)}
+        for f in feats:
             if not isinstance(f, dict):
                 r.err(f"Features: entry is not a mapping: {f}")
                 continue
@@ -254,6 +317,12 @@ def lint(path, moment="auto", text=None, prompts=None):
             for s in f.get("satisfies") or []:
                 if s not in iscs:
                     r.err(f"Features: `{f.get('name')}` satisfies unknown {s}")
+            for d in f.get("depends_on") or []:
+                if d not in names:
+                    r.err(f"Features: `{f.get('name')}` depends on unknown Feature `{d}`")
+        cycle = dependency_cycle(feats)
+        if cycle:
+            r.err(f"Features: dependency cycle {' → '.join(cycle)} — no ISC in it could ever be ticked")
 
     # --- changelog: four parts per entry
     if "Changelog" in content:

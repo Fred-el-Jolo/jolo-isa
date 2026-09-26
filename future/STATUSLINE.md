@@ -1,6 +1,13 @@
 # Future B — "ISA status" status line
 
-> **Status: not built.** You have prior work on this in another repo; it will be merged in a later iteration. The LifeOS status line is deliberately **not** carried over.
+> **Status: built for Claude Code.** The data side is `isa status --session <id> [--harness H] --json` (`runtime/isa/status.py`): it follows option 2 below through the engine's own session binding, and lists the leaf ISCs `progress` counts (via `lint.collect_iscs` / `lint.leaf_iscs`, so the two never disagree). The renderer is a separate Node statusLine client in `~/dev/progress-outline`. A pi display (`ctx.ui`) can consume the same JSON later. The LifeOS status line is deliberately **not** carried over.
+
+```json
+{"bound": "/…/ISA.md", "task": "…", "effort": "E3", "phase": "build", "progress": "3/15",
+ "iteration": null, "iscs": [{"id": "ISC-1", "text": "…", "done": true}, …]}
+```
+
+With nothing bound (or the file gone) it prints `{"bound": null}` and exits 0.
 
 ## What the ISA already exposes (the data contract)
 

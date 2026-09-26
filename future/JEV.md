@@ -59,6 +59,14 @@ SDK: `@typesafe-ai/sdk` (JavaScript/TypeScript), endpoint `POST /v1/systemone`, 
 - **Output:** one advisory line injected into context, e.g. "This looks like a continuation of <slug>; it may kill ISC-7."
 - **Bonus:** it answers the status line's "which ISA is active?" question (Future B).
 
+### 4b. Does this prompt need an ISA? — UserPromptSubmit hook (stand-in built)
+
+- **Replaces:** `runtime/isa/fit.py`, a keyword/length heuristic that scores each prompt against the statement in `runtime/isa/fit.md` (strong / maybe / none + reasons). It exists so read-only work — reviews, audits, investigations, comparisons, plans — gets structured by an ISA even though the mutation gate never fires for it.
+- **State:** `{ prompt, fit_statement (fit.md), bound_isa_summary }`.
+- **Question:** **Choice** `needs_isa` / `continues_bound_isa` / `no_isa` with each option defined from fit.md; plus a **Noul** "is the outcome something the user will rely on?".
+- **Code keeps:** the small-talk / slash-command short-circuit and the output wording; callers use `fit.score()` / `fit.advice()`, so the swap is local.
+- **Why a stand-in first:** the heuristic is soft by design (context only, never a deny or Stop block). A model judgment is what would make it safe to enforce.
+
 ### 5. Splitting Test and granularity — CheckCompleteness Step 5
 
 - **Replaces:** keyword rules ("contains *and* / *all* → split"). "Black and white theme" contains *and* but is one claim.

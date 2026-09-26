@@ -4,6 +4,11 @@
     isa new <slug>               create a fresh ISA folder for this project, print the ISA.md path
     isa where                    project key and ISA folder for the current directory
     isa lint [--moment M] FILE…  mechanical gate check (same engine the hooks use)
+    isa fit "<prompt>"           would an ISA structure this work? (strong | maybe | none + reasons)
+    isa verify ISA [ISC-N…]      run the ISCs' Test Strategy probes (default: all mechanical ones) and
+                                 record the results — the only evidence a tick can rest on
+    isa status --session ID [--harness H] [--json]
+                                 the session's bound ISA: tier, phase, progress, open ISCs (read-only)
     isa hook <harness>           hook entry point: event JSON on stdin, harness JSON on stdout
 """
 import json
@@ -11,7 +16,7 @@ import os
 import sys
 import traceback
 
-from . import engine, lint, state
+from . import engine, evidence, fit, lint, state, status
 
 
 def main(argv=None):
@@ -31,6 +36,15 @@ def main(argv=None):
         os.makedirs(os.path.dirname(p), exist_ok=True)
         print(p)
         return 0
+    if cmd == "fit":
+        text = " ".join(args) if args else sys.stdin.read()
+        level, reasons = fit.score(text)
+        print(level + ("".join(f"\n  - {r}" for r in reasons)))
+        return 0
+    if cmd == "verify":
+        return _verify(args)
+    if cmd == "status":
+        return _status(args)
     if cmd == "where":
         print(f"project key: {state.project_key(os.getcwd())}\nISA folder:  {state.project_dir(os.getcwd())}")
         return 0
@@ -53,6 +67,33 @@ def _ls(args):
                   f"{str(fm.get('phase', '?')):<9} {str(fm.get('progress', '?')):<7} {fm.get('task', '')}")
     if not n:
         print(f"no ISAs under {state.project_dir(os.getcwd())}")
+    return 0
+
+
+def _verify(args):
+    timeout = 600
+    if "--timeout" in args:
+        i = args.index("--timeout")
+        timeout, args = int(args[i + 1]), args[:i] + args[i + 2:]
+    if not args:
+        print("usage: isa verify ISA.md [ISC-N…] [--timeout SECONDS]", file=sys.stderr)
+        return 2
+    return evidence.run(os.path.expanduser(args[0]), args[1:], timeout=timeout)
+
+
+def _status(args):
+    opts, i = {"--harness": "claude", "--session": None}, 0
+    while i < len(args):
+        if args[i] in opts and i + 1 < len(args):
+            opts[args[i]] = args[i + 1]
+            i += 2
+        else:
+            i += 1
+    if not opts["--session"]:
+        print("isa status: --session ID is required", file=sys.stderr)
+        return 2
+    v = status.view(opts["--harness"], opts["--session"])
+    print(json.dumps(v) if "--json" in args else status.line(v))
     return 0
 
 
@@ -97,7 +138,7 @@ def _claude_in(d):
     return {
         "harness": "claude", "session": d.get("session_id"), "event": ev, "cwd": d.get("cwd"),
         "prompt_id": d.get("prompt_id"), "source": d.get("source"), "prompt": d.get("prompt"),
-        "tool": d.get("tool_name"), "tool_input": d.get("tool_input"),
+        "tool": d.get("tool_name"), "tool_input": d.get("tool_input"), "tool_use_id": d.get("tool_use_id"),
         "temp_dirs": [d["scratchpad_dir"]] if d.get("scratchpad_dir") else [],
         "retried": bool(d.get("stop_hook_active")), "_name": name,
     }

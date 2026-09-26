@@ -138,7 +138,7 @@ The tier can change mid-run when the work reveals more (or less) than expected: 
 
 - **Done exists in writing before building.** For any non-trivial task, the ISA (Goal + Criteria at minimum) is written before the first build step.
 - **Fold discoveries in as they arrive.** Corrections from the user, failed probes, new constraints, implied wants → add, split, tighten, or kill ISCs right away. The ISA at close is not the ISA at open; an ISA untouched after a surprising discovery is stale.
-- **Check ISCs immediately.** Flip `[ ]`→`[x]` the moment tool evidence is in hand, write the evidence via Append (Verification), and recompute `progress`. Don't batch at VERIFY.
+- **Check ISCs immediately.** Run a mechanical ISC's probe through `isa verify <ISA> ISC-N`; the moment it passes, flip `[ ]`→`[x]`, paste the Verification line it prints, and recompute `progress`. Don't batch at VERIFY. The hooks enforce this: a tick without a fresh passing `isa verify` run is refused, and so is any other project change while a passed ISC waits to be ticked (IsaFormat § Test Strategy). Features tick in dependency order: an ISC whose Feature `depends_on` an unfinished Feature can't be ticked yet (IsaFormat § Features).
 - **No ISC closes without tool evidence of the right modality:** file→Read, code→Grep, command→its checked output, HTTP→`curl -i`, appearance→an image actually viewed, schema→a query, config→read-back. "Should work" never closes an ISC.
 - **Reopen after complete.** Editing the body of a `phase: complete` ISA means the work resumed: set `phase: learn`, increment `iteration` (start at 2), add `resumed_at: <ISO-8601>`, and append a Decisions row `refined: reopened after complete — <why>`. `frozen: true` opts out (the edit is a pure correction).
 - **Continuation vs new task.** A follow-up that continues the same task edits the existing ISA; a genuinely new task gets a new slug.
@@ -147,6 +147,7 @@ The tier can change mid-run when the work reveals more (or less) than expected: 
   1. Every non-dropped leaf ISC is `[x]` with a Verification entry, or waived by the user. (A nested parent is ticked once all its leaves are.)
   2. A `- Goal: yes — <evidence>` line confirms the finished result delivers the verbatim goal's intent. This is the frame-drift check: all ISCs passing doesn't prove the ISC set still covers what was asked.
   3. CheckCompleteness passes at the ISA's tier with `moment: close`.
+  4. Every mechanical tick is re-proven after the last project change: run `isa verify <ISA>` (all probes) last, then close. Self-attested ticks (`manual`, `screenshot`, `eval`, no probe) are listed to the user.
 
 ---
 

@@ -234,6 +234,14 @@ One entry per leaf ISC, as a YAML list inside a fenced block (key order doesn't 
 | `threshold` | The pass condition — the value that makes it yes/no |
 | `tool` | The exact command, file, or procedure that runs the probe |
 
+**Mechanical vs self-attested (enforced by the hooks).** Every type except `manual`, `screenshot` and `eval` is *mechanical*: its `tool` is a shell command that `isa verify <ISA> ISC-N` runs, and it **passes iff it exits 0** — so build any other threshold into the command (`test "$(… | wc -l)" -eq 12`). The `tool` must be runnable exactly as written: a placeholder (`<session-id>`, `…`) is a lint error. `isa verify` records each result in an engine-owned evidence ledger (`~/.isa/_state/evidence/`, never written by hand), and the hooks refuse:
+
+- a tick of a mechanical ISC without a passing `isa verify` run newer than the last project change;
+- any other project change while an ISC has passed `isa verify` but is not ticked yet (tick it first);
+- `phase: complete` while any mechanical tick's latest pass is older than the last project change — run `isa verify <ISA>` (every probe) after your last change, then close.
+
+`manual`, `screenshot` and `eval` ISCs — and ISCs with no Test Strategy entry (E1) — are *self-attested*: `isa verify` skips them, and a clean close lists them to the user to check.
+
 **Probe types.** Prefer these; a more specific label (`deploy-probe`, `parity-test`, …) is fine when none fits, as long as `tool` + `threshold` still make it binary.
 
 | Type | Probe form | When to use |
@@ -321,6 +329,8 @@ One YAML entry per vertical slice — an end-to-end, independently verifiable in
 
 `name` is what ephemeral mode looks up; `satisfies` lists the ISC IDs a slice worker receives; `depends_on` names other Features.
 
+**`depends_on` is enforced (dependency order).** A Feature is done when every counted leaf ISC it `satisfies` is ticked. The hooks refuse to tick an ISC of a Feature while a Feature it depends on still has open ISCs — judged on the file *before* the edit, so a dependency and its dependent are never closed in the same edit. A dependent ISC may be verified early (its pass is recorded and marked blocked, and it never freezes other work), but its pass must still be fresh when you tick it after the dependency is done. ISCs in no Feature, or in Features without `depends_on`, are unconstrained. An unknown `depends_on` name or a dependency cycle is a lint error.
+
 ### Decisions
 
 Timestamped decision log, any phase. Include dead ends — failed approaches prevent future sessions from re-exploring them.
@@ -350,6 +360,8 @@ Deutsch error-correction trail. Four parts, always, in order (see `Workflows/App
 ### Verification
 
 Evidence for each criterion (leaf and bridge), quoted from tool output, plus a closing `Goal:` line — one per iteration; a reopened ISA adds a new one and only the latest counts.
+
+For mechanical ISCs, copy the line `isa verify` prints (`- ISC-N: \`isa verify\` PASS <time> — \`<tool>\``); the ledger, not this line, is what the hooks check.
 
 ```markdown
 - ISC-1: screenshot — layout renders correctly (shot: /tmp/x.png, viewed)

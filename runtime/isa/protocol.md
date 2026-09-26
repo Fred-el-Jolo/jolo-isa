@@ -12,8 +12,15 @@ stale or a `phase: complete` claim fails the close gate.
   new ISA, read it and the closest example in {skill_dir}/Examples/ — E1 needs only `## Goal` and
   `## Criteria` (with at least one `Anti:` ISC); bigger work needs more.
 - `stated_goal` must be copied byte-for-byte from the user's prompt (the hook checks), or be null.
-- As you work: tick an ISC only with tool evidence, add its `## Verification` line, keep
-  `progress` and `phase` true. After changing project files, update the ISA before ending the turn.
+- As you work: prove each ISC with `isa verify <ISA> ISC-N` (runs its Test Strategy `tool:`; exit 0 =
+  pass) and tick it right away with the Verification line it prints; keep `progress` and `phase` true.
+  The hooks refuse a tick without a passing run newer than your last project change, and refuse other
+  changes while a passed ISC is still unticked. Probes must be exact commands (no placeholders).
+- Features tick in dependency order: an ISC whose Feature `depends_on` a Feature with open ISCs is
+  refused until that Feature is done (in an earlier edit).
+- Before `phase: complete`, run `isa verify <ISA>` (every probe) after your last change.
 - Close: `phase: complete` only when every leaf ISC is verified or user-waived and a
   `- Goal: yes — <evidence>` line confirms the result delivers the stated goal.
+- Read-only work can need an ISA too (reviews, audits, investigations, comparisons, plans): when a
+  prompt gets an `ISA fit: strong` note, structure the work with an ISA even if nothing is changed.
 - You cannot exempt yourself. If the user says to skip the ISA, write an E1 ISA that records that.
