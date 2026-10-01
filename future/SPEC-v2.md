@@ -4,7 +4,7 @@ Status: **draft for approval, not implemented.** It comes out of the 2026-10-01 
 `20261001-202941` on branch `eval-results`, and the reviews of runs A (review, no ISA) and B (bug fix,
 closed ISA). Each section says what changes, the exact behaviour, where it lives (hook / engine /
 command / skill), how it fails, and how it is tested. § Milestones orders the work.
-It folds in five review rounds from the same day; their choices are listed under § Decisions.
+It folds in six review rounds (2026-10-01/02); their choices are listed under § Decisions.
 
 ## 0. Principles
 
@@ -106,13 +106,16 @@ Stored in the session file: `mode: off|on`, `mode_reason`, `mode_since`, `mode_s
             prompt verdict yes ─────────────┐
  (new) OFF ─┤                               ▼
             prompt verdict no → stays OFF   ON  (sticky for the rest of the session)
-            mutating tool call while OFF ──▶ ON  (the call is refused, see 1.4)
+            write call while OFF ──────────▶ ON  (the call is refused, see 1.4)
+            unknown call that changed files ▶ ON  (detected after it ran, see 1.4)
 ```
 
-- **OFF → ON** on a `yes` verdict, on any `write`/`unknown` tool call made while OFF (the gate
-  misjudged; the change itself is evidence), or when an ISA is bound (`mode_source: binding`): a
-  session with a bound open ISA is always ON, so a model that wrote its ISA unprompted is not refused
-  as if it had none. Other `isa-cmd` calls (§ 3.3) never switch the mode.
+- **OFF → ON** on a `yes` verdict; on a `write` call made while OFF (the gate misjudged; the change
+  itself is evidence); on an `unknown` call that, once it ran, turns out to have changed project
+  files (`mode_source: change`); or when an ISA is bound (`mode_source: binding`): a session with a
+  bound open ISA is always ON, so a model that wrote its ISA unprompted is not refused as if it had
+  none. An `unknown` call that changed nothing leaves the session OFF: `unknown` means "can't tell",
+  not "changed". Other `isa-cmd` calls (§ 3.3) never switch the mode.
 - **ON is sticky:** a session never goes back to OFF. A new session starts OFF and undecided.
 - **A finished task doesn't end the gate.** While the bound ISA is `complete`,
   new prompts are judged again (pre-filter, then judge on `unsure`). A `yes` records
@@ -130,8 +133,9 @@ Stored in the session file: `mode: off|on`, `mode_reason`, `mode_since`, `mode_s
 | SessionStart | Injects nothing (mode undecided) | Re-injects the ON block plus the bound ISA status and its open `blocked` items (resume / compaction) |
 | UserPromptSubmit | Runs the gate. NO: user sees `ISA: OFF — <reason>`; model context gets nothing. YES: switch ON, user sees `ISA: ON — <reason>`, model gets the **ON block** | Status line of the bound ISA, or "no ISA bound yet". Bound ISA `complete`: runs the gate again (§ 1.3); YES → "new task: new ISA, or reopen" |
 | PreToolUse, read / `isa-cmd` | allow | allow (`isa verify` / `isa close` refuse their own probes before articulation, § 3.2) |
-| PreToolUse, write/unknown | **Switch ON**, refuse: "ISA: ON — this change needs an ISA first." plus the ON block | v1 gate: needs a bound ISA that passes articulation; plus the ownership rules (§ 3.3) |
-| PostToolUse | nothing | v1: lint feedback, nudges; binding and mtime refresh for `isa-cmd` (§ 3.3); tick feedback replaced by the runner (§ 4) |
+| PreToolUse, write | **Switch ON**, refuse: "ISA: ON — this change needs an ISA first." plus the ON block | v1 gate: needs a bound ISA that passes articulation; plus the ownership rules (§ 3.3) |
+| PreToolUse, unknown | Allow, taking v1's change snapshot (`changes.py`) | v1 gate, as for write |
+| PostToolUse | `unknown` that changed project files → switch ON (`mode_source: change`); Stop then requires an ISA for the turn. Otherwise nothing | v1: lint feedback, nudges; binding and mtime refresh for `isa-cmd` (§ 3.3); tick feedback replaced by the runner (§ 4) |
 | Stop | nothing | v1 checks, **plus: no bound ISA (or `needs_isa_since` unmet, § 1.3) → refuse to end the turn once, whether or not anything changed** (fixes run A) |
 
 The Stop no-ISA check runs before the "nothing happened this turn" early return in `_stop`, since a
@@ -147,6 +151,10 @@ question — a Decisions line ending in `?` — no Criteria yet) at Stop
 Stop on any later prompt with the ISA still in that shape is refused like a missing ISA. Otherwise a
 review could end every turn on a token question, which is run A again. The articulation gate still
 guards the first project change. Like every Stop refusal, it fires once per prompt.
+
+So an unknown call while OFF runs: a question answered by running code (`python3 -c …`, `pytest`)
+stays a question. Only an observed change flips the session, and then the change is already made,
+so the ISA comes after it: Stop refuses to end that turn without one, as for any change with no ISA.
 
 User-visible lines go through `systemMessage` in Claude Code and `ctx.ui.notify` in pi.
 
@@ -164,7 +172,8 @@ the numbered completion rules), then:
    with frontmatter, stated_goal, asks and root filled, and binds it to this session.
 2. Write Goal, Criteria (≥1 `Anti:`), Test Strategy with Write/Edit — never with shell commands.
 3. `isa lint <ISA>` until clean; changes are refused until it is.
-4. Write each test, run `isa verify --red <ISA>` (it must fail), then build. Prove criteria with
+4. For behaviour/http/schema criteria, write the test and run `isa verify --red <ISA>` (it must
+   fail) before building. Prove criteria with
    `isa verify <ISA> [ISC-N…]` — it runs the probes and ticks what passed. Self-attested criteria:
    `isa verify <ISA> ISC-N --attest "<evidence>"`. You never tick boxes yourself.
 5. Finish with `isa close <ISA>` — it re-proves everything and closes. Your final answer quotes its summary.
@@ -534,9 +543,9 @@ The `#L<n>` reference lets a reader (or lint) check the line against the ledger.
 |---|---|
 | `_prompt` | Gate (§ 1.2) while OFF or while the bound ISA is `complete` (→ `needs_isa_since`, § 1.3); logs `cwd` and `project` with the prompt; mode switch, ON block on the OFF → ON transition, user-visible mode line. The fit advice is removed |
 | `_session_start` | OFF/undecided: nothing. ON: ON block + status + open `blocked` items + Goal/open ISCs after compaction (v1 content) |
-| `_pre_tool` | `isa-cmd` → allow. OFF + mutation → switch ON + refuse. ON: v1 gate + ownership rules (§ 3.3); the pending-tick refusal is **removed** (the runner ticks); no red-baseline gate (§ 4.6) |
+| `_pre_tool` | `isa-cmd` → allow. OFF + write → switch ON + refuse. OFF + unknown → allow with the change check (snapshot here, verdict in `_post_tool`, § 1.4). ON: v1 gate + ownership rules (§ 3.3); the pending-tick refusal is **removed** (the runner ticks); no red-baseline gate (§ 4.6) |
 | `_tick_gate` | Replaced by the ownership check: the model can't tick at all |
-| `_post_tool` | Tick-related feedback removed; lint feedback kept; 5-change nudge kept; `isa-cmd`: mtime refresh, and binding of the path `isa new` printed; any binding switches the session ON (§ 1.3); new nudge: failed `isa verify` → "claim wrong or code wrong?" (rule 14) |
+| `_post_tool` | OFF: an `unknown` call that changed project files switches ON (`mode_source: change`). ON: tick-related feedback removed; lint feedback kept; 5-change nudge kept; `isa-cmd`: mtime refresh, and binding of the path `isa new` printed; any binding switches the session ON (§ 1.3); new nudge: failed `isa verify` → "claim wrong or code wrong?" (rule 14) |
 | `_stop` | ON + no bound ISA, or `needs_isa_since` with no ISA bound after it → block once with the two-exit text (§ 1.4), checked before the "nothing happened this turn" early return; the scaffold exit only on the creating prompt; hook-side lint (§ 3.1); no fingerprint work (§ 4.2); a turn let through with problems open → `blocked` ledger row with item codes (§ 4.5) |
 | `ISA_JUDGE_CHILD` | Every event → `{}` |
 
@@ -706,7 +715,9 @@ return, two-exit text, lint accepting a `context_sufficient: false` scaffold on 
 only), `ISA_MODE`, `ISA_JUDGE_CHILD`, new `protocol.md` (ON block), `fit.py` pre-filter verdicts
 (advice removed), installer timeout, pi `ISA_PROMPT_TIMEOUT_MS`, assistant context forwarded by both
 adapters and logged in the prompt row. Tests: state machine (OFF stays OFF
-on no, OFF → ON on yes/mutation, sticky ON), judge backends with a fake `claude`/`pi` on PATH and a
+on no, OFF → ON on yes / write / a changing unknown call, sticky ON;
+an unknown command that changes nothing keeps an OFF session OFF), judge backends with a fake
+`claude`/`pi` on PATH and a
 fake API server, `auto` never picks `api`, timeout → ON, pi prompt timeout above the judge timeout,
 recursion guard, "go" pre-filtered `unsure` and judged `yes` when the previous assistant message
 proposed a review (fake transcript), Stop blocks ON + no ISA on a turn with no change, the scaffold
@@ -825,3 +836,11 @@ Taken in the fifth review round (same day; all findings double-checked, none fal
 24. **v1 classifier fix shipped alongside:** a backtick or `$(` inside single quotes is text, not
     command substitution. Under v2 the old behaviour would have switched an OFF session ON on a
     read-only `grep` of markdown.
+
+Taken in the sixth review round:
+
+25. **OFF splits by kind:** a `write` switches ON and is refused; an `unknown` call runs, and
+    switches ON only if v1's change check sees it changed project files (§ 1.3, § 1.4, § 5). A
+    question answered by running code stays a question.
+26. **Red is conditional in the ON block:** only behaviour/http/schema criteria get the red step,
+    matching § 4.6.
