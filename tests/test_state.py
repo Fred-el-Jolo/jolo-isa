@@ -37,6 +37,17 @@ class TestKeys(unittest.TestCase):
         self.assertEqual(state.project_key(H), "_home")
         self.assertTrue(state.project_key("/etc").startswith("root-etc") or state.project_key("/etc") == "root-etc")
 
+    def test_cwd_inside_isa_home_maps_to_its_project(self):
+        os.environ["ISA_HOME"] = os.path.join(self.repo, "home")
+        try:
+            folder = os.path.join(self.repo, "home", "dev-app", "20261001-120000_task")
+            os.makedirs(os.path.join(folder, "_ephemeral"))
+            self.assertEqual(state.project_key(folder), "dev-app")
+            self.assertEqual(state.project_key(os.path.join(folder, "_ephemeral")), "dev-app")
+            self.assertEqual(state.project_dir(folder), os.path.join(self.repo, "home", "dev-app"))
+        finally:
+            del os.environ["ISA_HOME"]
+
     def test_isa_paths(self):
         os.environ["ISA_HOME"] = os.path.join(self.repo, "home")
         try:

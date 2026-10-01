@@ -45,6 +45,12 @@ def project_root(cwd):
 
 
 def project_key(cwd):
+    # a cwd inside an ISA folder belongs to that ISA's project, not to a project named after ~/.isa
+    d, h_isa = os.path.realpath(cwd or os.getcwd()), os.path.realpath(home())
+    if (d + os.sep).startswith(h_isa + os.sep):
+        first = os.path.relpath(d, h_isa).split(os.sep)[0]
+        if first not in (".", "_state"):
+            return first
     root = project_root(cwd)
     h = os.path.realpath(os.path.expanduser("~"))
     if root == h:
