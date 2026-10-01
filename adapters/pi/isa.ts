@@ -9,6 +9,7 @@
 //   tool_result         → engine "post_tool" / "tool_failed" → lint feedback appended to the result
 //   session_compact     → engine "compacted"     → protocol + Goal re-injected on the next run
 //   agent_before_settle → engine "stop"          → one continuation per prompt, then a warning
+//                          (completed runs only — never after an abort or an error)
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { spawnSync } from "node:child_process"
 import { homedir } from "node:os"
@@ -33,6 +34,9 @@ export function callEngine(payload: Record<string, unknown>): EngineResult {
 
 export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine = callEngine) {
   let promptSeq = 0
+  // prompt ids key the engine's "block once per prompt" memory, which outlives this process (resumed
+  // sessions keep their state), so each process gets its own prefix
+  const runId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
   let startedFor = "" // session id whose protocol has been injected
   let compacted = false
 
@@ -53,7 +57,7 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
   }
   const run = (ctx: ExtensionContext, event: string, extra: Record<string, unknown> = {}): EngineResult => {
     try {
-      const res = engine({ event, session: sessionId(ctx), cwd: ctx.cwd, prompt_id: `pi-${promptSeq}`, ...extra })
+      const res = engine({ event, session: sessionId(ctx), cwd: ctx.cwd, prompt_id: `pi-${runId}-${promptSeq}`, ...extra })
       if (res.warn) warn(ctx, res.warn)
       return res
     } catch (e) {
@@ -97,7 +101,9 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
     return { content: [...event.content, { type: "text" as const, text: `\n[ISA] ${res.context}` }] }
   })
 
-  pi.on("agent_before_settle", (_event, ctx) => {
+  pi.on("agent_before_settle", (event, ctx) => {
+    // only a run that finished normally is checked: never restart one the user aborted or that errored
+    if (event.outcome !== "completed" || event.context?.canContinue === false) return
     const res = run(ctx, "stop")
     if (!res.block) return
     return {

@@ -2,8 +2,9 @@
 Before changing anything (files, git, installs, remote systems) this session must have an ISA: one
 markdown file stating what "done" means as testable criteria. Reading, searching and answering
 questions are never gated. The hooks deny mutating tool calls until the ISA exists and passes the
-completeness gate, lint every ISA edit, and refuse (once per prompt) to end a turn while the ISA is
-stale or a `phase: complete` claim fails the close gate.
+completeness gate, lint every ISA edit, and refuse (once per prompt) to end a turn that leaves a real
+ISA problem (a passed ISC unticked, lint errors, everything ticked but not closed) or a `complete`
+claim that fails the close gate.
 
 - Where: {project_dir}/<YYYYMMDD-HHMMSS>_<kebab-slug>/ISA.md  (`isa new <slug>` prints a fresh path;
   `isa ls` lists this project's ISAs). Writing or editing an ISA.md binds it to this session.
@@ -18,7 +19,10 @@ stale or a `phase: complete` claim fails the close gate.
   changes while a passed ISC is still unticked. Probes must be exact commands (no placeholders).
 - Features tick in dependency order: an ISC whose Feature `depends_on` a Feature with open ISCs is
   refused until that Feature is done (in an earlier edit).
-- Before `phase: complete`, run `isa verify <ISA>` (every probe) after your last change.
+- Before `phase: complete`, run `isa verify <ISA>` (every probe) after your last change. When every
+  criterion is ticked, close in that same turn (Goal line + `phase: complete`) or add what is missing.
+- Fold what a turn taught you into the ISA as it happens (Decisions, dead ends, new or split ISCs) —
+  no hook can see that for you. Don't edit the ISA just to bump `updated`.
 - Close: `phase: complete` only when every leaf ISC is verified or user-waived and a
   `- Goal: yes — <evidence>` line confirms the result delivers the stated goal.
 - Read-only work can need an ISA too (reviews, audits, investigations, comparisons, plans): when a

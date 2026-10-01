@@ -68,7 +68,7 @@ def is_isa_path(path):
     if not (p + os.sep).startswith(h + os.sep):
         return False
     rel = os.path.relpath(p, h).split(os.sep)
-    return len(rel) >= 1 and rel[0] != "." and not rel[0].startswith("_")
+    return len(rel) >= 1 and rel[0] not in (".", "_state")  # _state is engine-owned; _home/_root are projects
 
 
 def is_master_isa(path):
@@ -96,6 +96,59 @@ def frontmatter(path):
     except yamlish.YamlError:
         return {}
     return fm if isinstance(fm, dict) else {}
+
+
+def isa_home_key(isa_path):
+    """The project folder an ISA was filed under (its real location, not a link)."""
+    real = os.path.realpath(isa_path)
+    return os.path.basename(os.path.dirname(os.path.dirname(real)))
+
+
+def note_project(isa_path, key):
+    """Record that the session bound to `isa_path` changed files in project `key`. The ISA stays filed in
+    its home project; every other project gets a link `~/.isa/<key>/<slug>` → the ISA folder, so
+    `isa ls` there lists it. Idempotent. → True when `key` was new for this ISA."""
+    folder = os.path.dirname(os.path.realpath(isa_path))
+    index = os.path.join(folder, ".projects.json")
+    try:
+        with open(index) as f:
+            keys = json.load(f)
+    except (OSError, ValueError):
+        keys = []
+    if key in keys:
+        return False
+    keys.append(key)
+    tmp = index + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(keys, f)
+    os.replace(tmp, index)
+    if key != isa_home_key(isa_path):
+        link = os.path.join(home(), key, os.path.basename(folder))
+        if not os.path.lexists(link):
+            os.makedirs(os.path.dirname(link), exist_ok=True)
+            os.symlink(folder, link)
+    return True
+
+
+def projects_of(isa_path):
+    try:
+        with open(os.path.join(os.path.dirname(os.path.realpath(isa_path)), ".projects.json")) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return []
+
+
+def is_scratch_dir(d):
+    """A cwd that is no project at all: a non-git directory under a temp root (a scratchpad, /tmp/x)."""
+    root = project_root(d)
+    if os.path.exists(os.path.join(root, ".git")):
+        return False
+    real = os.path.realpath(root)
+    for t in {"/tmp", "/var/tmp", "/dev/shm", os.environ.get("TMPDIR", "/tmp")}:
+        t = os.path.realpath(t)
+        if (real + os.sep).startswith(t + os.sep):
+            return True
+    return False
 
 
 def list_isas(key=None, cwd=None):

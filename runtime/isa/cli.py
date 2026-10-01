@@ -53,7 +53,7 @@ def main(argv=None):
 
 
 def _ls(args):
-    keys = sorted(k for k in os.listdir(state.home()) if not k.startswith("_")) \
+    keys = sorted(k for k in os.listdir(state.home()) if k not in ("_state",) and not k.startswith(".")) \
         if "--all" in args and os.path.isdir(state.home()) else [state.project_key(os.getcwd())]
     n = 0
     for key in keys:
@@ -63,8 +63,10 @@ def _ls(args):
         print(f"{key}/")
         for p, fm in rows:
             n += 1
+            linked = os.path.islink(os.path.dirname(p))
             print(f"  {os.path.basename(os.path.dirname(p)):<52} {str(fm.get('effort', '?')):<3} "
-                  f"{str(fm.get('phase', '?')):<9} {str(fm.get('progress', '?')):<7} {fm.get('task', '')}")
+                  f"{str(fm.get('phase', '?')):<9} {str(fm.get('progress', '?')):<7} {fm.get('task', '')}"
+                  + (f"  (filed in {state.isa_home_key(p)})" if linked else ""))
     if not n:
         print(f"no ISAs under {state.project_dir(os.getcwd())}")
     return 0

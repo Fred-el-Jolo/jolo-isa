@@ -59,17 +59,47 @@ test("mutating tool is blocked until an ISA is bound", () => {
   assert.equal(fire("tool_call", { toolName: "write", input: { path: join(PROJ, "x.py"), content: "x" } }), undefined)
 })
 
-test("stale ISA: exactly one continuation per prompt", () => {
-  const { fire, notes } = harness("s-settle")
+const DONE = { outcome: "completed", context: { canContinue: true } }
+
+// a turn that leaves a real ISA problem (progress lies) after a project change
+function problemTurn(fire: Function) {
   fire("before_agent_start", { prompt: "do it" })
-  const p = isaPath(); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, E1)
+  const p = isaPath(); mkdirSync(dirname(p), { recursive: true })
+  writeFileSync(p, E1.replace("progress: 0/4", "progress: 4/4"))
   fire("tool_result", { toolName: "write", input: { path: p }, content: [], isError: false })
   fire("tool_result", { toolName: "edit", input: { path: join(PROJ, "x.py") }, content: [], isError: false })
-  const first = fire("agent_before_settle", {})
+}
+
+test("real ISA problem: exactly one continuation per prompt", () => {
+  const { fire, notes } = harness("s-settle")
+  problemTurn(fire)
+  const first = fire("agent_before_settle", DONE)
   assert.equal(first.continue, true)
-  assert.match(first.entries[0].content, /changed after the ISA's last update/)
-  assert.equal(fire("agent_before_settle", {}), undefined)
+  assert.match(first.entries[0].content, /progress `4\/4` but criteria say 0\/4/)
+  assert.equal(fire("agent_before_settle", DONE), undefined)
   assert.ok(notes.some((n) => /ending the turn anyway/.test(n)))
+})
+
+test("a run the user aborted is never continued", () => {
+  const { fire } = harness("s-aborted")
+  problemTurn(fire)
+  assert.equal(fire("agent_before_settle", { outcome: "aborted", context: { canContinue: true } }), undefined)
+})
+
+test("a run that ended in an error outcome is never continued", () => {
+  const { fire } = harness("s-error")
+  problemTurn(fire)
+  assert.equal(fire("agent_before_settle", { outcome: "error", context: { canContinue: true } }), undefined)
+  assert.equal(fire("agent_before_settle", { outcome: "completed", context: { canContinue: false } }), undefined)
+})
+
+test("a resumed session (new pi process) still blocks its first turn", () => {
+  const first = harness("s-resume")  // pi process 1
+  problemTurn(first.fire)
+  assert.equal(first.fire("agent_before_settle", DONE).continue, true)
+  const again = harness("s-resume")  // pi process 2, same session id, prompt counter restarts
+  problemTurn(again.fire)
+  assert.equal(again.fire("agent_before_settle", DONE).continue, true)
 })
 
 test("engine failure fails open with a warning", () => {

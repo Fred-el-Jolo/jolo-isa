@@ -231,11 +231,17 @@ class TestStop(HookCase):
         self.assertEqual((code, out, err), (0, {}, ""))
 
     def test_stop_stale(self):
+        """Seamless Stop: a change after the last ISA edit is not a problem by itself …"""
         self.write_isa(E1)
+        self.post_edit_project()
+        self.assertEqual(self.hook("Stop", stop_hook_active=False)[:3:2], (0, ""))
+        # … a real problem (here: progress that lies) blocks once, then ends with a visible warning
+        self.pid = "p-lie"
+        self.write_isa(E1.replace("progress: 0/4", "progress: 4/4"))
         self.post_edit_project()
         code, _, err = self.hook("Stop", stop_hook_active=False)
         self.assertEqual(code, 2)
-        self.assertIn("changed after the ISA's last update", err)
+        self.assertIn("progress `4/4` but criteria say 0/4", err)
         code, out, _ = self.hook("Stop", stop_hook_active=True)
         self.assertEqual(code, 0)
         self.assertIn("ending the turn anyway", out.get("systemMessage", ""))
@@ -255,7 +261,7 @@ class TestStop(HookCase):
         self.assertIn("Goal: yes|no", err)
 
     def test_stop_once(self):
-        self.write_isa(E1)
+        self.write_isa(E1.replace("progress: 0/4", "progress: 4/4"))  # a real problem: progress lies
         self.post_edit_project()
         codes = [self.hook("Stop", stop_hook_active=False)[0] for _ in range(3)]
         self.assertEqual(codes, [2, 0, 0])
@@ -307,10 +313,13 @@ class TestShellIsaEdit(HookCase):
         self.assertEqual(self.session()["since_isa"], 0)
 
     def test_untouched_isa_still_stale(self):
+        """A shell command that doesn't touch the ISA is not an ISA edit (the change stays newer)."""
         self.write_isa(E1)
         self.post_edit_project()
         self.hook("PostToolUse", tool_name="Bash", tool_input={"command": "ls"}, tool_response={})
-        self.assertEqual(self.hook("Stop", stop_hook_active=False)[0], 2)
+        with open(os.path.join(self.home, "_state", "sessions", f"claude-{self.sid}.json")) as f:
+            st = json.load(f)
+        self.assertGreater(st["last_mutation"], st["last_isa_edit"])
 
 
 class TestFailOpen(HookCase):

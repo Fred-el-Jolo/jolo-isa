@@ -167,7 +167,8 @@ def _compacted(ev):
 
 def _prompt(ev):
     state.log_prompt(ev["harness"], ev["session"], ev.get("prompt", ""), ev.get("prompt_id"))
-    st = state.read_session(ev["harness"], ev["session"])
+    with state.session(ev["harness"], ev["session"]) as st:
+        st["prompt_started"] = time.time()  # Stop only checks turns where something happened after this
     bound = _bound(st)
     level, reasons = fit.score(ev.get("prompt", ""))
     # an open bound ISA means the prompt most likely continues it: no fit advice then
@@ -195,13 +196,21 @@ def _pre_tool(ev):
     bound = _bound(st)
     cwd = ev.get("cwd")
     if not bound:
-        listing = _project_listing(cwd)
+        base = _target_base(ev) or cwd  # file the ISA where the change lands, not where the session started
+        listing = _project_listing(base)
         return {"deny": (
             f"ISA gate: this {kind} call is refused because no ISA is bound to this session yet. "
-            f"Write the ISA first — e.g. {_tilde(state.new_isa_path(cwd, 'your-task'))} "
+            f"Write the ISA first — e.g. {_tilde(state.new_isa_path(base, 'your-task'))} "
             f"(read {_tilde(skill_dir())}/SKILL.md and the closest example first; E1 = `## Goal` + `## Criteria` "
             "with ≥1 `Anti:` ISC). Writing it binds it to this session; then retry this call."
             + ("\n" + listing if listing else ""))}
+    if state.frontmatter(bound).get("phase") == "complete":
+        # a finished ISA is not a current task: never re-gate it against today's rules
+        return {"deny": (
+            f"ISA gate: the bound ISA {_tilde(bound)} is complete, so this {kind} call has no open task. "
+            f"For new work write a new ISA — e.g. {_tilde(state.new_isa_path(cwd, 'your-task'))}. To continue "
+            "the finished work instead, reopen it: set `phase: learn`, increment `iteration`, add `resumed_at` "
+            "and a `refined: reopened after complete — <why>` Decision. Then retry this call.")}
     errors, _ = _lint(bound, "articulation", ev["harness"], ev["session"])
     if errors:
         return {"deny": f"ISA gate: {_tilde(bound)} does not pass the articulation gate yet, so building is refused. "
@@ -213,7 +222,7 @@ def _pre_tool(ev):
                         f"{'is' if len(pending) == 1 else 'are'} not ticked in {_tilde(bound)}. Tick "
                         f"{'it' if len(pending) == 1 else 'them'} (with the Verification line `isa verify` printed) "
                         "before moving on to the next change."}
-    if ev.get("tool") in classify.SHELL_TOOLS and kind == "unknown":
+    if ev.get("tool") in classify.SHELL_TOOLS and kind == "unknown" and not state.is_scratch_dir(cwd):
         snap = changes.snapshot(state.project_root(cwd))
         if snap:
             with state.session(ev["harness"], ev["session"]) as s:
@@ -320,6 +329,25 @@ def _script_changed(ev, st):
     return bool(snap) and changes.changed(snap, state.project_root(ev.get("cwd")))
 
 
+def _target_base(ev):
+    """Directory of the first project file a file tool is about to change (None for shell / other tools)."""
+    if ev.get("tool") not in classify.FILE_TOOLS:
+        return None
+    for p in classify.tool_paths(ev.get("tool_input")):
+        full = p if os.path.isabs(os.path.expanduser(p)) else os.path.join(ev.get("cwd") or "", p)
+        if classify.path_kind(full, ev.get("cwd"), ev.get("temp_dirs", ())) == "project":
+            return os.path.dirname(os.path.realpath(os.path.expanduser(full)))
+    return None
+
+
+def _changed_projects(ev, kind):
+    """Project keys a counted change landed in: by file path for file tools, by cwd for shell commands."""
+    if ev.get("tool") in classify.FILE_TOOLS:
+        base = _target_base(ev)
+        return [state.project_key(base)] if base else []
+    return [state.project_key(ev.get("cwd"))]
+
+
 def _count_change(st, now, out):
     st["last_mutation"] = now
     st["mutations"] += 1
@@ -339,7 +367,7 @@ def _post_tool(ev):
     kind, isa_paths = classify.classify(tool, ti, cwd, ev.get("temp_dirs", ()))
     masters = [p for p in isa_paths if state.is_master_isa(os.path.join(cwd or "", os.path.expanduser(p)))]
     now = time.time()
-    out = []
+    out, touched = [], []
     with state.session(ev["harness"], ev["session"]) as st:
         # the bound ISA changed on disk without a file-tool path naming it (a shell edit: heredoc,
         # `sed -i`, a script): that call was an ISA edit, not a project change
@@ -362,8 +390,14 @@ def _post_tool(ev):
             st["last_isa_edit"] = now  # ephemeral slice or probe file inside the ISA folder
         elif kind == "write" or (kind == "unknown" and tool in classify.SHELL_TOOLS and _script_changed(ev, st)):
             _count_change(st, now, out)
+            touched = _changed_projects(ev, kind)
         bound = _bound(st)
         last_mutation = st["last_mutation"]
+    if bound:
+        for key in touched:
+            if state.note_project(bound, key) and key != state.isa_home_key(bound):
+                out.append(f"This ISA now also covers project `{key}` (changed files there); "
+                           f"`isa ls` in that project lists it.")
     if (masters or shell_edit) and bound:
         errors, warns = _lint(bound, "auto", ev["harness"], ev["session"])
         if errors:
@@ -400,6 +434,17 @@ def _tool_failed(ev):
         return {"context": "A command failed. If it was an ISC probe, that ISC stays unticked — fold what the "
                            "failure taught you into the ISA (split, tighten, or add an ISC; log a Decision)."}
     return {}
+
+
+def _unclosed(bound):
+    """Every counted criterion is ticked but the ISA is still open: the close (and its Goal line) is due."""
+    parsed = _parsed(bound)
+    if not parsed or not parsed["counted"] or not all(i in evidence.ticked(parsed) for i in parsed["counted"]):
+        return []
+    phase = state.frontmatter(bound).get("phase", "?")
+    return [f"every criterion of {_tilde(bound)} is ticked but `phase` is still `{phase}` — close it: run "
+            f"`isa verify {_tilde(bound)}` last, write the `- Goal: yes|no — …` line and set `phase: complete`; "
+            "or add the criterion that is still missing"]
 
 
 def _evidence_problems(bound, last_mutation, closing):
@@ -454,21 +499,24 @@ def _stop(ev):
         bound = _bound(st)
         if _isa_touched(st):  # edited by a call whose PostToolUse never ran (e.g. a failed command)
             st["last_isa_edit"] = time.time()
-        problems = []
-        if st["mutations"] and not bound:
-            problems.append("project files were changed but no ISA is bound to this session — write one now "
-                            "that records what was done and how it was verified")
-        if bound:
-            if st["last_mutation"] > st["last_isa_edit"]:
-                problems.append("project files changed after the ISA's last update — tick what is verified "
-                                "(with `## Verification` lines), add what you learned, and set `phase` / "
-                                "`progress` to the truth before stopping")
-            errors, _ = _lint(bound, "auto", ev["harness"], ev["session"])
-            closing = state.frontmatter(bound).get("phase") == "complete"
-            if errors:
-                what = "the close gate (`phase: complete`)" if closing else "lint"
-                problems.append(f"{_tilde(bound)} fails {what}:\n{_fmt(errors)}")
-            problems += _evidence_problems(bound, st["last_mutation"], closing)
+        started = st.get("prompt_started", 0.0)
+        if started and st["last_mutation"] < started and st["last_isa_edit"] < started:
+            return {}  # nothing happened this turn: nothing to check
+        mutations, last_mutation = st["mutations"], st["last_mutation"]
+    problems = []
+    if mutations and not bound:
+        problems.append("project files were changed but no ISA is bound to this session — write one now "
+                        "that records what was done and how it was verified")
+    if bound:  # reads the ISA, the ledger and session state only — never runs a probe
+        errors, _ = _lint(bound, "auto", ev["harness"], ev["session"])
+        closing = state.frontmatter(bound).get("phase") == "complete"
+        if errors:
+            what = "the close gate (`phase: complete`)" if closing else "lint"
+            problems.append(f"{_tilde(bound)} fails {what}:\n{_fmt(errors)}")
+        problems += _evidence_problems(bound, last_mutation, closing)
+        if not closing and not errors:
+            problems += _unclosed(bound)
+    with state.session(ev["harness"], ev["session"]) as st:
         if not problems:
             return _attested_notice(st, bound)
         already = st["stop_blocks"].get(pid, 0) >= 1 or ev.get("retried")
