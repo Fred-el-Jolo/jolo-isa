@@ -4,7 +4,7 @@ Status: **draft for approval, not implemented.** It comes out of the 2026-10-01 
 `20261001-202941` on branch `eval-results`, and the reviews of runs A (review, no ISA) and B (bug fix,
 closed ISA). Each section says what changes, the exact behaviour, where it lives (hook / engine /
 command / skill), how it fails, and how it is tested. § Milestones orders the work.
-It folds in four review rounds from the same day; their choices are listed under § Decisions.
+It folds in five review rounds from the same day; their choices are listed under § Decisions.
 
 ## 0. Principles
 
@@ -55,10 +55,13 @@ Answer: `yes` or `no`, plus a one-line reason. Examples:
      review, migrate, deploy…), or an explicit ISA mention. These skip the judge (a false YES is the
      accepted cost, § 1.7);
    - `unsure` for everything else.
+
+   The rules apply in this order: greeting/thanks → `no`, short affirmative → `unsure`, work verb →
+   `yes`. So "fix these" is `unsure` (judged with context), not `yes`.
 2. **Judge call**, only when the pre-filter says `unsure` and the session is OFF, or ON with its bound
-   ISA `complete` (§ 1.3). An ON session with an open ISA is never re-judged. No verdict cache:
-   identical prompts within one OFF session are rare, and the
-   pre-filter already answers the short repeated ones ("thanks", "ok").
+   ISA `complete` (§ 1.3). An ON session with an open ISA is never re-judged. No verdict cache: the
+   same prompt rarely repeats within one OFF session, and a repeated "ok" may mean something else
+   each time, since its context changes.
 3. **The verdict is recorded** in session state and in `~/.isa/_state/judge.jsonl`:
    `{t, harness, session, prompt_id, source: prefilter|judge|override|error, verdict, reason, ms}`.
 
@@ -305,6 +308,9 @@ called it, so there is no session default. Exit codes: 0 ok · 1 check failed ·
   - `asks`: extracted from that prompt, with the previous assistant message as context (§ 1.2), by
     the judge (`asks_extract`, § 7). On a judge error the list is left empty with a comment, and the
     model writes it.
+  - The context reaches `isa new` through the log: `_prompt`, which has the hook input,
+    stores the tail of the previous assistant message in the prompt row
+    (`{t, id, text, cwd, project, context}`), and `isa new` reads it from the row it uses.
 - The real check happens at binding: the binding hook checks the span against this session's logged
   prompts (v1 `stated_goal` rule) and reports a mismatch as lint feedback, and Stop refuses while it
   stands.
@@ -408,9 +414,8 @@ refuses.
 
 ```json
 {"v": 2, "t": 1759350000.1, "isc": "ISC-2", "kind": "verify|attest|close",
- "run": "green|red", "tool_sha": "…", "files": {"tests/test_x.py": "sha256:…"}, "ok": true,
- "exit": 0, "secs": 0.04,
- "root": "/home/u/dev/app", "cwd": "/home/u/dev/app",
+ "run": "green|red", "tool_sha": "…", "files": {"tests/test_x.py": "sha256:…"},
+ "ok": true, "exit": 0, "secs": 0.04, "root": "/home/u/dev/app", "cwd": "/home/u/dev/app",
  "fingerprint": "sha256:…", "tail": "last 800 chars", "evidence": null}
 ```
 
@@ -535,8 +540,13 @@ The `#L<n>` reference lets a reader (or lint) check the line against the ledger.
 | `_stop` | ON + no bound ISA, or `needs_isa_since` with no ISA bound after it → block once with the two-exit text (§ 1.4), checked before the "nothing happened this turn" early return; the scaffold exit only on the creating prompt; hook-side lint (§ 3.1); no fingerprint work (§ 4.2); a turn let through with problems open → `blocked` ledger row with item codes (§ 4.5) |
 | `ISA_JUDGE_CHILD` | Every event → `{}` |
 
-pi adapter: `before_agent_start` already carries the prompt event and `agent_before_settle` the Stop.
-One change: the `prompt` engine call uses `ISA_PROMPT_TIMEOUT_MS` (§ 1.2) instead of the 5 s default.
+Adapters (the context of § 1.2 needs plumbing on both sides):
+- Claude Code: `_claude_in` (`cli.py`) forwards transcript_path from the hook input into the engine
+  event; `_prompt` reads the last assistant message from that JSONL file.
+- pi: `before_agent_start` already carries the prompt event and `agent_before_settle` the Stop. Two
+  changes: the `prompt` engine call uses `ISA_PROMPT_TIMEOUT_MS` (§ 1.2) instead of the 5 s default,
+  and it passes the tail of the last assistant message from the session (today it sends only
+  `{prompt}`).
 
 ---
 
@@ -630,7 +640,9 @@ Promotion from advisory to blocking is a later decision, made on eval data (fals
 ## 8. Migration
 
 - **Finished ISAs** (`phase: complete`) are never re-linted against v2 rules (v1 principle).
-- **Open v1 ISAs:** no `root` → `isa verify` writes it on its first run (cwd's project root). No
+- **Open v1 ISAs:** no `root` → `isa verify` writes it on its first run (cwd's project root). When
+  that cwd is inside `ISA_HOME`, it refuses instead (exit 2, "no root: run it from the project"),
+  since the ISA folder has no git root and would become the root (same rule as `isa new`, § 3.2). No
   `kind:`, no `risk:` declaration, or a `waived:` row without a quote → warning, not error, for ISAs
   whose `started` predates v2. v1 ledger rows → no red baseline (§ 4.1).
 - **Running sessions:** the hooks call the installed runtime on every event, so sessions running
@@ -692,7 +704,8 @@ Each milestone is one ISA, ends with the full unit suite green, and changes noth
 `engine._prompt/_session_start/_pre_tool/_stop` mode logic (Stop no-ISA check before the early
 return, two-exit text, lint accepting a `context_sufficient: false` scaffold on the creating prompt
 only), `ISA_MODE`, `ISA_JUDGE_CHILD`, new `protocol.md` (ON block), `fit.py` pre-filter verdicts
-(advice removed), installer timeout, pi `ISA_PROMPT_TIMEOUT_MS`. Tests: state machine (OFF stays OFF
+(advice removed), installer timeout, pi `ISA_PROMPT_TIMEOUT_MS`, assistant context forwarded by both
+adapters and logged in the prompt row. Tests: state machine (OFF stays OFF
 on no, OFF → ON on yes/mutation, sticky ON), judge backends with a fake `claude`/`pi` on PATH and a
 fake API server, `auto` never picks `api`, timeout → ON, pi prompt timeout above the judge timeout,
 recursion guard, "go" pre-filtered `unsure` and judged `yes` when the previous assistant message
@@ -801,3 +814,14 @@ Taken in the fourth review round (same day, after installing the `project_key` f
     changes between red and green, so matching on it would drop every baseline (§ 4.6).
 20. **Per-entry `root` is a path relative to `$HOME`** (§ 4.3), and `isa new` inside an ISA folder
     takes `root` from that ISA (§ 3.2).
+
+Taken in the fifth review round (same day; all findings double-checked, none false):
+
+21. **Assistant context is logged with the prompt** (`context` in the prompt row), so `isa new`
+    can use it without a session; both adapters forward it (§ 3.2, § 5).
+22. **Pre-filter rule order is explicit**, and "ok" is no longer claimed to be answered without the
+    judge (§ 1.2).
+23. **A v1 ISA without `root`** is never given one from a cwd inside `ISA_HOME` (§ 8).
+24. **v1 classifier fix shipped alongside:** a backtick or `$(` inside single quotes is text, not
+    command substitution. Under v2 the old behaviour would have switched an OFF session ON on a
+    read-only `grep` of markdown.

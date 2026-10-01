@@ -147,7 +147,8 @@ def bash(cmd, cwd, temp_dirs=()):
     if ">(" in cmd:
         return "unknown", []
     cmd = cmd.replace("<(", " ; ")  # process substitution: judge the inner command on its own
-    if "$(" in cmd or "`" in cmd:
+    outside = _without_single_quoted(cmd)  # inside '…' a backtick or $( is plain text
+    if "$(" in outside or "`" in outside:
         # command substitution can hide anything; judge the visible parts, never better than unknown
         visible = re.sub(r"\$\([^)]*\)|`[^`]*`", "X", cmd)
         k, isa = bash(visible, cwd, temp_dirs) if visible != cmd else ("unknown", [])
@@ -168,6 +169,29 @@ def bash(cmd, cwd, temp_dirs=()):
         else:
             seg.append(t)
     return worst, isa
+
+
+def _without_single_quoted(cmd):
+    """`cmd` with the contents of single-quoted spans removed. Double quotes are kept: the shell
+    still expands `…` and $( inside them. A backslash outside quotes escapes the next character."""
+    out, i, n, dq = [], 0, len(cmd), False
+    while i < n:
+        c = cmd[i]
+        if c == "\\" and i + 1 < n:
+            out.append(cmd[i:i + 2])
+            i += 2
+            continue
+        if c == '"':
+            dq = not dq
+        elif c == "'" and not dq:
+            j = cmd.find("'", i + 1)
+            if j < 0:
+                return cmd  # unbalanced: leave it to the tokenizer, which reports it
+            i = j + 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
