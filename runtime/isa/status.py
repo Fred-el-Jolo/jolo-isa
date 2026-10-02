@@ -21,7 +21,17 @@ def view(harness, session):
     v["mode_reason"] = st.get("mode_reason")
     v["blocked_no_isa"] = bool(st.get("blocked_no_isa"))
     v["gate"] = _last_gate(harness, session)
+    v["jev"] = _last_jev(harness, session)
     return v
+
+
+def _last_jev(harness, session):
+    """The session's latest Jev call from the debug log: served, answer, or why not (credit, budget…)."""
+    last = None
+    for row in logs.recent():
+        if row.get("step") == "jev" and row.get("harness") == harness and row.get("session") == session:
+            last = {k: row.get(k) for k in ("preset", "served", "answer", "reason", "detail", "ms")}
+    return last
 
 
 def _last_gate(harness, session):

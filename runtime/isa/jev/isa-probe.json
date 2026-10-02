@@ -1,0 +1,15 @@
+{
+  "name": "isa-probe",
+  "version": 1,
+  "description": "ISA probe adequacy: would this shell probe fail if its claim were false? (for criteria that can't be seen failing first)",
+  "model": "jev-1.13.0",
+  "state": {
+    "template": "Claim ({{isc}}): {{claim}}\nWhy it can't be run red first: {{why_exempt}}\nProbe (a shell command; it passes exactly when it exits 0):\n{{probe}}\nWhat the author says the probe sees when the claim is false: {{fails_when}}"
+  },
+  "questions": {
+    "fails_when_false": {
+      "type": "noul",
+      "instructions": "If the claim were false, would this probe, exactly as written, exit non-zero? A claim starting with \"Anti:\" names something that must NOT happen; its probe should pass when that thing does not happen and fail when it does. Answer low when the probe can't fail (true, echo), checks something other than the claim (greps text instead of running the code it claims about, counts lines without comparing the count), or would still pass on an obviously broken result."
+    }
+  }
+}

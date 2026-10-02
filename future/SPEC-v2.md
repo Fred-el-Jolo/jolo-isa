@@ -819,6 +819,8 @@ Removed from the runtime: the `claude`, `pi` and `api` backends, `gate.md` and `
 
 ### 11.3 Jev on by default, one system-wide switch
 
+Status: built in M9 (2026-10-02): `runtime/isa/jev.py`, presets in `runtime/isa/jev/`, tests `tests/test_jev.py` (fake `jev`) and `tests/flow/test_jev_live.py` (live, opt-in). Live calls took 446–513 ms.
+
 - **On by default** for every session and every project. Nothing has to be configured beyond jev-kit itself (`jev` on PATH and a key).
 - **The only switch is system-wide.** `~/.isa/config.json` (`$ISA_HOME/config.json`) with `{"jev": false}` turns Jev off for ISA everywhere. A missing file, unreadable JSON or a missing key means on. A broken config never stops ISA; the engine logs the parse error and carries on. jev-kit's own `jev disable [--for 2h]` also stops it, for every consumer of jev-kit.
 - **No per-project switch,** for Jev or for ISA (the user's call, 2026-10-02). A consequence to keep in mind: ISA text from every project is sent to TypeSafe, bky included. The system switch is the only way to stop that.

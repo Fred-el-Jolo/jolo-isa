@@ -1,6 +1,7 @@
 """`~/.isa/config.json` (`$ISA_HOME/config.json`): the user's system-wide ISA settings (SPEC-v2 § 11).
 
     {"ask_without_isa": true}    ask the user before a prompt goes on without an ISA (default: true)
+    {"jev": true}                Jev judgments through jev-kit (default: true; false = no Jev call at all)
 
 A missing file, unreadable JSON or a missing key means the default: a broken config never stops ISA,
 and the parse error is noted in the debug log. Read on every use; nothing is cached across calls.
@@ -10,7 +11,7 @@ import os
 
 from . import state
 
-DEFAULTS = {"ask_without_isa": True}
+DEFAULTS = {"ask_without_isa": True, "jev": True}
 
 
 def path():

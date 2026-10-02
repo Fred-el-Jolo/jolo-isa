@@ -19,7 +19,7 @@ import shlex
 import subprocess
 import time
 
-from . import evidence, fingerprint, isafile, lint, logs, problems, rules, state
+from . import evidence, fingerprint, isafile, jev, lint, logs, problems, rules, state
 
 TAIL = evidence.TAIL_CHARS
 VAGUE = {"make", "this", "that", "good", "better", "thing", "things", "stuff", "please", "just", "with", "from",
@@ -461,6 +461,7 @@ def verify(path, select=(), red=False, attest=None, cwd=None, timeout=600, out=p
     out(f"\nISA updated: ticked {', '.join(ticked) or '—'}, unticked {', '.join(unticked) or '—'}, "
         f"progress {isafile.progress_of(text)} — re-read the ISA before editing it.")
     _unblock(path, out)
+    jev_probe_advice(path, parsed, [i for i in mech if results.get(i, (1,))[0] == 0], out)
     return 1 if any(r[0] for r in results.values()) else 0
 
 
@@ -560,7 +561,7 @@ def close(path, cwd=None, timeout=600, out=print):
             out(f"  - {m}")
         return 1
     isafile.write_atomic(path, closing)
-    out(summary(path, closing, results, fps, marks, run_t))
+    out(summary(path, closing, results, fps, marks, run_t) + jev_close_advice(path, closing))
     return 0
 
 
@@ -676,3 +677,73 @@ def lint_cmd(args, out=print):
         for level, msg in r.items:
             out(f"  {level}: {msg}")
     return 1 if total else 0
+
+# ------------------------------------------------------------------ Jev advice (SPEC-v2 § 11.2, never blocking)
+
+def _jev_line(results, out):
+    """At most one `Jev:` line per command for calls that were not served (the ON block asks the model
+    to relay it); timeouts and Jev being switched off say nothing."""
+    msg = next((jev.message(r) for r in results if jev.message(r)), None)
+    if msg:
+        out("Jev: " + msg)
+
+
+def jev_probe_advice(path, parsed, passed, out=print):
+    """First `isa verify` of a probe that can't be seen failing first (red-exempt): ask Jev once per
+    (ISC, probe text) whether it would fail if the claim were false; warn below jev.PROBE_DOUBT."""
+    if not jev.enabled():
+        return
+    pr = evidence.probes(parsed)
+    cache = {(r.get("isc"), r.get("tool_sha")): r for r in evidence.rows(path)
+             if r.get("kind") == "advice" and r.get("question") == "isa-probe"}
+    exempt = [(i, red_exempt(parsed, i)) for i in passed if red_exempt(parsed, i)]
+    sha = {i: evidence.tool_sha(pr[i]["tool"]) for i, _ in exempt}
+    todo = [(i, why) for i, why in exempt if (i, sha[i]) not in cache]
+    if todo:
+        payloads = [("isa-probe", {"isc": i, "claim": parsed["iscs"][i][1], "probe": pr[i]["tool"].strip(),
+                                   "why_exempt": why, "fails_when": str((parsed["test_strategy"].get(i) or {})
+                                                                        .get("fails-when") or "(not written)")})
+                    for i, why in todo]
+        results = jev.ask_many(payloads, jev.CMD_DEADLINE, cmd="verify", isa=path)
+        rows = [{"v": 2, "t": time.time(), "kind": "advice", "question": "isa-probe", "isc": i,
+                 "tool_sha": sha[i], "answer": r["answer"]} for (i, _), r in zip(todo, results) if r["served"]]
+        if rows:
+            evidence.record(path, rows)
+            cache.update({(r["isc"], r["tool_sha"]): r for r in rows})
+        _jev_line(results, out)
+    for i, _ in exempt:
+        row = cache.get((i, sha[i]))
+        if row and row.get("answer") is not None and row["answer"] < jev.PROBE_DOUBT:
+            out(f"Jev doubts {i}'s probe would fail if the claim were false ({row['answer']:g}) — advisory: "
+                "tighten it, or say why it holds in Decisions")
+
+
+def jev_close_advice(path, text):
+    """`isa close`: Jev on the goal and on each ask line — shown, recorded, never blocking."""
+    if not jev.enabled():
+        return ""
+    p = lint.parse(text, path)
+    ver = p["content"].get("Verification", "")
+    evidence_text = "\n".join(f"- [{'x' if p['iscs'][i][0] else ' '}] {i}: {p['iscs'][i][1]}" for i in p["iscs"]) \
+        + "\n\n" + ver
+    asks = p["fm"].get("asks") if isinstance(p["fm"].get("asks"), list) else []
+    items = [("isa-goal", {"stated_goal": str(p["fm"].get("stated_goal") or ""),
+                           "goal": p["content"].get("Goal", "").strip(), "evidence": evidence_text})]
+    for n, a in enumerate(asks, 1):
+        m = re.search(rf"^- Ask {n}: (.*)$", ver, re.M)
+        items.append(("isa-ask", {"ask": str(a), "line": m.group(1) if m else "(no line)", "evidence": evidence_text}))
+    results = jev.ask_many(items, jev.CMD_DEADLINE, cmd="close", isa=path)
+    lines = []
+    for n, ((preset, payload), r) in enumerate(zip(items, results)):
+        label = "goal delivered" if preset == "isa-goal" else f"Ask {n} (\"{payload['ask'][:60]}\") met"
+        if r["served"]:
+            flag = " — check it" if r["answer"] < jev.PROBE_DOUBT else ""
+            lines.append(f"  - {label}: {r['answer']:g}{flag}")
+        else:
+            lines.append(f"  - {label}: not judged (Jev unavailable: {r['reason']})")
+    evidence.record(path, [{"v": 2, "t": time.time(), "kind": "advice", "question": preset, "served": r["served"],
+                            "answer": r["answer"], "reason": None if r["served"] else r["reason"]}
+                           for (preset, _), r in zip(items, results)])
+    msgs = []
+    _jev_line(results, msgs.append)
+    return "\nJev (advisory — never blocks the close):\n" + "\n".join(lines) + ("\n" + "\n".join(msgs) if msgs else "")

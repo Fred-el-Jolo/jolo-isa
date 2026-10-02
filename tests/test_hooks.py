@@ -26,7 +26,9 @@ class HookCase(unittest.TestCase):
         # nor the harness's "headless" markers: tests see an attended session unless they set them
         self.env = {k: v for k, v in os.environ.items()
                     if not k.startswith("ISA_") and k not in ("CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_ENTRYPOINT")}
-        self.env.update(ISA_HOME=self.home, ISA_SKILL_DIR=os.path.join(ROOT, "skill/ISA"))
+        # ISA_JEV_BIN → nothing: no test reaches the real `jev` (tests/test_jev.py points it at a fake)
+        self.env.update(ISA_HOME=self.home, ISA_SKILL_DIR=os.path.join(ROOT, "skill/ISA"),
+                        ISA_JEV_BIN=os.path.join(self.tmp, "no-jev-here"))
         self.sid = "s-" + os.path.basename(self.tmp)
         self.pid = "p1"
 

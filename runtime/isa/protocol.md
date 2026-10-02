@@ -13,5 +13,6 @@ the numbered completion rules), then:
    `isa verify <ISA> ISC-N --attest "<evidence>"`. You never tick boxes yourself.
 5. Finish with `isa close <ISA>` — it re-proves everything and closes. Your final answer quotes its summary.
 Run `isa verify` and `isa close` with a 600000 ms Bash timeout (or in the background when the suite is
-slow): the default 120 s can stop a long run halfway, leaving the ISA open.
+slow): the default 120 s can stop a long run halfway, leaving the ISA open. When a command prints a
+`Jev:` line (Jev out of credit, over budget or down), relay it to the user word for word.
 The turn can't end without a bound ISA, and can't end with an unproven claim.

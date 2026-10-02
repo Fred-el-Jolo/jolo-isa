@@ -403,7 +403,8 @@ class TestIsaFlow(unittest.TestCase):
                 f.write(report)
             gates = [g.get("ms") for r in (yes_run, no_run) for g in r.gate_rows()]
             with open(os.path.join(cls.out, "verdict.json"), "w") as f:
-                json.dump({"stamp": stamp, "model": MODEL, "judge": "none", "gate_ms": gates, "cost_usd": [yes_run.cost, no_run.cost],
+                json.dump({"stamp": stamp, "model": MODEL, "judge": "none", "jev": "on" if shutil.which("jev") else "off",
+                           "jev_calls": [len(r.log_rows("jev")) for r in (yes_run, no_run)], "gate_ms": gates, "cost_usd": [yes_run.cost, no_run.cost],
                            "secs": [round(yes_run.secs), round(no_run.secs)], "yes": cls.yes, "no": cls.no}, f, indent=1)
             print("\n" + report, file=sys.stderr)
             for name, sb in (("yes", yes_sb), ("no", no_sb)):  # ledger, judge log, sessions: re-gradable later

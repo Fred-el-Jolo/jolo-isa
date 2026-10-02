@@ -1,0 +1,15 @@
+{
+  "name": "isa-gate",
+  "version": 1,
+  "description": "ISA gate: is this prompt a request for work with a checkable end state? (asked only for prompts the free pre-filter left unsure)",
+  "model": "jev-1.13.0",
+  "state": {
+    "template": "The assistant's previous message (may be empty; a short reply like \"go\" approves what it proposed):\n{{context}}\n\nThe user's prompt:\n{{prompt}}"
+  },
+  "questions": {
+    "work": {
+      "type": "noul",
+      "instructions": "Is the user's prompt a request for work with a checkable end state, something that will be either done or not done? Work includes changing code or files, fixing a bug, reviewing or auditing something, writing a plan, comparing options and recommending one, and investigating why something in the user's own project or system is slow, failing or wrong. Not work: a question answered by an explanation of how something works or what existing code does, general knowledge, opinions, greetings, thanks, and conversation. A short approval (\"go\", \"yes do it\") is work only when the assistant's previous message proposed work."
+    }
+  }
+}

@@ -33,7 +33,7 @@ import os
 import re
 import time
 
-from . import changes, classify, config, evidence, fit, isafile, lint, logs, problems, rules, state
+from . import changes, classify, config, evidence, fit, isafile, jev, lint, logs, problems, rules, state
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STALE_NUDGE_EVERY = 5
@@ -415,9 +415,40 @@ def _prompt(ev):
             if bound:
                 return {"context": _status_line(bound) + ". A new task gets a new ISA; continuing work keeps this one."}
             return {"context": "ISA: ON — no ISA bound yet: write it before the work (`isa new <slug> --goal \"…\"`)."}
-    # OFF, or ON with only a finished ISA bound: the free pre-filter decides, or leaves it to the model
+    # OFF, or ON with only a finished ISA bound: the free pre-filter decides; an unsure prompt may get
+    # Jev's reading (add-only: only a confident "work" changes anything), else it is left to the model
     verdict, why = fit.prefilter(prompt)
     note(prefilter=verdict, reason=why)
+    source, jres = "prefilter", None
+    if verdict == "unsure" and jev.enabled():  # called outside the session lock: it may take up to 1.5 s
+        jres = jev.ask("isa-gate", {"prompt": prompt, "context": context or ""}, jev.HOOK_DEADLINE,
+                       harness=ev.get("harness"), session=ev.get("session"), prompt_id=pid)
+        note(jev=jres["answer"] if jres["served"] else jres["reason"])
+        if jres["served"] and jres["answer"] >= jev.GATE_YES:
+            verdict, why, source = "yes", f"Jev reads this as work ({jres['answer']:.2f})", "jev"
+    res = _gate(ev, mode, bound, verdict, why, source)
+    if jres:
+        outage = _jev_outage(ev, jres)
+        if outage:
+            res["warn"] = (res.get("warn", "") + "\n" + outage).strip()
+    return res
+
+
+def _jev_outage(ev, res):
+    """The user's line for a Jev call that was not served — once per session and kind of problem."""
+    kind = jev.kind(res)
+    if not kind:
+        return ""
+    with state.session(ev["harness"], ev["session"]) as st:
+        warned = st.setdefault("jev_warned", [])
+        if kind in warned:
+            return ""
+        warned.append(kind)
+    return jev.message(res)
+
+
+def _gate(ev, mode, bound, verdict, why, source):
+    cwd, pid = ev.get("cwd"), ev.get("prompt_id")
     with state.session(ev["harness"], ev["session"]) as st:
         st.pop("declare_for", None)
         if mode == "on":  # a finished ISA is bound
@@ -443,7 +474,7 @@ def _prompt(ev):
             note(mode_after="off", declare=True, ask=ask or why_not)
             return {"warn": "ISA: unsure — the agent decides (an ISA, or `ISA: not needed — <reason>`)",
                     "context": _declare_text(ask)}
-        _switch_on(st, "prefilter", why)
+        _switch_on(st, source, why)
         note(mode_after="on")
     return {"warn": f"ISA: ON — {why}", "context": _on_block(cwd)}
 

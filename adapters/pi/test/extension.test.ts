@@ -12,6 +12,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..")
 process.env.ISA_BIN = join(ROOT, "runtime", "bin", "isa")
 process.env.ISA_HOME = mkdtempSync(join(tmpdir(), "isa-pi-"))
 process.env.ISA_SKILL_DIR = join(ROOT, "skill", "ISA")
+process.env.ISA_JEV_BIN = join(process.env.ISA_HOME, "no-jev-here") // no test reaches the real `jev`
 delete process.env.ISA_MODE
 const { default: isaExtension } = await import("../isa.ts")
 
