@@ -793,7 +793,7 @@ The judge is **Jev first; the running model when Jev is unavailable** (switched 
 | The bound ISA is complete | Q1: is this work? | Yes → a new ISA or a reopen is required. Otherwise → ask the user. |
 | An open ISA is bound | Q2: continuation or new task? | Jev ≥ `jev_gate` "new task" → a new ISA is required, and the old one is marked paused or superseded once it is bound (§ 12.7). Stop enforces it as after a complete ISA (`needs_isa_since`, § 1.3): it refuses once until a new ISA is bound after that prompt. Otherwise → continuation, nothing asked. When Jev is unavailable, Q2 is not asked: the prompt is a continuation, and the model can still start a new ISA itself when it sees a different task. |
 
-**No judge runs:** at session start, resume or compaction (there is no prompt); when the session is ON with no ISA written yet (one is already required); under `ISA_MODE=off|on`; for an empty prompt. A slash command (a skill invocation) is **judged** like any prompt (§ 12.6).
+**No judge runs:** for a prompt made only of `<task-notification>` blocks (a background task finished — not the user's prompt; it keeps the Continue pass and is logged `notification: true`, M12.1); at session start, resume or compaction (there is no prompt); when the session is ON with no ISA written yet (one is already required); under `ISA_MODE=off|on`; for an empty prompt. A slash command (a skill invocation) is **judged** like any prompt (§ 12.6).
 
 ### 12.3 The two questions
 
