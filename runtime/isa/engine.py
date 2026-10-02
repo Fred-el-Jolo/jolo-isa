@@ -460,7 +460,16 @@ def _compacted(ev):
     return {}
 
 
+# A prompt made only of system notification blocks (a background task finished): not the user's prompt
+NOTIFICATION = re.compile(r"\A(?:\s*<task-notification>.*?</task-notification>)+\s*\Z", re.S)
+
+
 def _prompt(ev):
+    if NOTIFICATION.match(str(ev.get("prompt") or "")):
+        # no judge, nothing injected, and nothing the user's last answer set is touched (the Continue pass, the
+        # gate record, the turn start); not written to the prompt log either — it holds the user's words
+        note(notification=True)
+        return {}
     cwd, pid, prompt = ev.get("cwd"), ev.get("prompt_id"), ev.get("prompt", "")
     context = _assistant_context(ev)
     state.log_prompt(ev["harness"], ev["session"], prompt, pid, cwd=cwd, project=state.project_key(cwd),

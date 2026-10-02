@@ -513,6 +513,60 @@ class TestExtras(RepoCase):
         self.assertIn(os.path.basename(os.path.dirname(path)), r.stdout)
 
 
+NOTIFICATION = ("<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n"
+                "<summary>Background command finished</summary>\n</task-notification>")
+
+
+class TestNotification(RepoCase):
+    """A background task's completion arrives as a prompt made only of notification blocks: not the user's."""
+
+    def session(self):
+        with open(os.path.join(self.home, "_state", "sessions", f"claude-{self.sid}.json")) as f:
+            return json.load(f)
+
+    def gate(self, p=0.31):
+        from tests.test_hooks import calls, setup_fake
+        setup_fake(self, isa_gate=p)
+        return calls
+
+    def test_no_judge(self):
+        calls = self.gate()
+        self.pid = "p2"
+        _, out, _ = self.hook("UserPromptSubmit", prompt=NOTIFICATION + "\n" + NOTIFICATION)
+        self.assertEqual(calls(self, "isa-gate"), [])
+        self.assertEqual(out, {})
+
+    def test_pass_kept(self):
+        self.gate()
+        path = self.isa_path("20260101-000000_closed")  # a session ON with a closed ISA bound
+        os.makedirs(os.path.dirname(path))
+        from tests.test_hooks import CLOSED
+        with open(path, "w") as f:
+            f.write(CLOSED)
+        self.hook("PostToolUse", tool_name="Write", tool_input={"file_path": path}, tool_response={})
+        self.assertEqual(self.session()["bound"], os.path.realpath(path))
+        self.pid = "p2"
+        self.hook("UserPromptSubmit", prompt="commit and push")
+        q = "ISA is not enabled for this prompt (Jev: 0.31). Continue?"
+        self.hook("PostToolUse", tool_name="AskUserQuestion",
+                  tool_input={"questions": [{"question": q}], "answers": {q: "Continue without ISA"}}, tool_response={})
+        self.pid = "p3"
+        self.hook("UserPromptSubmit", prompt=NOTIFICATION)
+        _, out, _ = self.hook("PreToolUse", tool_name="Write",
+                              tool_input={"file_path": os.path.join(self.proj, "x.py"), "content": "x"})
+        self.assertNotEqual(self.decision(out), "deny")
+
+    def test_logged(self):
+        self.gate()
+        self.hook("UserPromptSubmit", prompt=NOTIFICATION)
+        self.assertTrue(self.log_rows("prompt")[-1].get("notification"))
+
+    def test_mixed_is_judged(self):
+        calls = self.gate()
+        self.hook("UserPromptSubmit", prompt="ok thanks\n" + NOTIFICATION)
+        self.assertEqual(len(calls(self, "isa-gate")), 1)
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()
