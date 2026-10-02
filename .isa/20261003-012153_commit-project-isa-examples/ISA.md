@@ -3,9 +3,9 @@ task: "Commit, fill the project ISA, fix the examples"
 slug: 20261003-012153_commit-project-isa-examples
 effort: E2
 phase: build
-progress: 5/9
+progress: 9/9
 started: 2026-10-03T01:21:53
-updated: 2026-10-03T01:28:45
+updated: 2026-10-03T01:31:54
 root: .
 stated_goal: null
 asks: ["enc:v1:0ddf368a:1J0lQWwzBW_h1OzM8lqHdg0QPgxJxjEbEBFbnEhK8_0FAW-vDBdBOJMeUnksNWuNTwIumGdJw9YaqeA", "enc:v1:0ddf368a:A72Vpyyt1iYKEKvr9BbYBcuV35Z7x9YbqOFmEceuDvnxcy80hw-I2k4gboZyuj0N4gnhLKT-cqF7SnCLv0sSQl4DVQcY7P53eHcSpFE"]
@@ -22,15 +22,15 @@ Everything is committed and pushed to `main`, and what git stored is checked: ev
 
 ## Criteria
 
-- [ ] ISC-1: HEAD is on `origin/main` and the working tree is clean.
-- [ ] ISC-2: At HEAD, no quoting form in a committed `.isa/` file is plain text.
-- [ ] ISC-3: At HEAD, the committed root `ISA.md` holds no ciphertext.
+- [x] ISC-1: HEAD is on `origin/main` and the working tree is clean.
+- [x] ISC-2: At HEAD, no quoting form in a committed `.isa/` file is plain text.
+- [x] ISC-3: At HEAD, the committed root `ISA.md` holds no ciphertext.
 - [x] ISC-4: The project ISA lints clean and states every AGENTS.md working rule as a standing claim.
 - [x] ISC-5: `isa verify ISA.md` re-proves every standing claim.
 - [x] ISC-6: No example has a red-exempt entry without `fails-when:`.
 - [x] ISC-7: Every example still lints ok.
 - [x] ISC-8: Anti: the full unit suite or the pi tests fail.
-- [ ] ISC-9: Anti: a git or encryption error is left unreported to the user.
+- [x] ISC-9: Anti: a git or encryption error is left unreported to the user.
 
 ## Test Strategy
 
@@ -122,3 +122,10 @@ Everything is committed and pushed to `main`, and what git stored is checked: ev
 - ISC-6: verified 2026-10-03T01:28:45 — exit 0 in 0.1s — `! python3 tools/lint_isa.py skill/ISA/Examples/*.md | grep -q "can't get a red baseline"` (ledger: ced7542e0f)
 - ISC-7: verified 2026-10-03T01:28:45 — exit 0 in 0.11s — `test "$(python3 tools/lint_isa.py skill/ISA/Examples/*.md | grep -c '.md. ok$')" = 12` (ledger: bd0e872d2f)
 - ISC-8: verified 2026-10-03T01:28:45 — exit 0 in 83.47s — `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install tests.test_status tests.test_evidence tests.test_shell_changes tests.test_feature_order tests.test_home_and_complete tests.test_seamless_projects tests.test_gate tests.test_commands tests.test_fingerprint tests.test_blocked tests.test_red tests.test_lint_v2 tests.test_purge tests.test_declaration tests.test_logs tests.test_ask tests.test_jev tests.test_m11 tests.test_m12 && node --test adapters/pi/test/extension.test.ts` (ledger: bc4c838b29)
+- ISC-1: verified 2026-10-03T01:31:51 — exit 0 in 1.39s — `git fetch -q origin && git merge-base --is-ancestor HEAD origin/main && test -z "$(git status --porcelain)"` (ledger: fc17576c23)
+- ISC-2: verified 2026-10-03T01:31:51 — exit 0 in 0.05s — `python3 tools/check_committed_isas.py HEAD` (ledger: 06e1e26d7e)
+- ISC-3: verified 2026-10-03T01:31:51 — exit 0 in 0.05s — `python3 tools/check_committed_isas.py HEAD && git show HEAD:ISA.md | grep -q "kind. project"` (ledger: ce2c03347f)
+- ISC-9: attested 2026-10-03T01:31:54 — every git command's exit code and output was read; the only error text in the run was 'fatal: Not possible to fast-forward' from the scripted ff-attempt before the no-ff fallback merge, reported to the user as benign; no encryption error occurred (staged and committed blobs checked with tools/check_committed_isas.py) (ledger: 3699e4ba91)
+- Ask 1: met — 1: committed and pushed to main (ISC-1); 3: project ISA with 7 standing claims, 7/7 re-proved (ISC-4, 5); 5: every example probe fixed — 71 fails-when, 47 + 7 + 65 probes rewritten, all lint ok (ISC-6, 7)
+- Ask 2: met — no git or encryption error occurred; the one benign git message was reported at once; stored blobs checked (ISC-2, 3, 9)
+- Goal: yes — on main, quotes encrypted in what git stored and the root ISA.md plain, the project ISA re-proves the working rules, and every example probe now decides by exit code
