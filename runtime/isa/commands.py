@@ -563,7 +563,7 @@ def close(path, cwd=None, timeout=600, out=print):
     isafile.write_atomic(path, closing)
     # the close itself, also when no mechanical probe ran (all self-attested): Stop checks for it (problems.py)
     evidence.record(path, [{"v": 2, "t": time.time(), "kind": "closed", "probes": len(results)}])
-    out(summary(path, closing, results, fps, marks, run_t) + jev_close_advice(path, closing))
+    out(summary(path, closing, results, fps, marks, run_t) + jev_close_advice(path, closing, results, marks))
     return 0
 
 
@@ -724,8 +724,35 @@ def jev_probe_advice(path, parsed, passed, out=print):
                 "tighten it, or say why it holds in Decisions")
 
 
-def jev_close_advice(path, text):
-    """`isa close`: Jev on the goal and on each ask line — shown, recorded, never blocking."""
+CLAIM_MAX = 30
+
+
+def _claim_items(path, p, results, marks):
+    """The weak ticks a close asks Jev about (future/JEV.md #1): self-attested ones (evidence: the attest
+    text) and ones never seen failing (evidence: the probe, its exit code and its output). A red-then-green
+    tick is left alone."""
+    pr = evidence.probes(p)
+    attested = evidence.attested(path)
+    items = []
+    for i in p["counted"]:
+        if not p["iscs"][i][0]:
+            continue
+        ts = p["test_strategy"].get(i) or {}
+        if not pr[i]["mechanical"]:
+            ev = str((attested.get(i) or {}).get("evidence") or "(no attest text)")
+        elif i in (marks or {}) and i in results:
+            code, _secs, tail, tool = results[i][:4]
+            ev = f"command: {tool}\nexit {code}\noutput (last lines):\n{(tail or '').strip()[-1500:] or '(none)'}"
+        else:
+            continue
+        items.append(("isa-claim", {"isc": i, "claim": p["iscs"][i][1], "threshold": str(ts.get("threshold") or ""),
+                                    "how": str(ts.get("check") or ts.get("type") or ""), "evidence": ev}))
+    return items[:CLAIM_MAX]
+
+
+def jev_close_advice(path, text, results=None, marks=None):
+    """`isa close`: Jev on the goal, on each ask line, and on each weak tick's evidence — shown, recorded,
+    never blocking."""
     if not jev.enabled():
         return ""
     p = lint.parse(text, path)
@@ -738,18 +765,21 @@ def jev_close_advice(path, text):
     for n, a in enumerate(asks, 1):
         m = re.search(rf"^- Ask {n}: (.*)$", ver, re.M)
         items.append(("isa-ask", {"ask": str(a), "line": m.group(1) if m else "(no line)", "evidence": evidence_text}))
+    items += _claim_items(path, p, results or {}, marks)
     results = jev.ask_many(items, jev.CMD_DEADLINE, cmd="close", isa=path)
     lines = []
     for n, ((preset, payload), r) in enumerate(zip(items, results)):
-        label = "goal delivered" if preset == "isa-goal" else f"Ask {n} (\"{payload['ask'][:60]}\") met"
+        label = "goal delivered" if preset == "isa-goal" else f"{payload['isc']} evidence supports the claim" \
+            if preset == "isa-claim" else f"Ask {n} (\"{payload['ask'][:60]}\") met"
         if r["served"]:
             flag = " — check it" if r["answer"] < _doubt() else ""
             lines.append(f"  - {label}: {r['answer']:g}{flag}")
         else:
             lines.append(f"  - {label}: not judged (Jev unavailable: {r['reason']})")
     evidence.record(path, [{"v": 2, "t": time.time(), "kind": "advice", "question": preset, "served": r["served"],
-                            "answer": r["answer"], "reason": None if r["served"] else r["reason"]}
-                           for (preset, _), r in zip(items, results)])
+                            "answer": r["answer"], "reason": None if r["served"] else r["reason"],
+                            **({"isc": payload["isc"]} if preset == "isa-claim" else {})}
+                           for (preset, payload), r in zip(items, results)])
     msgs = []
     _jev_line(results, msgs.append)
     return "\nJev (advisory — never blocks the close):\n" + "\n".join(lines) + ("\n" + "\n".join(msgs) if msgs else "")

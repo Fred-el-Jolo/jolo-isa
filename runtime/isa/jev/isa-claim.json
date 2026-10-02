@@ -1,0 +1,15 @@
+{
+  "name": "isa-claim",
+  "version": 1,
+  "description": "ISA close: does this evidence show the criterion holds? (asked for self-attested ticks and ticks never seen failing)",
+  "model": "jev-1.13.0",
+  "state": {
+    "template": "Criterion ({{isc}}): {{claim}}\nThreshold: {{threshold}}\nHow it was checked: {{how}}\n\nThe evidence:\n{{evidence}}"
+  },
+  "questions": {
+    "supports": {
+      "type": "noul",
+      "instructions": "Does this evidence show that the criterion holds? Answer high only when the evidence observes this criterion's own claim: a command whose output or name covers what the criterion says and that passed, or a description of something actually looked at that matches the claim. Answer low when the evidence is about something else, only shows that a file or command exists rather than that it does what the criterion says, restates the claim without observing it, is empty or vague (\"looks right\", \"done\"), or contradicts the claim. Do not compare numbers yourself; judge only whether the evidence reports the value the criterion is about."
+    }
+  }
+}
