@@ -136,7 +136,7 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
 - [x] ISC-47: Anti: out of scope — there is no `Control` button anywhere in the UI; sensor write paths are not wired up.
 - [x] ISC-48: Anti: data loss — an app update never overwrites or migrates the SQLite database without first writing a `.bak` copy with timestamp suffix.
 - [x] ISC-49: Anti: dependency creep — no Electron in the build graph; `bun pm ls | grep electron` returns empty.
-- [x] ISC-50: Anti: telemetry — `rg "google-analytics|sentry|mixpanel|posthog|fullstory" src/` returns zero matches.
+- [x] ISC-50: Anti: telemetry — `! rg -q "google-analytics|sentry|mixpanel|posthog|fullstory" src/` returns zero matches.
 
 ## Test Strategy
 
@@ -175,6 +175,7 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
   check: CLI version vs package.json
   threshold: strings equal
   tool: test "$(wattwatch --version)" = "$(jq -r .version package.json)"
+  fails-when: "--version prints something other than package.json's version"
 
 - isc: ISC-6
   type: manual
@@ -464,7 +465,8 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
   kind: behaviour
   check: diagnostic bundle contents
   threshold: schema only (0 INSERT lines), logs ≤ 24h old, os.json present
-  tool: wattwatch diag --out /tmp/d.zip && unzip -p /tmp/d.zip schema.sql | rg -c INSERT | grep -qx 0
+  tool: |-
+    wattwatch diag --out /tmp/d.zip && ! unzip -p /tmp/d.zip schema.sql | rg -q INSERT
 
 - isc: ISC-45
   type: unit-test
@@ -478,14 +480,18 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
   kind: regression
   check: outbound packets on first launch before consent
   threshold: 0 packets to non-LAN destinations
-  tool: tcpdump -i en0 'not net 192.168.0.0/16 and not net 10.0.0.0/8 and not net 172.16.0.0/12' for 60s
+  tool: |-
+    test "$(timeout 60 tcpdump -i en0 -n -q 'not net 192.168.0.0/16 and not net 10.0.0.0/8 and not net 172.16.0.0/12' 2>/dev/null | wc -l)" -eq 0
+  fails-when: "a packet leaves for a non-LAN address in the first minute"
 
 - isc: ISC-47
   type: bash
   kind: regression
   check: control affordances and write paths
-  threshold: zero matches (rg exits 1)
-  tool: rg -n -i '"control"|>Control<|setRelay|set_output|/relay/' src/
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! rg -qi '"control"|>Control<|setRelay|set_output|/relay/' src/
+  fails-when: "a Control button or relay call exists in src/"
 
 - isc: ISC-48
   type: unit-test
@@ -493,20 +499,25 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
   check: DB file set before and after a simulated migration
   threshold: a timestamped .bak exists before the migration writes
   tool: bun test test/update/backup.test.ts
+  fails-when: "an update writes the database without a timestamped backup first"
 
 - isc: ISC-49
   type: bash
   kind: regression
   check: no Electron in dependency tree
-  threshold: zero matches (rg exits 1)
-  tool: bun pm ls | rg -i electron
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! bun pm ls | rg -qi electron
+  fails-when: "Electron is in the dependency graph"
 
 - isc: ISC-50
   type: bash
   kind: regression
   check: no third-party telemetry SDK strings in source
-  threshold: zero matches (rg exits 1)
-  tool: rg "google-analytics|sentry|mixpanel|posthog|fullstory" src/
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! rg -q "google-analytics|sentry|mixpanel|posthog|fullstory" src/
+  fails-when: "a tracking library is referenced in src/"
 ```
 
 ## Features
@@ -656,10 +667,10 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
 - ISC-36: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/auth/reset.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L33)
 - ISC-42: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/update/schedule.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L34)
 - ISC-43: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/update/signature.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L35)
-- ISC-44: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `wattwatch diag --out /tmp/d.zip && unzip -p /tmp/d.zip schema.sql | rg -c INSERT | grep -qx 0` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L36)
+- ISC-44: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `wattwatch diag --out /tmp/d.zip && ! unzip -p /tmp/d.zip schema.sql | rg -q INSERT` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L36)
 - ISC-45: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/crash/preview.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L37)
-- ISC-46: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `tcpdump -i en0 'not net 192.168.0.0/16 and not net 10.0.0.0/8 and not net 172.16.0.0/12' for 60s` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L38)
-- ISC-47: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `rg -n -i '"control"|>Control<|setRelay|set_output|/relay/' src/` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L39)
+- ISC-46: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `test "$(timeout 60 tcpdump -i en0 -n -q 'not net 192.168.0.0/16 and not net 10.0.0.0/8 and not net 172.16.0.0/12' 2>/dev/null | wc -l)" -eq 0` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L38)
+- ISC-47: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `! rg -qi '"control"|>Control<|setRelay|set_output|/relay/' src/` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L39)
 - ISC-48: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/update/backup.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L40)
-- ISC-49: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun pm ls | rg -i electron` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L41)
-- ISC-50: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `rg "google-analytics|sentry|mixpanel|posthog|fullstory" src/` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L42)
+- ISC-49: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `! bun pm ls | rg -qi electron` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L41)
+- ISC-50: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `! rg -q "google-analytics|sentry|mixpanel|posthog|fullstory" src/` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L42)

@@ -159,14 +159,17 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   kind: behaviour
   check: clear-space rule in the usage doc
   threshold: ≥ 1 match
-  tool: rg -c -i 'clear.space.*(½|1/2|half).*cap.height' brand/logo/USAGE.md
+  tool: |-
+    rg -q -i 'clear.space.*(½|1/2|half).*cap.height' brand/logo/USAGE.md
 
 - isc: ISC-7
   type: bash
   kind: file
   check: typeface OFL 1.1
   threshold: license header matches "SIL OPEN FONT LICENSE Version 1.1"
-  tool: rg -c 'SIL OPEN FONT LICENSE Version 1.1' fonts/*/LICENSE.txt
+  tool: |-
+    rg -q 'SIL OPEN FONT LICENSE Version 1.1' fonts/*/LICENSE.txt
+  fails-when: "no font license carries the OFL 1.1 header"
 
 - isc: ISC-8
   type: bash
@@ -194,21 +197,24 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   kind: behaviour
   check: hue tokens
   threshold: exactly cardinal-red-600, dawn-500
-  tool: rg -o -- '--(cardinal|dawn)-[a-z-]*[0-9]+' tokens/colors.css | sort -u
+  tool: |-
+    test "$(rg -o -- '--(cardinal|dawn)-[a-z-]*[0-9]+' tokens/colors.css | sort -u | tr '\n' ' ')" = "--cardinal-red-600 --dawn-500 "
 
 - isc: ISC-12
   type: bash
   kind: behaviour
   check: neutral tokens
   threshold: exactly ink-900, 700, 500, 300, 100
-  tool: rg -o -- '--ink-[0-9]+' tokens/colors.css | sort -u
+  tool: |-
+    test "$(rg -o -- '--ink-[0-9]+' tokens/colors.css | sort -u | tr '\n' ' ')" = "--ink-100 --ink-300 --ink-500 --ink-700 --ink-900 "
 
 - isc: ISC-13
   type: bash
   kind: behaviour
   check: CSS custom properties exist for every palette token
   threshold: 7 properties
-  tool: rg -c -- '^\s*--(cardinal|dawn|ink)-' tokens/colors.css
+  tool: |-
+    test "$(rg -c -- '^\s*--(cardinal|dawn|ink)-' tokens/colors.css)" -eq 7
 
 - isc: ISC-14
   type: bash
@@ -229,7 +235,9 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   kind: file
   check: voice guide length
   threshold: ≤ 60 lines
-  tool: wc -l < brand/voice.md
+  tool: |-
+    test "$(wc -l < brand/voice.md)" -le 60
+  fails-when: "the voice guide runs over 60 lines"
 
 - isc: ISC-17
   type: bash
@@ -250,14 +258,16 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   kind: behaviour
   check: anti-voice list items
   threshold: "5"
-  tool: sed -n '/^## Voice does not/,/^## /p' brand/voice.md | rg -c '^- '
+  tool: |-
+    test "$(sed -n '/^## Voice does not/,/^## /p' brand/voice.md | rg -c '^- ')" -eq 5
 
 - isc: ISC-20
   type: bash
   kind: http
   check: legacy assets referenced by the homepage
-  threshold: zero matches (rg exits 1)
-  tool: curl -s https://cardinal.example.com/ | rg 'napkin|legacy-blue|#1e4fd8|#2563eb|#3b82f6'
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! curl -s https://cardinal.example.com/ | rg -q 'napkin|legacy-blue|#1e4fd8|#2563eb|#3b82f6'
 
 - isc: ISC-21
   type: bash
@@ -292,7 +302,8 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   kind: behaviour
   check: lockup used on each of the 5 surfaces
   threshold: one distinct lockup id
-  tool: bun scripts/surface-asset-audit.ts --asset lockup | sort -u | wc -l
+  tool: |-
+    test "$(bun scripts/surface-asset-audit.ts --asset lockup | sort -u | wc -l)" -eq 1
 
 - isc: ISC-26
   type: bash
@@ -306,7 +317,8 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   kind: behaviour
   check: family + weights used on each surface
   threshold: one family, weights ⊆ {400, 600}
-  tool: bun scripts/surface-asset-audit.ts --asset type | sort -u
+  tool: |-
+    out=$(bun scripts/surface-asset-audit.ts --asset type | sort -u) && test "$(cut -d' ' -f1 <<<"$out" | sort -u | wc -l)" -eq 1 && ! cut -d' ' -f2 <<<"$out" | grep -qvx '400\|600'
 
 - isc: ISC-28
   type: manual
@@ -320,14 +332,18 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   kind: regression
   check: colors used on launch surfaces outside the palette
   threshold: "0"
-  tool: bun scripts/surface-color-audit.ts --off-palette | wc -l
+  tool: |-
+    test "$(bun scripts/surface-color-audit.ts --off-palette | wc -l)" -eq 0
+  fails-when: "the audit lists a color outside the palette"
 
 - isc: ISC-30
   type: bash
   kind: regression
   check: redistributable license for the chosen family
   threshold: OFL or equivalent found
-  tool: rg -l 'SIL OPEN FONT LICENSE|Apache License' fonts/*/LICENSE.txt
+  tool: |-
+    rg -q 'SIL OPEN FONT LICENSE|Apache License' fonts/*/LICENSE.txt
+  fails-when: "no redistributable license is found for the typeface"
 
 - isc: ISC-31
   type: manual
@@ -341,14 +357,18 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   kind: regression
   check: placeholder copy in App Store screenshots
   threshold: zero matches
-  tool: tesseract-batch brand/appstore/*.png | rg -i 'lorem|ipsum|your headline|placeholder'
+  tool: |-
+    ! tesseract-batch brand/appstore/*.png | rg -qi 'lorem|ipsum|your headline|placeholder'
+  fails-when: "OCR finds placeholder text in a screenshot"
 
 - isc: ISC-33
   type: bash
   kind: regression
   check: napkin logo hash on any launch surface
   threshold: zero matches
-  tool: bun scripts/surface-asset-audit.ts --find-hash $(sha256sum brand/_retired/napkin-logo.png | cut -c1-64)
+  tool: |-
+    test -z "$(bun scripts/surface-asset-audit.ts --find-hash $(sha256sum brand/_retired/napkin-logo.png | cut -c1-64))"
+  fails-when: "the audit finds the napkin logo's hash on a surface"
 
 - isc: ISC-34
   type: bash
@@ -356,6 +376,7 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   check: welcome email's first greeting line vs every other template
   threshold: unique
   tool: bash scripts/greeting-uniqueness.sh emails/
+  fails-when: "two emails open with the same greeting"
 
 - isc: ISC-35
   type: bash
@@ -376,7 +397,8 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   kind: behaviour
   check: usage examples in README
   threshold: web, email, print, social subsections all present
-  tool: sed -n '/^## How to use this kit/,/^## /p' README.md | rg -c '^### (Web|Email|Print|Social)'
+  tool: |-
+    test "$(sed -n '/^## How to use this kit/,/^## /p' README.md | rg -o '^### (Web|Email|Print|Social)' | sort -u | wc -l)" -eq 4
 
 - isc: ISC-38
   type: bash
@@ -384,6 +406,7 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   check: asset license + trademark notice
   threshold: both greps exit 0
   tool: rg -q 'CC BY 4.0' LICENSE && rg -q -i 'trademark' TRADEMARK.md
+  fails-when: "LICENSE lacks CC BY 4.0, or TRADEMARK.md has no trademark terms"
 
 - isc: ISC-39
   type: bash
@@ -418,28 +441,33 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   kind: http
   check: OG image dimensions + og:image meta
   threshold: 1200x630, meta points to /og.png
-  tool: curl -s https://cardinal.example.com/og.png | identify -format '%wx%h' - && curl -s https://cardinal.example.com/ | rg -c 'og:image.*og\.png'
+  tool: |-
+    test "$(curl -s https://cardinal.example.com/og.png | identify -format '%wx%h' -)" = 1200x630 && curl -s https://cardinal.example.com/ | rg -q 'og:image.*og\.png'
 
 - isc: ISC-44
   type: bash
   kind: behaviour
   check: gut-check questions in the kit
   threshold: "4"
-  tool: sed -n '/^## Voice gut-check/,/^## /p' brand/voice.md | rg -c '^\d\. .*\?$'
+  tool: |-
+    test "$(sed -n '/^## Voice gut-check/,/^## /p' brand/voice.md | rg -c '^\d\. .*\?$')" -eq 4
 
 - isc: ISC-45
   type: bash
   kind: behaviour
   check: tone-by-context table rows
   threshold: 5 rows (marketing, transactional, error, support, legal)
-  tool: rg -c '^\| (Marketing|Transactional|Error|Support|Legal) \|' brand/voice.md
+  tool: |-
+    test "$(rg -c '^\| (Marketing|Transactional|Error|Support|Legal) \|' brand/voice.md)" -eq 5
 
 - isc: ISC-46
   type: bash
   kind: regression
   check: worked examples in the voice guide
   threshold: ≥ 1 (the anti fires only at 0)
-  tool: rg -c '^> ' brand/voice.md
+  tool: |-
+    rg -q '^> ' brand/voice.md
+  fails-when: "the voice guide gives adjectives only, no example quote"
 
 - isc: ISC-47
   type: bash
@@ -453,7 +481,8 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   kind: http
   check: press ZIP contents
   threshold: logo in svg + png + ico, description 180–220 words
-  tool: curl -sO https://cardinal.example.com/press/cardinal-press.zip && unzip -l cardinal-press.zip && unzip -p cardinal-press.zip about.txt | wc -w
+  tool: |-
+    curl -sO https://cardinal.example.com/press/cardinal-press.zip && for x in svg png ico; do unzip -l cardinal-press.zip | grep -q "\.$x$" || exit 1; done && n=$(unzip -p cardinal-press.zip about.txt | wc -w) && test "$n" -ge 180 && test "$n" -le 220
 
 - isc: ISC-49
   type: manual
@@ -488,7 +517,9 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
   kind: regression
   check: new color or weight tokens since the v1 lock
   threshold: ≤ 2 added lines
-  tool: git diff brand-v1-lock..HEAD -- tokens/ | rg -c '^\+\s*--|^\+\s*"(weight|value)"'
+  tool: |-
+    n=$(git diff brand-v1-lock..HEAD -- tokens/ | rg -c '^\+\s*--|^\+\s*"(weight|value)"' || true); test "${n:-0}" -le 2
+  fails-when: "more than two new colors or weights were added since the v1 lock"
 
 - isc: ISC-54
   type: bash
@@ -582,13 +613,13 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
 - ISC-3: attested 2026-04-19T11:30:00 — Screenshot of `cardinal.example.com/favicon.ico` rendered in 3 browsers; viewer survey of 3 unfamiliar designers — 3/3 identified "Cardinal" within 4 seconds. Verified 2026-03-04. (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L4)
 - ISC-4: attested 2026-04-19T11:30:00 — 1-bit B&W viewer test — 5/5 viewers said "same logo." Verified 2026-03-04. (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L5)
 - ISC-5: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `cd brand/logo && ls cardinal.svg cardinal@1x.png cardinal@2x.png cardinal@3x.png favicon.ico` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L6)
-- ISC-7: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `rg -c 'SIL OPEN FONT LICENSE Version 1.1' fonts/*/LICENSE.txt` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L7)
+- ISC-7: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `rg -q 'SIL OPEN FONT LICENSE Version 1.1' fonts/*/LICENSE.txt` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L7)
 - ISC-8: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `jq -r '.size | map(.value) | join(" ")' tokens/type.json` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L8)
 - ISC-9: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `jq -r '.weight | map(.value) | join(" ")' tokens/type.json` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L9)
-- ISC-11: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `rg -o -- '--(cardinal|dawn)-[a-z-]*[0-9]+' tokens/colors.css | sort -u` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L10)
-- ISC-12: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `rg -o -- '--ink-[0-9]+' tokens/colors.css | sort -u` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L11)
-- ISC-13: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `rg -c -- '^\s*--(cardinal|dawn|ink)-' tokens/colors.css` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L12)
+- ISC-11: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `test "$(rg -o -- '--(cardinal|dawn)-[a-z-]*[0-9]+' tokens/colors.css | sort -u | tr '\n' ' ')" = "--cardinal-red-600 --dawn-500 "` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L10)
+- ISC-12: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `test "$(rg -o -- '--ink-[0-9]+' tokens/colors.css | sort -u | tr '\n' ' ')" = "--ink-100 --ink-300 --ink-500 --ink-700 --ink-900 "` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L11)
+- ISC-13: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `test "$(rg -c -- '^\s*--(cardinal|dawn|ink)-' tokens/colors.css)" -eq 7` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L12)
 - ISC-15: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `bun scripts/contrast-check.ts` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L13)
-- ISC-20: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `curl -s https://cardinal.example.com/ | rg 'napkin|legacy-blue|#1e4fd8|#2563eb|#3b82f6'` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L14)
+- ISC-20: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `! curl -s https://cardinal.example.com/ | rg -q 'napkin|legacy-blue|#1e4fd8|#2563eb|#3b82f6'` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L14)
 - ISC-35: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `bun scripts/figma-share.ts cardinal-brand-v1 --json | jq -r '.[] | "\(.email) \(.role)"'` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L15)
 - ISC-52: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `ls brand/_retired/` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L16)

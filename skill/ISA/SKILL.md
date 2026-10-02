@@ -54,6 +54,8 @@ You never tick a box or write a generated Verification line, `progress`, or `pha
 
 Run `isa verify` and `isa close` with a **600000 ms Bash timeout** (or in the background when the suite is slow): the default 120 s can stop a long run halfway, which corrupts nothing but leaves the ISA open.
 
+**Only the exit code counts.** A probe passes iff it exits 0; `isa verify` never reads its output. Build the threshold into the command (`jq -e`, `test "$(…)" -le 5`), and negate a search for something that must never appear (`! rg -q 'pattern' file`) — a bare `rg` exits 0 exactly when the forbidden thing is found.
+
 **`fails-when`.** From E2, a mechanical probe whose ISC can't be seen failing first — an `Anti:` ISC, a `kind:` without the red step (config, doc, file, decision, visual, regression), or `red: exempt …` — says what it would see if the claim were false: `fails-when: "<observation>"`. Writing it is where a probe that can't fail (`true`, a grep standing in for running the code) shows itself; `isa close` lists it beside each ISC never seen failing.
 
 (A long-lived per-repo "project ISA" is not supported — it is a possible future feature, not part of this skill.)

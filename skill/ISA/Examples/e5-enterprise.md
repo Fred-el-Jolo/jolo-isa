@@ -508,7 +508,9 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
   kind: file
   check: runbooks with a false-positive section
   threshold: 12 alert runbooks, each with a "false positive when" heading
-  tool: rg -l -i '^#+ .*false positive when' docs/runbooks/alerts/ | wc -l
+  tool: |-
+    test "$(rg -l -i '^#+ .*false positive when' docs/runbooks/alerts/ | wc -l)" -ge 12
+  fails-when: "fewer than 12 alert runbooks have a false-positive heading"
 
 - isc: ISC-46
   type: bash
@@ -573,7 +575,8 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
   kind: schema
   check: assessor findings export
   threshold: 0 open high-severity findings
-  tool: jq '[.findings[] | select(.severity=="high" and .status=="open")] | length' compliance/hitrust-2026-04.json
+  tool: |-
+    jq -e '[.findings[] | select(.severity=="high" and .status=="open")] | length == 0' compliance/hitrust-2026-04.json
 
 - isc: ISC-55
   type: bash
@@ -608,21 +611,26 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
   kind: schema
   check: Q4 assessor result
   threshold: status Certified; 0 MRSA findings
-  tool: jq '.status, ([.findings[] | select(.type=="MRSA")] | length)' compliance/hitrust-2026-q4.json
+  tool: |-
+    jq -e '.status == "Certified" and ([.findings[] | select(.type=="MRSA")] | length == 0)' compliance/hitrust-2026-q4.json
 
 - isc: ISC-60
   type: bash
   kind: regression
   check: PHI-shaped query parameters in edge and WAF logs, 7 days
-  threshold: zero matches (rg exits 1)
-  tool: rg "patient_id=|mrn=|dob=|ssn=" /var/log/cloudflare-edge/*.log /var/log/waf/*.log
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! rg -q "patient_id=|mrn=|dob=|ssn=" /var/log/cloudflare-edge/*.log /var/log/waf/*.log
+  fails-when: "a logged URL carries a PHI parameter"
 
 - isc: ISC-61
   type: bash
   kind: regression
   check: oldest retained audit event
   threshold: ≥ 6 years − 7 days old (or the archive predates that window)
-  tool: psql "$AUDIT_DB" -Atc "SELECT MIN(timestamp) <= now() - interval '6 years' + interval '7 days' OR MIN(timestamp) = (SELECT go_live FROM meta) FROM audit_log_archive"
+  tool: |-
+    test "$(psql "$AUDIT_DB" -Atc "SELECT MIN(timestamp) <= now() - interval '6 years' + interval '7 days' OR MIN(timestamp) = (SELECT go_live FROM meta) FROM audit_log_archive")" = t
+  fails-when: "the archive's oldest row is younger than six years minus a week, and newer than go-live"
 
 - isc: ISC-62
   type: bash
@@ -630,6 +638,7 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
   check: vendors in data path vs vendors with a BAA
   threshold: '|vendors_in_data_path| == |vendors_with_baa_sha|, 0 unrecognized'
   tool: bun run scripts/baa-reconciliation.ts
+  fails-when: "a vendor in the PHI data path has no signed BAA on file"
 
 - isc: ISC-63
   type: property
@@ -639,20 +648,25 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
   generator: "random configs with per-role idle timeouts 1–120 min"
   runs: 1000
   tool: bun test test/preflight/idle-timeout.property.test.ts
+  fails-when: "a generated session stays alive past 15 idle minutes"
 
 - isc: ISC-64
   type: bash
   kind: regression
   check: PHI-tagged resources outside US regions and non-BAA services
   threshold: "0"
-  tool: bun run scripts/phi-residency-scan.ts --count
+  tool: |-
+    test "$(bun run scripts/phi-residency-scan.ts --count)" -eq 0
+  fails-when: "PHI is found in a non-US region"
 
 - isc: ISC-65
   type: bash
   kind: regression
   check: inter-region PHI flows over public hops, from VPC flow logs
   threshold: "0"
-  tool: bun run scripts/flowlog-public-hops.ts --tag phi --window 7d --count
+  tool: |-
+    test "$(bun run scripts/flowlog-public-hops.ts --tag phi --window 7d --count)" -eq 0
+  fails-when: "PHI crossed regions over a public hop in the last week"
 
 - isc: ISC-66
   type: bash
@@ -660,7 +674,9 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
   risk: high
   check: password columns in the patient-identity DB
   threshold: 0 rows
-  tool: psql "$IDENTITY_DB" -Atc "SELECT column_name FROM information_schema.columns WHERE column_name ~ 'password'"
+  tool: |-
+    test -z "$(psql "$IDENTITY_DB" -Atc "SELECT column_name FROM information_schema.columns WHERE column_name ~ 'password'")"
+  fails-when: "a column named like password exists"
 
 - isc: ISC-67
   type: bash
@@ -669,13 +685,16 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
   threshold: rule enabled; 0 violations
   tool: |-
     bunx eslint --rule 'beacon/no-role-mutation: error' src/
+  fails-when: "a code path changes a session's role without re-authentication (the rule reports an error)"
 
 - isc: ISC-68
   type: bash
   kind: regression
   check: UPDATE/DELETE on audit_log by the app role, 30 days
   threshold: 0 rows
-  tool: psql "$AUDIT_DB" -Atc "SELECT count(*) FROM pg_stat_statements WHERE query ~ '(UPDATE|DELETE).+audit_log' AND userid = 'app_role'::regrole"
+  tool: |-
+    test "$(psql "$AUDIT_DB" -Atc "SELECT count(*) FROM pg_stat_statements WHERE query ~ '(UPDATE|DELETE).+audit_log' AND userid = 'app_role'::regrole")" = 0
+  fails-when: "the app role ran an UPDATE or DELETE on the audit log"
 ```
 
 ## Features
@@ -857,20 +876,20 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 - ISC-39: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/regional-outage-drill.ts --target us-west-2` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L29)
 - ISC-43: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/trace-correlation.ts --sample 100` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L30)
 - ISC-44: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/dashboards.ts --tag portal --names` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L31)
-- ISC-45: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `rg -l -i '^#+ .*false positive when' docs/runbooks/alerts/ | wc -l` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L32)
+- ISC-45: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `test "$(rg -l -i '^#+ .*false positive when' docs/runbooks/alerts/ | wc -l)" -ge 12` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L32)
 - ISC-47: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `terraform plan -detailed-exitcode && aws events describe-rule --name console-change-revert | jq -r .State` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L33)
 - ISC-48: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/rollback-drill.ts --all-regions` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L34)
 - ISC-49: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/canary-failure-injection.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L35)
 - ISC-50: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bash scripts/secret-surface-scan.sh images taskdefs tfstate` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L36)
 - ISC-52: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `curl -s https://portal.beaconhealth.example.org/canary/_features | jq -r '.enabled | sort | join(",")'` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L37)
 - ISC-53: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/soak-report.ts --from 2026-04-08 --to 2026-04-22` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L38)
-- ISC-54: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `jq '[.findings[] | select(.severity=="high" and .status=="open")] | length' compliance/hitrust-2026-04.json` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L39)
-- ISC-60: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `rg "patient_id=|mrn=|dob=|ssn=" /var/log/cloudflare-edge/*.log /var/log/waf/*.log` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L40)
-- ISC-61: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `psql "$AUDIT_DB" -Atc "SELECT MIN(timestamp) <= now() - interval '6 years' + interval '7 days' OR MIN(timestamp) = (SELECT go_live FROM meta) FROM audit_log_archive"` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L41)
+- ISC-54: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `jq -e '[.findings[] | select(.severity=="high" and .status=="open")] | length == 0' compliance/hitrust-2026-04.json` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L39)
+- ISC-60: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `! rg -q "patient_id=|mrn=|dob=|ssn=" /var/log/cloudflare-edge/*.log /var/log/waf/*.log` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L40)
+- ISC-61: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `test "$(psql "$AUDIT_DB" -Atc "SELECT MIN(timestamp) <= now() - interval '6 years' + interval '7 days' OR MIN(timestamp) = (SELECT go_live FROM meta) FROM audit_log_archive")" = t` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L41)
 - ISC-62: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/baa-reconciliation.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L42)
 - ISC-63: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun test test/preflight/idle-timeout.property.test.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L43)
-- ISC-64: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/phi-residency-scan.ts --count` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L44)
-- ISC-65: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/flowlog-public-hops.ts --tag phi --window 7d --count` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L45)
-- ISC-66: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `psql "$IDENTITY_DB" -Atc "SELECT column_name FROM information_schema.columns WHERE column_name ~ 'password'"` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L46)
+- ISC-64: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `test "$(bun run scripts/phi-residency-scan.ts --count)" -eq 0` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L44)
+- ISC-65: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `test "$(bun run scripts/flowlog-public-hops.ts --tag phi --window 7d --count)" -eq 0` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L45)
+- ISC-66: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `test -z "$(psql "$IDENTITY_DB" -Atc "SELECT column_name FROM information_schema.columns WHERE column_name ~ 'password'")"` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L46)
 - ISC-67: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bunx eslint --rule 'beacon/no-role-mutation: error' src/` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L47)
-- ISC-68: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `psql "$AUDIT_DB" -Atc "SELECT count(*) FROM pg_stat_statements WHERE query ~ '(UPDATE|DELETE).+audit_log' AND userid = 'app_role'::regrole"` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L48)
+- ISC-68: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `test "$(psql "$AUDIT_DB" -Atc "SELECT count(*) FROM pg_stat_statements WHERE query ~ '(UPDATE|DELETE).+audit_log' AND userid = 'app_role'::regrole")" = 0` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L48)

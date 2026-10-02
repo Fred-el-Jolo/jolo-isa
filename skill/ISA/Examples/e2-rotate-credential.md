@@ -74,7 +74,7 @@ Rotate `DEPLOY_API_TOKEN` end-to-end: provision a new token with the same scope,
   check: seconds between issue and expiry
   threshold: ≤ 7776000 (90 days)
   tool: |-
-    curl -s -H "Authorization: Bearer $ADMIN_TOKEN" https://deploy.example.org/v1/tokens/$NEW_ID | jq '(.expires_at|fromdate) - (.created_at|fromdate)'
+    curl -s -H "Authorization: Bearer $ADMIN_TOKEN" https://deploy.example.org/v1/tokens/$NEW_ID | jq -e '(.expires_at|fromdate) - (.created_at|fromdate) <= 7776000'
 
 - isc: ISC-3
   type: bash
@@ -98,8 +98,9 @@ Rotate `DEPLOY_API_TOKEN` end-to-end: provision a new token with the same scope,
   kind: behaviour
   risk: high
   check: new token prefix in the verify run's log
-  threshold: zero matches (rg exits 1)
-  tool: gh run view $RUN_ID --log | rg -F "${NEW_TOKEN:0:8}"
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! gh run view $RUN_ID --log | rg -qF "${NEW_TOKEN:0:8}"
 
 - isc: ISC-6
   type: bash
@@ -116,7 +117,7 @@ Rotate `DEPLOY_API_TOKEN` end-to-end: provision a new token with the same scope,
   check: tagged verification artifact exists
   threshold: count ≥ 1
   tool: |-
-    curl -s -H "Authorization: Bearer $NEW_TOKEN" 'https://deploy.example.org/v1/artifacts?tag=rotation-test' | jq 'length'
+    curl -s -H "Authorization: Bearer $NEW_TOKEN" 'https://deploy.example.org/v1/artifacts?tag=rotation-test' | jq -e 'length >= 1'
 
 - isc: ISC-8
   type: bash
@@ -133,7 +134,8 @@ Rotate `DEPLOY_API_TOKEN` end-to-end: provision a new token with the same scope,
   risk: high
   check: seconds from new-token activation to old-token revocation
   threshold: ≤ 14400
-  tool: jq '(.revoked|fromdate) - (.activated|fromdate)' rotation-log.json
+  tool: |-
+    jq -e '(.revoked|fromdate) - (.activated|fromdate) <= 14400' rotation-log.json
 
 - isc: ISC-10
   type: bash
@@ -150,7 +152,8 @@ Rotate `DEPLOY_API_TOKEN` end-to-end: provision a new token with the same scope,
   risk: high
   check: revocation event in the audit log
   threshold: 1 event with non-empty actor, timestamp, reason
-  tool: siem query 'event=token_revoked token_id=$OLD_ID earliest=-1h' --json | jq '[.[] | select(.actor and .timestamp and .reason)] | length'
+  tool: |-
+    siem query 'event=token_revoked token_id=$OLD_ID earliest=-1h' --json | jq -e '[.[] | select(.actor and .timestamp and .reason)] | length == 1'
 
 - isc: ISC-12
   type: bash
@@ -159,6 +162,7 @@ Rotate `DEPLOY_API_TOKEN` end-to-end: provision a new token with the same scope,
   check: runbook names the new token ID and today's date
   threshold: both greps exit 0
   tool: grep -q "$NEW_ID" docs/runbooks/credential-rotation.md && grep -q "$(date +%F)" docs/runbooks/credential-rotation.md
+  fails-when: "the runbook lacks the new token ID or today's date"
 
 - isc: ISC-13
   type: manual
@@ -174,6 +178,7 @@ Rotate `DEPLOY_API_TOKEN` end-to-end: provision a new token with the same scope,
   check: neither token's first 8 chars in git history, PR bodies, or build artifacts
   threshold: script exits 0 (it exits 1 on any match)
   tool: bash scripts/credential-leak-audit.sh "${NEW_TOKEN:0:8}" "${OLD_TOKEN:0:8}"
+  fails-when: "the audit script finds either token prefix in a commit, PR or artifact"
 
 - isc: ISC-15
   type: bash
@@ -182,7 +187,8 @@ Rotate `DEPLOY_API_TOKEN` end-to-end: provision a new token with the same scope,
   check: forbidden scopes on the new token
   threshold: 0
   tool: |-
-    curl -s -H "Authorization: Bearer $NEW_TOKEN" https://deploy.example.org/v1/me | jq '[.scopes[] | select(test("^(admin|users):"))] | length'
+    curl -s -H "Authorization: Bearer $NEW_TOKEN" https://deploy.example.org/v1/me | jq -e '[.scopes[] | select(test("^(admin|users):"))] | length == 0'
+  fails-when: "the new token holds an admin or users scope"
 
 - isc: ISC-16
   type: bash
@@ -190,7 +196,9 @@ Rotate `DEPLOY_API_TOKEN` end-to-end: provision a new token with the same scope,
   risk: high
   check: gap between new-token activation and old-token revocation
   threshold: ≥ 1800s
-  tool: jq '(.revoked|fromdate) - (.activated|fromdate)' rotation-log.json
+  tool: |-
+    jq -e '(.revoked|fromdate) - (.activated|fromdate) >= 1800' rotation-log.json
+  fails-when: "the old token was revoked less than 30 minutes after the new one went live"
 ```
 
 <!--

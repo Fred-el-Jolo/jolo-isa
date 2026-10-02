@@ -132,6 +132,7 @@ Ship a single-file `arxiv.ts` CLI that takes paper IDs as arguments, queries the
   check: --download is rejected
   threshold: exit 2 + usage on stderr
   tool: bun arxiv.ts --download 2401.12345 2>&1 | grep -q '^usage:'; test ${PIPESTATUS[0]} -eq 2
+  fails-when: "--download is accepted, or the usage line or exit code 2 is missing"
 
 - isc: ISC-12
   type: unit-test
@@ -139,6 +140,7 @@ Ship a single-file `arxiv.ts` CLI that takes paper IDs as arguments, queries the
   check: fetch high-water mark over a 100-ID batch against a mock server
   threshold: max in-flight requests ≤ 3
   tool: bun test test/queue.test.ts -t "concurrency cap"
+  fails-when: "the queue test sees a fourth request in flight"
 ```
 
 ## Features
