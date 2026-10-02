@@ -650,6 +650,8 @@ Questions (each a template under `runtime/isa/judge/`):
 | `goal_met`: "does the result described by the Verification lines deliver the stated goal?" | `isa close` | Recorded + shown; not blocking |
 | `asks_met`: "is each ask's line honest given the ISA?" | `isa close` | Recorded + shown; not blocking |
 
+Time limits: `gate` and `asks_extract` use `ISA_JUDGE_TIMEOUT` (12 s), since the gate runs inside a hook. The three advisory questions use `ISA_ADVICE_TIMEOUT` (default 60 s): they run in commands, and a batched `probe_adequacy` over 7 probes was measured past 12 s on 2026-10-02.
+
 Promotion from advisory to blocking is a later decision, made on eval data (false-positive rate).
 
 ---

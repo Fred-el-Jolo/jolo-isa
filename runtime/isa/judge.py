@@ -13,6 +13,8 @@ The free pre-filter (fit.prefilter) answers obvious prompts; only `unsure` reach
 Failure policy: a backend that times out (ISA_JUDGE_TIMEOUT, default 12 s), exits non-zero or answers
 something that isn't a verdict gives verdict yes, source error — if the gate can't decide, the session
 is ON. A named CLI that isn't installed falls back to the heuristic (unsure → yes).
+Advisory calls (`isa lint`'s probe_adequacy, `isa close`'s goal_met / asks_met) run in commands, not
+hooks: they get ISA_ADVICE_TIMEOUT (default 60 s), and a failure there is only a note.
 
 Every backend runs the judge isolated from the user's setup, and with ISA_JUDGE_CHILD=1 so the judge's
 own session runs no ISA hook (engine.handle returns {} for it).
@@ -32,6 +34,7 @@ from . import fit
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_TIMEOUT = 12.0
+DEFAULT_ADVICE_TIMEOUT = 60.0  # advisory calls run in `isa lint` / `isa close`, never in a hook
 CONTEXT_CHARS = 2000
 API_URL = "https://api.anthropic.com"
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["verdict", "reason"],
@@ -49,6 +52,13 @@ def timeout():
         return float(os.environ.get("ISA_JUDGE_TIMEOUT") or DEFAULT_TIMEOUT)
     except ValueError:
         return DEFAULT_TIMEOUT
+
+
+def advice_timeout():
+    try:
+        return float(os.environ.get("ISA_ADVICE_TIMEOUT") or DEFAULT_ADVICE_TIMEOUT)
+    except ValueError:
+        return DEFAULT_ADVICE_TIMEOUT
 
 
 def backend_for(harness):
@@ -204,7 +214,7 @@ def structured(template, schema, key, harness=None, backend=None, advisory=False
     if name not in ASK or (name in ("claude", "pi") and not shutil.which(name)):
         return None, "none"
     try:
-        text = ASK[name](model, render(template, **values), timeout(), schema=schema)
+        text = ASK[name](model, render(template, **values), advice_timeout() if advisory else timeout(), schema=schema)
     except (subprocess.TimeoutExpired, OSError, JudgeError):
         return None, "error"
     for c in [text] + re.findall(r"\{.*\}", text or "", re.S):

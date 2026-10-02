@@ -22,6 +22,7 @@ with open(os.environ["FAKE_LOG"], "a") as f:
     f.write(json.dumps({"prompt": prompt}) + "\n")
 if os.environ.get("FAKE_FAIL"):
     sys.exit(3)
+time.sleep(float(os.environ.get("FAKE_SLEEP") or 0))
 if "Items (ISC: criterion | probe)" in prompt:
     out = []
     for line in prompt.splitlines():
@@ -129,6 +130,41 @@ class TestCloseAdvice(AdviceCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("goal_met: yes", out)
         self.assertNotIn("asks_met", out)
+
+
+class TestAdviceTimeout(AdviceCase):
+    """Advisory calls run in commands, not hooks: ISA_ADVICE_TIMEOUT (60 s), not the gate's ISA_JUDGE_TIMEOUT."""
+
+    def setUp(self):
+        super().setUp()
+        self.env.update(FAKE_SLEEP="2", ISA_JUDGE_TIMEOUT="1")
+
+    def test_outlives_gate_timeout(self):
+        path = self.write_isa(self.weak)
+        rc, out = self.isa("lint", path)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("ISC-2: the judge doubts", out)
+        self.assertNotIn("not judged", out)
+
+    def test_own_limit(self):
+        self.env.update(ISA_ADVICE_TIMEOUT="1", ISA_JUDGE_TIMEOUT="5")  # only the advice limit can cut it off
+        path = self.write_isa(self.weak)
+        rc, out = self.isa("lint", path)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("probe adequacy not judged this time", out)
+
+    def test_gate_keeps_its_limit(self):
+        sys.path.insert(0, os.path.join(ROOT, "runtime"))
+        from isa import judge
+        saved = dict(os.environ)
+        os.environ.update(self.env)
+        try:
+            v = judge.gate("why does it fail?", harness="claude")
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+        self.assertEqual((v["verdict"], v["source"]), ("yes", "error"))
+        self.assertLess(v["ms"], 1900)
 
 
 class TestAdviceOff(AdviceCase):
