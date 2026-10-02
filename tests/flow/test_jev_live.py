@@ -32,6 +32,8 @@ CASES = [
                    "why_exempt": "kind doc", "fails_when": "(not written)"}, 3.0),
     ("isa-goal", {"stated_goal": "Add a `done <id>` command to todo.py", "goal": "todo.py has a done command.",
                   "evidence": EVIDENCE}, 3.0),
+    ("isa-claim", {"isc": "ISC-3", "claim": "The README documents the --pending flag.", "threshold": "present",
+                   "how": "manual", "evidence": "looks right"}, 3.0),
     ("isa-ask", {"ask": "a `done <id>` command that marks a task as completed",
                  "line": "met — ISC-1", "evidence": EVIDENCE}, 3.0),
 ]

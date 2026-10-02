@@ -10,6 +10,7 @@ import sys
 import time
 
 from tests.test_commands import CommandCase
+from tests.test_red import CALC, RED_ISA, TEST, RedCase
 from tests.test_evidence import read
 from tests.test_hooks import ISA, ROOT, HookCase, calls, setup_fake  # noqa: F401 (re-exported)
 
@@ -214,6 +215,83 @@ class TestCommandLine(JevCommandCase):
         self.assertTrue(any(line.startswith("Jev: Jev credit looks exhausted") for line in out.splitlines()), out)
         with open(os.path.join(ROOT, "runtime", "isa", "protocol.md")) as f:
             self.assertIn("relay it to the user word for word", f.read())
+
+
+# ---- close claim check (future/JEV.md #1): Jev reads the evidence of each weak tick at close
+
+def claim_iscs(case):
+    return sorted(json.loads(c["stdin"])["isc"] for c in calls(case, "isa-claim"))
+
+
+class TestClaimAttested(JevCommandCase):
+    def test_attest_text_sent(self):
+        setup_fake(self)
+        path = self.closable()
+        rc, out = self.isa("close", path)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(claim_iscs(self), ["ISC-3"])  # ISC-1, 2, 4 are red-exempt probes (kind file / Anti)
+        self.assertIn("looked at it", json.loads(calls(self, "isa-claim")[0]["stdin"])["evidence"])
+
+
+class TestClaimNoRed(RedCase):
+    def test_probe_and_output_sent(self):
+        setup_fake(self)
+        path = self.write_isa(RED_ISA)
+        self.put("test_calc.py", TEST)
+        self.put("calc.py", CALC)
+        rc, out = self.closeable(path)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(claim_iscs(self), ["ISC-1"])  # ISC-3 is Anti: red-exempt, judged at verify instead
+        ev = {json.loads(c["stdin"])["isc"]: json.loads(c["stdin"])["evidence"] for c in calls(self, "isa-claim")}
+        self.assertIn("python3 test_calc.py", ev["ISC-1"])
+        self.assertIn("exit 0", ev["ISC-1"])
+        self.assertIn("OK", ev["ISC-1"])  # the probe's output tail
+
+
+class TestClaimSkipsProven(RedCase):
+    def test_red_then_green_not_asked(self):
+        setup_fake(self)
+        path = self.write_isa(RED_ISA)
+        self.put("test_calc.py", TEST)
+        self.isa("verify", "--red", path, "ISC-1")
+        self.put("calc.py", CALC)
+        rc, out = self.closeable(path)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(len(calls(self, "isa-goal")), 1)  # Jev was asked at this close…
+        self.assertEqual(claim_iscs(self), [])  # …but not about ISC-1, which was seen failing first
+
+
+class TestClaimFlag(JevCommandCase):
+    def test_low_flagged(self):
+        setup_fake(self, isa_claim=0.2)
+        rc, out = self.isa("close", self.closable())
+        self.assertEqual(rc, 0, out)
+        self.assertIn("ISC-3 evidence supports the claim: 0.2 — check it", out)
+
+
+class TestClaimOutage(JevCommandCase):
+    def test_not_judged(self):
+        setup_fake(self, mode="tripped")
+        rc, out = self.isa("close", self.closable())
+        self.assertEqual(rc, 0, out)
+        self.assertIn("ISC-3 evidence supports the claim: not judged (Jev unavailable: tripped)", out)
+
+
+class TestClaimRecorded(JevCommandCase):
+    def test_advice_row(self):
+        setup_fake(self, isa_claim=0.7)
+        path = self.closable()
+        self.isa("close", path)
+        rows = [r for r in read_rows(path) if r.get("kind") == "advice" and r.get("question") == "isa-claim"]
+        self.assertEqual([(r["isc"], r["answer"]) for r in rows], [("ISC-3", 0.7)])
+        log = [r for r in self.log_rows("jev") if r.get("preset") == "isa-claim"]
+        self.assertEqual([(r["isc"], r["cmd"], r["answer"]) for r in log], [("ISC-3", "close", 0.7)])
+
+
+def read_rows(path):
+    sys.path.insert(0, os.path.join(ROOT, "runtime"))
+    from isa import evidence
+    return evidence.rows(path)
 
 
 if __name__ == "__main__":

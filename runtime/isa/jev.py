@@ -90,7 +90,10 @@ def ask_many(items, deadline, **ctx):
     if not items:
         return []
     with ThreadPoolExecutor(max_workers=min(8, len(items))) as pool:
-        futures = [pool.submit(ask, preset, payload, deadline, **ctx) for preset, payload in items]
+        # the debug row names the criterion a per-ISC question was about (probe adequacy, claim check)
+        futures = [pool.submit(ask, preset, payload, deadline, **ctx,
+                               **({"isc": payload["isc"]} if isinstance(payload, dict) and "isc" in payload else {}))
+                   for preset, payload in items]
         return [f.result() for f in futures]
 
 

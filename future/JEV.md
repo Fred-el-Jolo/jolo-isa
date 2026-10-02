@@ -1,6 +1,6 @@
 # Future D — TypeSafe / Jev judgments for the ISA skill
 
-> **Status: analysis only, not built.** The Jev wrapper will be built in a separate repo and session. This file is the handoff: what to build, where it plugs into the skill, and what must stay in code. Written 2026-09-25 from the live TypeSafe docs (jev-1.13).
+> **Status: partly built.** Built: the gate (#4, #4b), probe adequacy, the goal and ask checks, and the evidence check at close (#1) — see SPEC-v2 §§ 11–12. The rest is analysis. The Jev wrapper will be built in a separate repo and session. This file is the handoff: what to build, where it plugs into the skill, and what must stay in code. Written 2026-09-25 from the live TypeSafe docs (jev-1.13).
 
 ## Why Jev here
 
@@ -27,6 +27,8 @@ SDK: `@typesafe-ai/sdk` (JavaScript/TypeScript), endpoint `POST /v1/systemone`, 
 ## Best fits, ranked
 
 ### 1. Evidence check at close — CheckCompleteness (close)
+
+> **Built (2026-10-02):** preset `isa-claim` (one Noul `supports`), asked at `isa close` for self-attested ticks and ticks with no red baseline only; advisory, flagged below `jev_doubt`, recorded as `advice` rows (`runtime/isa/commands.py` `_claim_items`).
 
 - **Replaces:** the model deciding its own evidence proves the claim.
 - **State:** `{ criterion, threshold, evidence }` for each Verification line.

@@ -1,6 +1,6 @@
 # ISA v2 — design spec
 
-Status: **implemented (M1–M7, 2026-10-02)** on branch `spec-v2-review`; **§ 11 revision (judge-free baseline, Jev on by default) implemented (M8, M9)**; **§ 12 revision (judge every prompt, ask the user; reviewed 2026-10-02) implemented (M11, 2026-10-02)**; the live whole-flow run `flow/20261002-125119` on `eval-results` passed 14/14 stages. It comes out of the 2026-10-01 eval session: batch
+Status: **implemented (M1–M7, 2026-10-02)** on branch `spec-v2-review`; **§ 11 revision (judge-free baseline, Jev on by default) implemented (M8, M9)**; **§ 12 revision (judge every prompt, ask the user; reviewed 2026-10-02) implemented (M11, 2026-10-02)**; **§ 13 revision (ISAs in the repo, encrypted prompts) specified, not implemented (M12)**; the live whole-flow run `flow/20261002-125119` on `eval-results` passed 14/14 stages. It comes out of the 2026-10-01 eval session: batch
 `20261001-202941` on branch `eval-results`, and the reviews of runs A (review, no ISA) and B (bug fix,
 closed ISA). Each section says what changes, the exact behaviour, where it lives (hook / engine /
 command / skill), how it fails, and how it is tested. § Milestones orders the work.
@@ -926,6 +926,129 @@ Status: built 2026-10-02 — `engine.py` (`_q1`, `_q2`, `_stop_gate`, the bindin
   - the four fixes
   - the live flow with its NO prompt now judged by Jev (expected below the line; headless → continue)
 
+## 13. Revision (2026-10-02, night): ISAs live in the repo, prompts are encrypted
+
+Status: **specified, not implemented (M12)**. Missing-key behaviour (§ 13.7): **Option A chosen by the user (2026-10-03).**
+
+ISAs live in `~/.isa`, on one machine. The user works on several machines, wants to continue a pending task elsewhere through git, and wants a living spec per repo (Future C). Two constraints shape this section: the pushed repo must never show the user's verbatim prompts, and everything else in an ISA must stay publicly readable (diffs, reviews, merges).
+
+### 13.1 Location: the repo root, always
+
+A git repo's ISAs always live at its root — there is no per-repo switch and no fallback to `~/.isa` for a repo:
+
+```
+<repo>/
+├── ISA.md                         ← the project ISA (§ 13.2)
+├── .gitattributes                 ← filter=isa and merge=union lines (§ 13.3, § 13.6)
+└── .isa/
+    └── <YYYYMMDD-HHMMSS_slug>/    ← one task ISA
+        ├── ISA.md
+        ├── evidence.jsonl         ← its ledger (§ 13.3)
+        └── _ephemeral/            ← feature slices, as today
+```
+
+- The repo is the git work-tree root of the cwd (`state.project_root`). The first `isa new` in a repo creates `.isa/`, `ISA.md` (§ 13.2) and the `.gitattributes` lines, and registers the filter in the clone's local git config (§ 13.6).
+- `~/.isa` keeps only what is not a repo's: ISAs of directories outside any git repo (`~/.isa/<key>/…`, as today, `_home` included), and machine-local state in `~/.isa/_state` — sessions, prompt logs, debug logs, `errors.log` — plus `config.json` and the key (§ 13.8). `ISA_HOME` keeps overriding that folder.
+- `isa` never commits or pushes. The ISA files are committed with the code by the user (or the model, when asked).
+- Classification: `<repo>/ISA.md` and `<repo>/.isa/**` are ISA paths (`classify.path_kind` → `isa`), never project changes; ownership rules (§ 3.1) apply to every `ISA.md` there; `evidence.jsonl` is a ledger (§ 12.9 guard).
+- `isa ls` lists the current repo's `.isa/`; `isa ls --all` adds `~/.isa`.
+
+### 13.2 The project ISA (`<repo>/ISA.md`)
+
+The living spec of the repo: Constraints, Out of Scope, Anti-criteria and the standing claims the code must keep satisfying. It never closes and does not grow with sessions — session history stays in task ISAs.
+
+- Frontmatter `kind: project`, `task:` (the repo's one-line purpose), `effort`, `started`, `updated`. No `phase`, `progress`, `root`, `stated_goal`, `asks` — it has no single prompt and no single run.
+- Sections: the § 2 order, with Criteria as standing claims (`- ISC-P<n>: …`, no checkbox: a standing claim is re-proved, never ticked) and their Test Strategy entries. No Verification section: proof is machine state, kept in `~/.isa/_state/project/<repo-key>.jsonl` (local, never committed — it changes on every run and would conflict).
+- Created by the first `isa new` in the repo as a skeleton (frontmatter + `## Problem` with one line naming the repo); lint at `kind: project` requires only the frontmatter until it has criteria, then the § 2 rules for the sections present.
+- `isa verify ISA.md` re-proves every standing claim (probes from the repo root) and prints pass / fail; `isa close` does not apply.
+- Task ISAs carry `parent: project`. A task criterion that must hold forever gets `promote: true` in its Test Strategy entry; the model copies it into `ISA.md` (Write/Edit) with a Decisions row on both sides, and `isa close` refuses while a `promote: true` criterion has no match in the project ISA.
+
+### 13.3 The ledger beside each task ISA
+
+- `.isa/<slug>/evidence.jsonl` replaces `~/.isa/_state/evidence/<slug>-<hash>.jsonl` for repo ISAs. It is append-only, so `.gitattributes` marks it `merge=union`: two machines' rows are both kept, never a conflict.
+- Rows gain `"machine"` (the first 8 hex of sha256 of the hostname) so a reader can tell where a probe ran. Fingerprints stay content-only (§ 4.2), so they compare across machines.
+- `root:` becomes **repo-relative** (`.` for the repo itself, `sub/dir` below it); an absolute path is accepted only for an ISA outside any repo. Paths differ between machines (`/home/jolo` vs `/Users/jolo`); a committed absolute `root` would break every probe on the other machine.
+- Ledger rows that hold paths (`root`, `cwd`, `files`) store them repo-relative too.
+
+### 13.4 Another machine
+
+Continuing a pending task elsewhere: `git pull`, open a session in the repo, edit the task's `ISA.md` (or `isa current` / `isa ls` to find it). What travels and what doesn't:
+
+| Travels (committed) | Stays on the machine |
+|---|---|
+| The ISA (content, ticks, generated lines) | The session file (binding, mode, pass) |
+| `evidence.jsonl` (probe runs, red baselines, attest text, `blocked`, `paused` rows) | Prompt logs and debug logs |
+| `.gitattributes` | The filter registration in `.git/config` (§ 13.6) |
+
+- Binding on machine B follows the § 12.7 rule: editing the task's ISA binds it when no other open ISA is bound.
+- Checks that read the prompt log (§ 6.5 waiver quotes, the verbatim `stated_goal`, `asks` spans) can't see machine A's prompts. Once verified on the machine that has the prompt, the verification is written to the ledger as a `quote-verified` row holding an HMAC of the span (keyed, § 13.8 — a bare hash of a short prompt could be brute-forced); lint on any machine accepts a span whose HMAC is in the ledger. `.stated_goal.sha256` goes away.
+- `isa close` re-runs every probe, so a task can always be finished on another machine; only red baselines and attest text depend on the travelling ledger.
+
+### 13.5 What is encrypted — only the user's verbatim words
+
+Exactly these, in task ISAs (the project ISA holds no prompt):
+
+| Where | What |
+|---|---|
+| frontmatter `stated_goal` | the value |
+| frontmatter `asks` | each entry |
+| `## Goal` | the verbatim quote that opens it (the `stated_goal` literal, Scaffold Step 3) |
+| `## Decisions` | the user quote of a `waived: ISC-N — user: "<quote>"` row (§ 6.5) |
+
+**Everything else stays plain** — task, criteria, Test Strategy, Decisions, Changelog, Verification, the Goal's prose, the ledger (except `quote-verified` HMACs, which are not text) — even where the model's own words paraphrase the request. The prompt logs never leave the machine.
+
+### 13.6 How: a git clean/smudge filter
+
+Files on disk are always plain: the model reads and edits them, and lint compares spans with the prompt log. Encryption happens only between the working tree and git.
+
+- `.gitattributes` (committed, written by the first `isa new`):
+  ```
+  ISA.md filter=isa
+  .isa/**/ISA.md filter=isa
+  .isa/**/evidence.jsonl merge=union
+  ```
+- Local git config (per clone, written by `isa` the first time it touches the repo): `filter.isa.clean = isa crypt clean %f`, `filter.isa.smudge = isa crypt smudge %f`, and **`filter.isa.required = true`**: when `clean` fails (no key, § 13.7), git refuses the commit. **A commit can never carry a plaintext prompt.**
+- After registering the filter in a fresh clone, `isa` re-checks out the ISA files that hold ciphertext and have no local changes, so they become plain.
+- `clean` replaces each field of § 13.5 by `enc:v1:<keyid>:<base64url(iv ‖ ciphertext ‖ tag)>` — a YAML string in the frontmatter, the quoted text in the body. A value already in that form passes through unchanged (idempotent; a line written under another key is kept as is).
+- `smudge` decrypts every `enc:v1:` value whose `keyid` matches the key; others are left as they are (§ 13.7).
+- **Cipher**, with the standard library plus the `openssl` CLI (present on Linux and macOS; Python's standard library has no AES, and the runtime stays stdlib-only): sub-keys `k_enc`, `k_mac`, `k_iv` = HMAC-SHA256(key, label). `iv` = HMAC-SHA256(`k_iv`, plaintext)[:16]; ciphertext = `openssl enc -aes-256-ctr -K k_enc -iv iv`; `tag` = HMAC-SHA256(`k_mac`, iv ‖ ciphertext)[:16]; `keyid` = the first 8 hex of sha256(key). Encrypt-then-MAC, verified before decrypting.
+- **Deterministic on purpose**: the same plaintext under the same key always gives the same line, so an unchanged field never changes in git (no churn, no false conflicts). What it reveals: that two encrypted values are equal. Accepted.
+
+### 13.7 Without the key — Option A chosen (2026-10-03)
+
+What happens when `isa` touches a repo that holds `enc:v1:` values (or needs to encrypt) and no key is available, or only a key with another `keyid`:
+
+- **Option A — hard stop until a key is set.** Every hook in that repo refuses ISA work: the prompt hook shows `ISA: no key for this repo's encrypted prompts (key id ab12cd34). Run \`isa key import\` (the key from another machine) or \`isa key new\` (a new key; the old prompts stay unreadable).`; PreToolUse refuses writes that need an ISA; `isa new|verify|close` exit 2 with the same text; `git commit` fails through the required filter. Nothing proceeds half-encrypted.
+- **Option B — work on, block only the commit.** ISAs are created and used locally; encrypted values from other machines show as `enc:v1:…` (the stated-goal and asks checks accept spans with a ledger `quote-verified` row); the required filter refuses the commit with the same message. Lets the user keep working offline, but the problem surfaces late, at commit time.
+- **Option C — a new key automatically, error only on a mismatch.** When the repo holds no ciphertext yet and no key exists, `isa` creates one silently (`~/.isa/key`) and says so once; Option A applies only when ciphertext under an unknown `keyid` exists. Smooth on the first machine, but a second machine set up before copying the key gets its own key, and the repo then mixes two key ids.
+
+**Recommended: A, with C's first-key case** — the very first key on a machine is created only by an explicit `isa key new` (prompted by the Option A message), never silently, so a second machine can't fork the key by accident; every later absence or mismatch is a hard stop with the two commands. `isa key new` on a repo that holds ciphertext under another key asks for `--force` and states which values will stay unreadable.
+
+### 13.8 The key
+
+- 32 random bytes, base64 in `~/.isa/key` (mode 0600), outside every repo. One key for all repos (simplest to share between machines); `keyid` in each value tells which key a value needs.
+- Sources, first found wins: `ISA_KEY` (environment, base64), `~/.isa/key`, `"key_command"` in `config.json` (a command printing the key, e.g. `pass show isa` — for a password manager).
+- Commands: `isa key new [--force]`, `isa key import [FILE|-]` (stdin by default, so the key never lands in shell history), `isa key export` (prints it, to copy to another machine), `isa key status` (this key's id; for the current repo, the key ids its ISAs use and how many values each).
+- Losing the key loses the encrypted quotes only; the ISAs keep working (Option B-like reading of `enc:` values) — back it up like an SSH key.
+
+### 13.9 Migration and failure modes
+
+`isa migrate [--dry-run]` moves every `~/.isa/<key>/<slug>/` whose `root` is inside a git repo into `<repo>/.isa/<slug>/`, moves its ledger from `~/.isa/_state/evidence/` to `evidence.jsonl` beside it, rewrites `root` (and ledger paths) repo-relative, writes `quote-verified` rows for spans the local prompt log still verifies, and adds the `.gitattributes` lines. Sessions bound to a moved ISA are rebound to the new path. Nothing is committed.
+
+| Failure | Behaviour |
+|---|---|
+| `openssl` missing | `isa crypt` exits non-zero → the required filter refuses the commit, with the reason; `isa key status` reports it |
+| Filter not registered (fresh clone, `isa` never ran) | Files show `enc:v1:` values; the first hook or command in the repo registers it and re-checks out unmodified ISA files |
+| A tag that doesn't verify (tampered value) | `smudge` leaves the value encrypted and logs it; lint reports `stated_goal`/`asks` unreadable, never "verbatim" |
+| Two machines append to the same `evidence.jsonl` | `merge=union` keeps both sides |
+| Two machines edit the same task ISA | An ordinary git conflict, as for code |
+| A repo the user may not add files to | Not supported (the user's call): ISAs always go to the repo root |
+
+### 13.10 Milestone M12
+
+- Code: repo-root paths (`state.project_dir`, `is_isa_path`, `is_master_isa`, `isa ls`), the project ISA (`kind: project` lint, `isa verify ISA.md`, `promote:` at close), the ledger beside the ISA with repo-relative paths and `machine`, `quote-verified` rows, `isa crypt clean|smudge`, the `.gitattributes` / filter setup, the key commands and sources, the missing-key behaviour of § 13.7 (Option A, with the explicit first `isa key new`), `isa migrate`; SKILL.md, AGENTS.md, ON block.
+- Tests: an ISA created in a repo lands in `.isa/` and creates `ISA.md`; a non-repo directory still uses `~/.isa`; a commit through the real filter stores `enc:v1:` for exactly the § 13.5 fields and plain text for everything else; checkout restores the plain text; the same plaintext encrypts to the same line; a tampered tag is refused; no key → the chosen § 13.7 behaviour, and `git commit` refused; a wrong key → values left encrypted, a hard stop; two clones (two `ISA_HOME`s, one bare remote) continue one task, ledgers merge by union, close succeeds on the second; `quote-verified` lets lint pass on the machine without the prompt; `isa migrate` on a fixture `~/.isa`; the project ISA's standing claims re-proved by `isa verify ISA.md`; a `promote: true` criterion missing from `ISA.md` blocks `isa close`.
+
 ## Decisions
 
 Taken in the spec review of 2026-10-01:
@@ -1023,3 +1146,8 @@ Taken in the sixth review round:
 37. **M11.1 / M11.2 (2026-10-02):** a user's Continue lifts the ISA gate for the rest of that prompt (the
     Continue pass, § 12.4) — ON stayed sticky over the user's answer before; below `jev_quiet` nobody is
     asked at all, after four needless questions in one session.
+38. **§ 13 (2026-10-02):** a git repo's ISAs always live at its root (`ISA.md` = the project ISA,
+    `.isa/<slug>/` = task ISAs with their ledger), committed by the user, so a task can be continued on
+    another machine. Only the user's verbatim words (`stated_goal`, `asks`, the Goal's quote, waiver
+    quotes) are encrypted, by a required git clean/smudge filter with a key kept outside the repo;
+    everything else stays public. Missing key: Option A, a hard stop until `isa key import` or `isa key new` (the user's choice, 2026-10-03).
