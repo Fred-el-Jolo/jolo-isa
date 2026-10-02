@@ -175,6 +175,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
   check: deployed version meta vs local HEAD
   threshold: strings equal
   tool: test "$(curl -s https://beanline.example.com | rg -o 'name="version" content="\K[0-9a-f]+')" = "$(git rev-parse --short HEAD)"
+  fails-when: "the live page carries another commit's version, or no version meta at all (the two strings differ)"
 
 - isc: ISC-5
   anchors_to: literal
@@ -481,7 +482,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
   kind: regression
   check: social-graph endpoints don't exist
   threshold: every one returns 404
-  tool: for p in follow dm friends; do curl -s -o /dev/null -w '%{http_code}\n' https://beanline.example.com/api/$p; done | sort -u
+  tool: "! for p in follow dm friends; do curl -s -o /dev/null -w '%{http_code}\\n' https://beanline.example.com/api/$p; done | grep -vqx 404"
+  fails-when: "any of the three endpoints answers anything but 404 (grep finds a non-404 line, the `!` turns it into exit 1)"
 
 - isc: ISC-37
   anchors_to: "derived: Constraints — no original JPEGs served"
@@ -491,6 +493,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
   generator: "fixture uploads: JPEG with EXIF GPS, PNG, HEIC, 1px–8000px"
   runs: 100
   tool: bun test test/images.property.test.ts
+  fails-when: "a generated upload gets a public URL that answers image/jpeg (the property test reports the counterexample)"
 
 - isc: ISC-38
   anchors_to: "derived: Principles — no third-party tracking in the user path"
@@ -498,7 +501,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
   kind: regression
   check: third-party hosts requested on first /browse load
   threshold: "0"
-  tool: bunx playwright test e2e/third-party.spec.ts --reporter=json | jq '.stats.unexpected'
+  tool: bunx playwright test e2e/third-party.spec.ts --reporter=json | jq -e '.stats.unexpected == 0'
+  fails-when: "the spec records a third-party request (unexpected > 0, so `jq -e` exits 1)"
 ```
 
 ## Features
@@ -602,9 +606,9 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - ISC-21: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `curl -s -b "session=$ROASTER" https://beanline.example.com/account/payouts | rg -c 'connect\.stripe\.com'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L16)
 - ISC-22: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun run scripts/checkout-test.ts --sandbox --lot-price=25000 | jq -r '.payment_intent.capture_method'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L17)
 - ISC-30: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `for p in /checkout /messages /listings; do curl -s -o /dev/null -w '%{http_code}\n' -X POST https://beanline.example.com$p; done | sort -u` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L18)
-- ISC-36: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `for p in follow dm friends; do curl -s -o /dev/null -w '%{http_code}\n' https://beanline.example.com/api/$p; done | sort -u` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L19)
+- ISC-36: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `! for p in follow dm friends; do curl -s -o /dev/null -w '%{http_code}\n' https://beanline.example.com/api/$p; done | grep -vqx 404` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L19)
 - ISC-37: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun test test/images.property.test.ts` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L20)
-- ISC-38: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bunx playwright test e2e/third-party.spec.ts --reporter=json | jq '.stats.unexpected'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L21)
+- ISC-38: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bunx playwright test e2e/third-party.spec.ts --reporter=json | jq -e '.stats.unexpected == 0'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L21)
 
 <!--
 Canonical showpiece. Marketplace pattern (auth + Stripe escrow + RBAC + listings + search + reviews + messaging) at E5 scale. Every section a standalone ISA can have is populated (all but Dependencies and Bridge Criteria, which need a hierarchy). It shows the verbatim `stated_goal` quoted as the Goal's first sentence, with every Test Strategy entry anchored to it (`literal`) or to a named derived claim, real-feeling Decisions with two ❌ DEAD ENDs and five refinements, four-piece C/R/L Changelog entries spanning the 4-month build. Anti-criteria (ISC-36, 37, 38) cover scope, privacy, and regression. Antecedents (none) — the goal is verifiable, not experiential, so antecedents aren't required at this gate. The delight prediction in Vision is falsifiable by the user but not gated as an ISC because the marketplace's success is measured by transactions completed, not by any single user's reaction.

@@ -21,8 +21,10 @@ EVIDENCE = """- [x] ISC-1: `done <id>` marks a task completed.
 - ISC-2: verified — exit 0 — `! python3 todo.py done 99`"""
 
 CASES = [
-    ("isa-gate", {"prompt": "can you look into why the nightly export is sometimes empty?", "context": ""}, 1.5),
-    ("isa-gate", {"prompt": "what does cmd_list in todo.py print?", "context": ""}, 1.5),
+    ("isa-gate", {"prompt": "can you look into why the nightly export is sometimes empty?", "context": "", "skill": ""}, 1.5),
+    ("isa-gate", {"prompt": "what does cmd_list in todo.py print?", "context": "", "skill": ""}, 1.5),
+    ("isa-continuation", {"isa": "task: Add a done command to todo.py\nGoal: `done <id>` marks a task completed.",
+                          "prompt": "now write the release notes for 2.0", "context": ""}, 1.5),
     ("isa-probe", {"isc": "ISC-2", "claim": "Anti: `done 99` for an unknown id exits 0.",
                    "probe": "! python3 todo.py done 99", "why_exempt": "Anti",
                    "fails_when": "`done 99` exits 0"}, 3.0),

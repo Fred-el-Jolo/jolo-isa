@@ -11,57 +11,10 @@ import time
 
 from tests.test_commands import CommandCase
 from tests.test_evidence import read
-from tests.test_hooks import ISA, ROOT, HookCase, fake_cli
+from tests.test_hooks import ISA, ROOT, HookCase, calls, setup_fake  # noqa: F401 (re-exported)
 
 QUESTION = "what does cmd_list in todo.py print?"
 PRESETS = os.path.join(ROOT, "runtime", "isa", "jev")
-
-FAKE_JEV = r'''
-argv = sys.argv[1:]
-stdin = sys.stdin.read()
-with open(os.environ["FAKE_JEV_LOG"], "a") as f:
-    f.write(json.dumps({"argv": argv, "presets": os.environ.get("JEV_KIT_PRESETS", ""), "stdin": stdin}) + "\n")
-mode = os.environ.get("FAKE_JEV_MODE", "served")
-preset = argv[1] if len(argv) > 1 else ""
-def unavailable(reason, detail, code):
-    print(json.dumps({"ok": False, "consumer": "isa", "unavailable": {"reason": reason, "detail": detail}}))
-    sys.exit(code)
-if mode == "slow":
-    time.sleep(6)
-if mode == "credit":
-    unavailable("error", "402 Payment Required: insufficient credit balance on this account", 4)
-if mode == "tripped":
-    unavailable("tripped", "isa: 5 consecutive failures, cooling down 60s", 4)
-if mode == "budget":
-    unavailable("budget", "isa: tokensPerDay 500000 reached", 5)
-if mode == "garbled":
-    print("<html>bad gateway</html>")
-    sys.exit(0)
-d = os.environ["JEV_KIT_PRESETS"].split(":")[0]
-with open(os.path.join(d, preset + ".json")) as f:
-    qs = json.load(f)["questions"]
-p = float(os.environ.get("FAKE_JEV_P_" + preset.replace("-", "_"), os.environ.get("FAKE_JEV_P", "0.93")))
-print(json.dumps({"ok": True, "consumer": "isa", "model": "jev-1.13.0",
-                  "answers": {q: {"type": "noul", "answer": p} for q in qs}, "usage": {}}))
-'''
-
-
-def setup_fake(case, mode="served", **p):
-    bin_ = os.path.join(case.tmp, "fakejev")
-    path = fake_cli(bin_, "jev", FAKE_JEV)
-    case.jev_log = os.path.join(case.tmp, "jev-calls.jsonl")
-    case.env.update(ISA_JEV_BIN=path, FAKE_JEV_LOG=case.jev_log, FAKE_JEV_MODE=mode,
-                    **{f"FAKE_JEV_P_{k}": str(v) for k, v in p.items()})
-
-
-def calls(case, preset=None):
-    try:
-        with open(case.jev_log) as f:
-            rows = [json.loads(line) for line in f]
-    except OSError:
-        return []
-    return [r for r in rows if preset is None or r["argv"][1:2] == [preset]]
-
 
 class JevHookCase(HookCase):
     def prompt(self, text=QUESTION):
@@ -84,9 +37,10 @@ class TestSwitch(JevHookCase):
         setup_fake(self)
         self.env["ISA_JEV_BIN"] = os.path.join(self.tmp, "no-such-jev")
         _, out, _ = self.prompt()
-        self.assertIn("[ISA: unsure", self.ctx(out))
+        self.assertIn("ISA judge (model)", self.ctx(out))  # the model judges
         self.assertEqual(calls(self), [])
-        self.assertNotIn("Jev", out.get("systemMessage", ""))  # not installed is not an outage
+        self.assertNotIn("Jev credit", out.get("systemMessage", ""))  # not installed is not an outage
+        self.assertNotIn("Jev unavailable (off:", out.get("systemMessage", ""))
 
 
 class TestDefaultCall(JevHookCase):
@@ -99,11 +53,12 @@ class TestDefaultCall(JevHookCase):
         self.assertEqual(os.path.realpath(c[0]["presets"].split(":")[0]), os.path.realpath(PRESETS))
         self.assertEqual(json.loads(c[0]["stdin"])["prompt"], QUESTION)
 
-    def test_clear_prompts_skip_jev(self):
-        setup_fake(self)
+    def test_every_prompt_is_judged(self):  # SPEC-v2 § 12: no keyword pre-filter in front of Jev
+        setup_fake(self, isa_gate=0.2)
         self.prompt("thanks!")
+        self.pid = "p2"
         self.prompt("Fix the bug in dates.py so the tests pass")
-        self.assertEqual(calls(self), [])
+        self.assertEqual(len(calls(self, "isa-gate")), 2)
 
 
 class TestDeadline(JevHookCase):
@@ -112,7 +67,7 @@ class TestDeadline(JevHookCase):
         t0 = time.time()
         _, out, _ = self.prompt()
         self.assertLess(time.time() - t0, 4.5)
-        self.assertIn("[ISA: unsure", self.ctx(out))
+        self.assertIn("ISA judge (model)", self.ctx(out))  # past the deadline: the model judges
         self.assertEqual(self.log_rows("jev")[-1]["reason"], "timeout")
 
 
@@ -126,22 +81,12 @@ class TestGateYes(JevHookCase):
 
 
 class TestAddOnly(JevHookCase):
-    def baseline(self):
-        other = JevHookCase("run")
-        other.setUp()
-        try:
-            other.config(jev=False)
-            return other.ctx(other.prompt()[1])
-        finally:
-            other.tearDown()
-
-    def test_low_answer_and_outage_change_nothing(self):
-        expected = self.baseline()
+    def test_low_answer_and_outage_never_switch_on(self):  # § 12.1: below the line the user decides
         setup_fake(self, isa_gate=0.4)
-        self.assertEqual(self.ctx(self.prompt()[1]), expected)
+        self.assertIn("AskUserQuestion", self.ctx(self.prompt()[1]))
         self.env["FAKE_JEV_MODE"] = "tripped"
         self.pid = "p2"
-        self.assertEqual(self.ctx(self.prompt()[1]), expected)
+        self.assertIn("ISA judge (model)", self.ctx(self.prompt()[1]))
         self.assertNotEqual(self.session().get("mode"), "on")
 
 
@@ -149,7 +94,7 @@ class TestGarbled(JevHookCase):
     def test_not_served(self):
         setup_fake(self, mode="garbled")
         _, out, _ = self.prompt()
-        self.assertIn("[ISA: unsure", self.ctx(out))
+        self.assertIn("ISA judge (model)", self.ctx(out))
         self.assertEqual(self.log_rows("jev")[-1]["reason"], "garbled")
 
 

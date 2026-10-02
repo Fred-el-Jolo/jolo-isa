@@ -4,17 +4,21 @@
 // pi events to engine events and engine results back to pi. It fails OPEN: pi blocks a tool
 // when a tool_call handler throws, so every handler catches its own errors and warns instead.
 //
-//   before_agent_start  → engine "session_start" (first run / after compaction) + "prompt" (the gate's
-//                          free pre-filter; it carries the tail of the previous assistant message)
+//   input               → engine "session_start" (first run / after compaction) + "prompt": the gate
+//                          (SPEC-v2 § 12.4) on the raw text (`/skill:name …` not yet expanded), only
+//                          when the agent is idle — a message typed while it runs (steer / followUp)
+//                          belongs to the current run. When the gate is not settled as yes the engine
+//                          answers `ask`: this extension asks the user right here, before the model sees
+//                          anything ("Continue without ISA" / "Enable ISA"), and reports the pick
+//                          (engine "ask_answer"). No UI → nobody is asked.
+//   before_agent_start  → injects what `input` collected (ON block, the model's judge instruction)
 //   tool_call           → engine "pre_tool"      → { block, reason }
 //   tool_result         → engine "post_tool" / "tool_failed" → lint feedback appended to the result
 //   session_compact     → engine "compacted"     → protocol + Goal re-injected on the next run
-//   agent_before_settle → engine "stop" (with the last assistant text: an unsure prompt needs an ISA
-//                          or an `ISA: not needed — <reason>` line). When the agent went on without an ISA,
-//                          the engine answers `ask`: this extension asks the user with its own dialog
-//                          ("Continue without ISA" / "Enable ISA") and reports the pick (engine "ask_answer");
-//                          Enable ISA continues the run with the ON block. No UI → nobody is asked.
-//                          One continuation per prompt, then a warning
+//   agent_before_settle → engine "stop" (with the last assistant text: when Jev was unavailable the model
+//                          judged, and its `ISA judge (model): no|unsure — …` line makes the engine answer
+//                          `ask`: the extension asks here, after the answer; Enable ISA continues the run
+//                          with the ON block). One continuation per prompt, then a warning
 //                          (completed runs only — never after an abort or an error)
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { spawnSync } from "node:child_process"
@@ -96,7 +100,10 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
     run(ctx, "compacted")
   })
 
-  pi.on("before_agent_start", (event, ctx) => {
+  let pending: string[] | null = null // what the gate at `input` leaves for before_agent_start
+
+  // session start (first run / after compaction) + the gate; → the text for the model
+  const judge = async (ctx: ExtensionContext, prompt: string): Promise<string[]> => {
     promptSeq += 1
     const parts: string[] = []
     const sid = sessionId(ctx)
@@ -106,8 +113,33 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
       startedFor = sid
       compacted = false
     }
-    const p = run(ctx, "prompt", { prompt: event.prompt, context: lastAssistantText(ctx), has_ui: Boolean(ctx.hasUI) })
+    const p = run(ctx, "prompt", { prompt, context: lastAssistantText(ctx), has_ui: Boolean(ctx.hasUI) })
     if (p.context) parts.push(p.context)
+    if (p.ask && ctx.hasUI) {
+      const res = run(ctx, "ask_answer", { choice: await select(ctx, p.ask, p.options) })
+      if (res.context) parts.push(res.context)
+    }
+    return parts
+  }
+  const select = async (ctx: ExtensionContext, title: string, options?: string[]): Promise<string> => {
+    try {
+      return (await ctx.ui.select(title, options ?? ["Continue without ISA", "Enable ISA"])) ?? "Continue without ISA"
+    } catch (e) {
+      warn(ctx, `ISA: could not ask (${(e as Error).message}) — continuing without an ISA`)
+      return "Continue without ISA"
+    }
+  }
+
+  pi.on("input", async (event, ctx) => {
+    // a message typed while the agent runs belongs to the current run: no judge, no question
+    if (event.streamingBehavior) return { action: "continue" as const }
+    pending = await judge(ctx, event.text)
+    return { action: "continue" as const }
+  })
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    const parts = pending ?? (await judge(ctx, event.prompt)) // no `input` before this run: judge here
+    pending = null
     if (!parts.length) return
     return { message: { customType: "isa", content: parts.join("\n\n"), display: false } }
   })
@@ -132,15 +164,7 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
     // only a run that finished normally is checked: never restart one the user aborted or that errored
     if (event.outcome !== "completed" || event.context?.canContinue === false) return
     let res = run(ctx, "stop", { context: lastAssistantText(ctx), has_ui: Boolean(ctx.hasUI) })
-    if (res.ask && ctx.hasUI) {
-      let choice: string | undefined
-      try {
-        choice = await ctx.ui.select(res.ask, res.options ?? ["Continue without ISA", "Enable ISA"])
-      } catch (e) {
-        warn(ctx, `ISA: could not ask (${(e as Error).message}) — continuing without an ISA`)
-      }
-      res = run(ctx, "ask_answer", { choice: choice ?? "Continue without ISA" })
-    }
+    if (res.ask && ctx.hasUI) res = run(ctx, "ask_answer", { choice: await select(ctx, res.ask, res.options) })
     if (!res.block) return
     return {
       continue: true,

@@ -1,7 +1,7 @@
-"""SPEC-v2 M1: the per-prompt gate, the judge backends and the session's ISA mode.
+"""SPEC-v2 M1 / § 12: the per-prompt gate and the session's ISA mode.
 
-No test calls a real model: the judge runs as `heuristic`, or against a fake `claude` / `pi` on PATH,
-or against a fake Messages API server. Run: python3 -m unittest tests.test_gate
+No test calls a real model: a fake `jev` judges — 0.93 for work prompts, 0.05 for small talk (SMALL_TALK).
+Run: python3 -m unittest tests.test_gate
 """
 import json
 import os
@@ -11,11 +11,11 @@ import sys
 import tempfile
 import unittest
 
-from tests.test_hooks import CLOSED, E1, ROOT, HookCase
+from tests.test_hooks import CLOSED, E1, ROOT, HookCase, setup_fake
 from tests.test_shell_changes import git
 
 sys.path.insert(0, os.path.join(ROOT, "runtime"))
-from isa import fit, state  # noqa: E402
+from isa import state  # noqa: E402
 
 SCAFFOLD = """---
 task: "Review utils.py"
@@ -38,30 +38,16 @@ Every bug in utils.py is listed with its line number.
 """
 
 
-class TestPrefilter(unittest.TestCase):
-    TABLE = [
-        ("hi", "no"), ("thanks, looks good", "no"), ("Thank you!", "no"), ("lgtm", "no"),
-        ("go", "unsure"), ("ok do it", "unsure"), ("yes", "unsure"), ("fix these", "unsure"),
-        ("Fix the bug in dates.py so the tests pass", "yes"),
-        ("Add a --shout flag to greet.py that prints the greeting in uppercase.", "yes"),
-        ("Review utils.py for bugs and list each one with its line number.", "yes"),
-        ("Write a plan for migrating the billing service to Postgres", "yes"),
-        ("scaffold an ISA for the login page", "yes"),
-        ("what does `is_leap` do?", "unsure"), ("explain the difference between X and Y", "unsure"),
-        ("how do I fix a detached HEAD?", "unsure"), ("make the report faster", "unsure"),
-    ]
-
-    def test_table(self):
-        for prompt, want in self.TABLE:
-            self.assertEqual(fit.prefilter(prompt)[0], want, prompt)
-
-    def test_reason_given(self):
-        for prompt, _ in self.TABLE:
-            self.assertTrue(fit.prefilter(prompt)[1], prompt)
+SMALL_TALK = {"hi", "thanks", "thanks!", "ok", "what does it do?"}
 
 
 class GateHookCase(HookCase):
+    def setUp(self):
+        super().setUp()
+        setup_fake(self)
+
     def prompt(self, text, **kw):
+        self.env["FAKE_JEV_P_isa_gate"] = "0.05" if text in SMALL_TALK else "0.93"
         return self.hook("UserPromptSubmit", prompt=text, **kw)
 
     def msg(self, out):
@@ -80,10 +66,11 @@ class GateHookCase(HookCase):
 
 class TestOffStaysSilent(GateHookCase):
     def test_greeting(self):
+        self.config(ask_without_isa=False)  # not settled as work, and nobody is asked: it goes on
         self.assertEqual(self.ctx(self.hook("SessionStart", source="startup")[1]), "")
         _, out, _ = self.prompt("hi")
         self.assertEqual(self.ctx(out), "")
-        self.assertTrue(self.msg(out).startswith("ISA: OFF"))
+        self.assertEqual(self.msg(out), "ISA gate — Jev 0.05 → continue without ISA (asking is off)")
         self.assertEqual(self.session()["mode"], "off")
         self.hook("PreToolUse", tool_name="Read", tool_input={"file_path": "/etc/hosts"})
         self.assertEqual(self.stop()[:3:2], (0, ""))
@@ -91,14 +78,14 @@ class TestOffStaysSilent(GateHookCase):
 class TestYesSwitchesOn(GateHookCase):
     def test_on_block(self):
         _, out, _ = self.prompt("Review utils.py for bugs and list each one with its line number.")
-        self.assertTrue(self.msg(out).startswith("ISA: ON"))
+        self.assertEqual(self.msg(out), "ISA gate — Jev 0.93 → ON")
         c = self.ctx(out)
         self.assertIn("[ISA: ON", c)
         self.assertIn(os.path.join(ROOT, "skill/ISA").replace(os.path.expanduser("~"), "~") + "/SKILL.md", c)
         self.assertNotIn("Read-only work", c)
         st = self.session()
-        self.assertEqual((st["mode"], st["mode_source"]), ("on", "prefilter"))
-        # the next prompt of an ON session is not re-judged and repeats no ON block
+        self.assertEqual((st["mode"], st["mode_source"]), ("on", "jev"))
+        # ON with no ISA written yet: no judge runs (one is required already), and no second ON block
         _, out, _ = self.prompt("thanks")
         self.assertNotIn("[ISA: ON", self.ctx(out))
         self.assertEqual(self.msg(out), "")
@@ -140,6 +127,7 @@ class TestUnknownWhileOff(GateHookCase):
         return pre, post
 
     def test_no_change_stays_off(self):
+        self.config(ask_without_isa=False)
         self.prompt("hi")
         pre, _ = self.run_unknown("print(1 + 1)", "t1")
         self.assertIsNone(self.decision(pre))
@@ -223,6 +211,7 @@ class TestNeedsIsaAfterComplete(GateHookCase):
         self.assertEqual(self.stop()[0], 0)
 
     def test_no_verdict_after_close_is_quiet(self):
+        self.config(ask_without_isa=False)
         self.prompt("Fix the bug in dates.py so the tests pass")
         self.write_isa(CLOSED)
         self.pid = "p2"
@@ -251,7 +240,8 @@ class TestV1SessionFile(GateHookCase):
     def test_nothing_bound_reads_off(self):
         self.write_session({"bound": None, "stop_blocks": {}})
         _, out, _ = self.prompt("hi")
-        self.assertTrue(self.msg(out).startswith("ISA: OFF"))
+        self.assertEqual(self.msg(out), "ISA gate — Jev 0.05 → asking you")
+        self.assertEqual(self.session()["mode"], "off")
 
 
 class TestOverride(GateHookCase):

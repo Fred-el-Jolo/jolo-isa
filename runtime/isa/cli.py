@@ -7,7 +7,6 @@
     isa where                    project key and ISA folder for the current directory
     isa lint [--close] FILE…     recompute progress / nested parents / orphaned generated lines, then
                                  the mechanical gate check (same engine the hooks use)
-    isa fit "<prompt>"           the gate's free pre-filter verdict (yes | no | unsure → the model decides) + fit score
     isa verify [--red] ISA [ISC-N…] [--attest "<evidence>"]
                                  run the probes (cwd = the ISA's root), record them, tick what passed and
                                  untick what regressed; --attest ticks a self-attested ISC; --red records
@@ -15,6 +14,10 @@
     isa close ISA                re-run every probe; close the ISA only when all pass and lint --close is clean
     isa status --session ID [--harness H] [--json]
                                  the session's bound ISA: tier, phase, progress, open ISCs (read-only)
+    isa current [--session ID] [--harness H] [--json]
+                                 the session's bound ISA for a skill: path, task, tier, phase, progress,
+                                 open criteria. The session defaults to $CLAUDE_CODE_SESSION_ID (Claude
+                                 Code) or $PI_SESSION_ID (pi); exit 1 when no ISA is bound
     isa purge-logs [--days N] [--dry-run]
                                  delete debug log day files (~/.isa/_state/logs) older than N days (7);
                                  never touches the evidence ledger, sessions, prompts or ISAs
@@ -26,7 +29,7 @@ import sys
 import time
 import traceback
 
-from . import commands, engine, fit, logs, state, status
+from . import commands, engine, evidence, logs, state, status
 
 
 def main(argv=None):
@@ -70,17 +73,12 @@ def _dispatch(cmd, args):
             print("usage: isa close ISA.md", file=sys.stderr)
             return 2
         return commands.close(os.path.expanduser(args[0]))
-    if cmd == "fit":
-        text = " ".join(args) if args else sys.stdin.read()
-        verdict, why = fit.prefilter(text)
-        level, reasons = fit.score(text)
-        print(f"{verdict} — {why}" + (" (the model decides: an ISA, or `ISA: not needed — <reason>`)" if verdict == "unsure" else "")
-              + f"\n  fit score: {level}" + "".join(f"\n  - {r}" for r in reasons))
-        return 0
     if cmd == "verify":
         return _verify(args)
     if cmd == "status":
         return _status(args)
+    if cmd == "current":
+        return _current(args)
     if cmd == "purge-logs":
         return logs.purge_cmd(args)
     if cmd == "where":
@@ -102,8 +100,9 @@ def _ls(args):
         for p, fm in rows:
             n += 1
             linked = os.path.islink(os.path.dirname(p))
+            label = evidence.pause_label(p) if fm.get("phase") != "complete" else None
             print(f"  {os.path.basename(os.path.dirname(p)):<52} {str(fm.get('effort', '?')):<3} "
-                  f"{str(fm.get('phase', '?')):<9} {str(fm.get('progress', '?')):<7} {fm.get('task', '')}"
+                  f"{str(label or fm.get('phase', '?')):<10} {str(fm.get('progress', '?')):<7} {fm.get('task', '')}"
                   + (f"  (filed in {state.isa_home_key(p)})" if linked else ""))
     if not n:
         print(f"no ISAs under {state.project_dir(os.getcwd())}")
@@ -147,6 +146,35 @@ def _status(args):
     v = status.view(opts["--harness"], opts["--session"])
     print(json.dumps(v) if "--json" in args else status.line(v))
     return 0
+
+
+def _current(args):
+    opts, i = {"--harness": None, "--session": None}, 0
+    while i < len(args):
+        if args[i] in opts and i + 1 < len(args):
+            opts[args[i]] = args[i + 1]
+            i += 2
+        else:
+            i += 1
+    sid, harness = opts["--session"], opts["--harness"]
+    if not sid:
+        for var, h in (("CLAUDE_CODE_SESSION_ID", "claude"), ("PI_SESSION_ID", "pi")):
+            if os.environ.get(var):
+                sid, harness = os.environ[var], harness or h
+                break
+    if not sid:
+        print("isa current: no session — pass --session ID, or run it from a Claude Code or pi shell "
+              "($CLAUDE_CODE_SESSION_ID / $PI_SESSION_ID)", file=sys.stderr)
+        return 2
+    v = status.current(harness or "claude", sid)
+    if "--json" in args:
+        print(json.dumps(v))
+    elif v["path"]:
+        print(f"{v['path']}\n{v['tier']} {v['phase']} {v['progress']}" + (f" ({v['label']})" if v["label"] else "")
+              + f" — {v['task']}" + "".join(f"\n  open {o['id']}: {o['text']}" for o in v["open"]))
+    else:
+        print(f"no ISA bound to session {sid}")
+    return 0 if v["path"] else 1
 
 
 # ------------------------------------------------------------------ hook adapters

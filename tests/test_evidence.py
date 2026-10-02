@@ -272,9 +272,9 @@ class TestLedgerProtected(GateCase):
         out = self.pre("Write", file_path=ledger, content="{}")
         self.assertEqual(self.decision(out), "deny")
         self.assertIn("written only by `isa verify`", self.reason(out))
-        out = self.pre("Bash", command="echo '{}' >> ~/.isa/_state/evidence/x.jsonl")
+        out = self.pre("Bash", command=f"echo '{{}}' >> {ledger}")  # judged by the resolved target path
         self.assertEqual(self.decision(out), "deny")
-        self.assertIsNone(self.decision(self.pre("Bash", command="cat ~/.isa/_state/evidence/x.jsonl")))
+        self.assertIsNone(self.decision(self.pre("Bash", command=f"cat {ledger}")))
 
 
 if __name__ == "__main__":

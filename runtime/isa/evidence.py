@@ -86,6 +86,18 @@ def latest(isa_path):
     return out
 
 
+def pause_label(isa_path):
+    """"paused" | "superseded" | None: the latest of the ISA's paused / superseded / resumed ledger rows
+    (SPEC-v2 § 12.7). Written by the binding hook when a new task's ISA is bound in its place."""
+    label = None
+    for row in rows(isa_path):
+        if row.get("kind") in ("paused", "superseded"):
+            label = row["kind"]
+        elif row.get("kind") == "resumed":
+            label = None
+    return label
+
+
 def row_fingerprint(row):
     """The tree fingerprint a row was recorded against; None for a v1 row (no `v`)."""
     return row.get("fingerprint") if row.get("v") else None

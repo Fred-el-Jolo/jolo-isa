@@ -37,8 +37,16 @@ TS_KEYS = {"isc", "anchors_to", "type", "check", "threshold", "tool",
 FEATURE_KEYS = {"name", "description", "satisfies", "depends_on", "parallelizable"}
 # Test Strategy types a machine can't run: their ticks are self-attested (evidence.py)
 SELF_ATTESTED = {"manual", "screenshot", "eval"}
-# a probe that still holds a placeholder can't be run as written: `<session-id>`, `…`
+# a probe that still holds a placeholder can't be run as written: `<session-id>`, `…` — outside quoted
+# strings only: a literal `…` inside an expected string is text (SPEC-v2 § 12.9)
 PLACEHOLDER = re.compile(r"<[A-Za-z_][\w -]*>|…")
+QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
+
+
+def placeholder(tool):
+    """The first placeholder in a probe outside its quoted strings, or None."""
+    m = PLACEHOLDER.search(QUOTED.sub("''", tool))
+    return m.group(0) if m else None
 
 # ISAs started before this date follow the v1 rules where SPEC-v2 § 8 softens a new rule for them
 V2_SINCE = "2026-10-02"
@@ -348,9 +356,9 @@ def lint(path, moment="auto", text=None, prompts=None):
                 if k not in e:
                     r.err(f"Test Strategy: {e['isc']} missing `{k}`")
             tool = e.get("tool")
-            if e.get("type") not in SELF_ATTESTED and isinstance(tool, str) and PLACEHOLDER.search(tool):
+            if e.get("type") not in SELF_ATTESTED and isinstance(tool, str) and placeholder(tool):
                 r.err(f"Test Strategy: {e['isc']} `tool:` holds a placeholder "
-                      f"(`{PLACEHOLDER.search(tool).group(0)}`) — write the exact command `isa verify` will run")
+                      f"(`{placeholder(tool)}`) — write the exact command `isa verify` will run")
             _v2_entry_rules(r, e, fm, tier, iscs, content)
             if isinstance(tool, str) and re.match(r"\s*cd\s+/", tool):
                 r.warn(f"Test Strategy: {e['isc']} starts with `cd /…` — probes run from the ISA's `root:`; "

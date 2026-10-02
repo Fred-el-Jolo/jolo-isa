@@ -96,6 +96,7 @@ class TestSessionStart(HookCase):
         for src in ("startup", "resume", "clear", "compact"):  # OFF / undecided: nothing is injected
             code, out, _ = self.hook("SessionStart", source=src)
             self.assertEqual((code, self.ctx(out)), (0, ""), src)
+        setup_fake(self, isa_gate=0.93)
         self.hook("UserPromptSubmit", prompt="Fix the bug in x.py so the tests pass")
         for src in ("startup", "resume", "clear", "compact"):  # ON: the ON block comes back on every start
             code, out, _ = self.hook("SessionStart", source=src)
@@ -137,6 +138,10 @@ class TestReviewPromptOn(HookCase):
     """SPEC-v2: a review is work with a checkable end state — the gate turns the session ON (no more
     advice the model may ignore), reads stay free, and the turn can't end without an ISA."""
     REVIEW = "Review the whole auth module for security issues and make sure every endpoint checks the session."
+
+    def setUp(self):
+        super().setUp()
+        setup_fake(self, isa_gate=0.93)  # Jev reads the review as work
 
     def test_review_turns_on(self):
         _, out, _ = self.hook("UserPromptSubmit", prompt=self.REVIEW)
@@ -378,8 +383,6 @@ class TestFailOpen(HookCase):
         self.assertIn("ISA hook error", p.stdout)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 def fake_cli(dirpath, name, body):
@@ -390,3 +393,56 @@ def fake_cli(dirpath, name, body):
         f.write(f"#!{sys.executable}\nimport json, os, sys, time\n{body}\n")
     os.chmod(path, 0o755)
     return path
+
+
+# a fake `jev` (ISA_JEV_BIN) for the gate and the advisory judgments (SPEC-v2 § 11, § 12)
+FAKE_JEV = r'''
+argv = sys.argv[1:]
+stdin = sys.stdin.read()
+with open(os.environ["FAKE_JEV_LOG"], "a") as f:
+    f.write(json.dumps({"argv": argv, "presets": os.environ.get("JEV_KIT_PRESETS", ""), "stdin": stdin}) + "\n")
+mode = os.environ.get("FAKE_JEV_MODE", "served")
+preset = argv[1] if len(argv) > 1 else ""
+def unavailable(reason, detail, code):
+    print(json.dumps({"ok": False, "consumer": "isa", "unavailable": {"reason": reason, "detail": detail}}))
+    sys.exit(code)
+if mode == "slow":
+    time.sleep(6)
+if mode == "credit":
+    unavailable("error", "402 Payment Required: insufficient credit balance on this account", 4)
+if mode == "tripped":
+    unavailable("tripped", "isa: 5 consecutive failures, cooling down 60s", 4)
+if mode == "budget":
+    unavailable("budget", "isa: tokensPerDay 500000 reached", 5)
+if mode == "garbled":
+    print("<html>bad gateway</html>")
+    sys.exit(0)
+d = os.environ["JEV_KIT_PRESETS"].split(":")[0]
+with open(os.path.join(d, preset + ".json")) as f:
+    qs = json.load(f)["questions"]
+p = float(os.environ.get("FAKE_JEV_P_" + preset.replace("-", "_"), os.environ.get("FAKE_JEV_P", "0.93")))
+print(json.dumps({"ok": True, "consumer": "isa", "model": "jev-1.13.0",
+                  "answers": {q: {"type": "noul", "answer": float(os.environ.get("FAKE_JEV_Q_" + q, p))}
+                              for q in qs}, "usage": {}}))
+'''
+
+
+def setup_fake(case, mode="served", **p):
+    bin_ = os.path.join(case.tmp, "fakejev")
+    path = fake_cli(bin_, "jev", FAKE_JEV)
+    case.jev_log = os.path.join(case.tmp, "jev-calls.jsonl")
+    case.env.update(ISA_JEV_BIN=path, FAKE_JEV_LOG=case.jev_log, FAKE_JEV_MODE=mode,
+                    **{f"FAKE_JEV_P_{k}": str(v) for k, v in p.items()})
+
+
+def calls(case, preset=None):
+    try:
+        with open(case.jev_log) as f:
+            rows = [json.loads(line) for line in f]
+    except OSError:
+        return []
+    return [r for r in rows if preset is None or r["argv"][1:2] == [preset]]
+
+
+if __name__ == "__main__":
+    unittest.main()

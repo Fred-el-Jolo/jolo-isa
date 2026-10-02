@@ -1,7 +1,8 @@
-"""SPEC-v2 § 11.2: before an unsure prompt goes on without an ISA, the user is asked —
-"ISA is not enabled for this prompt (<reason>). Continue?" — Continue without ISA (default) / Enable ISA.
+"""SPEC-v2 § 12.4: whenever the gate does not settle a prompt as work, the user is asked —
+"ISA is not enabled for this prompt (<judge>). Continue?" — Continue without ISA (default) / Enable ISA.
 Claude Code: the model asks with AskUserQuestion and the hooks read the answer. pi: the adapter asks
 (tested in adapters/pi/test). On by default; `{"ask_without_isa": false}` in ~/.isa/config.json turns it off.
+Here Jev (a fake) answers below the line; the model-judged path is in test_declaration and test_m11.
 
 Run: python3 -m unittest tests.test_ask
 """
@@ -9,12 +10,17 @@ import json
 import os
 
 from tests.test_hooks import HookCase
+from tests.test_jev import setup_fake
 
 QUESTION = "what does cmd_list in todo.py print?"
-ASKED = "ISA is not enabled for this prompt (a question about the code). Continue?"
+ASKED = "ISA is not enabled for this prompt (Jev: 0.31). Continue?"
 
 
 class AskCase(HookCase):
+    def setUp(self):
+        super().setUp()
+        setup_fake(self, isa_gate=0.31)
+
     def transcript(self, text):
         tr = os.path.join(self.tmp, f"tr-{len(os.listdir(self.tmp))}.jsonl")
         with open(tr, "w") as f:
@@ -42,26 +48,26 @@ class AskCase(HookCase):
             return json.load(f)
 
 
-DECLARED = "ISA: not needed — a question about the code.\n\nIt prints `1 [ ] buy milk`."
+DECLARED = "It prints `1 [ ] buy milk`."
 
 
 class TestAskInstruction(AskCase):
-    def test_unsure_prompt_says_to_ask(self):
+    def test_below_the_line_says_to_ask(self):
         _, out, _ = self.hook("UserPromptSubmit", prompt=QUESTION)
         ctx = self.ctx(out)
         self.assertIn("ask the user with AskUserQuestion", ctx)
-        self.assertIn('"ISA is not enabled for this prompt (<your one-line reason>). Continue?"', ctx)
+        self.assertIn(f'"{ASKED}"', ctx)
         self.assertIn('"Continue without ISA (Recommended)" and "Enable ISA"', ctx)
-        self.assertEqual(self.session()["ask_mode"], "model")
+        self.assertEqual(self.session()["gate"]["ask"], "model")
 
-    def test_clear_prompts_never_ask(self):
-        for p in ("thanks!", "Fix the bug in dates.py so the tests pass"):
-            _, out, _ = self.hook("UserPromptSubmit", prompt=p)
-            self.assertNotIn("AskUserQuestion", self.ctx(out))
+    def test_a_yes_never_asks(self):
+        self.env["FAKE_JEV_P_isa_gate"] = "0.93"
+        _, out, _ = self.hook("UserPromptSubmit", prompt="Fix the bug in dates.py so the tests pass")
+        self.assertNotIn("AskUserQuestion", self.ctx(out))
 
 
 class TestAskRequired(AskCase):
-    def test_declaration_without_asking_blocks_once(self):
+    def test_not_asking_blocks_once(self):
         self.hook("UserPromptSubmit", prompt=QUESTION)
         code, _, err = self.stop(DECLARED)
         self.assertEqual(code, 2)
@@ -75,7 +81,7 @@ class TestAskRequired(AskCase):
         self.ask("Continue without ISA (Recommended)")
         self.assertEqual(self.stop(DECLARED)[:3:2], (0, ""))
 
-    def test_continue_counts_even_without_the_line(self):
+    def test_continue_read_from_the_text_answer(self):
         self.hook("UserPromptSubmit", prompt=QUESTION)
         self.ask("Continue without ISA (Recommended)", via="output")
         self.assertEqual(self.stop("It prints `1 [ ] buy milk`.")[:3:2], (0, ""))
@@ -88,7 +94,7 @@ class TestEnableChoice(AskCase):
         self.assertEqual(self.session()["mode"], "on")
         self.assertIn("[ISA: ON", self.ctx(out))
         self.assertTrue(out["systemMessage"].startswith("ISA: ON"))
-        code, _, err = self.stop(DECLARED)  # the line no longer counts: the user chose an ISA
+        code, _, err = self.stop(DECLARED)  # the user chose an ISA: one is required now
         self.assertEqual(code, 2)
         self.assertIn("No ISA yet", err)
 
@@ -118,7 +124,7 @@ class TestAskConfig(AskCase):
         self.config(ask_without_isa=False)
         _, out, _ = self.hook("UserPromptSubmit", prompt=QUESTION)
         self.assertNotIn("AskUserQuestion", self.ctx(out))
-        self.assertIn("ISA: not needed", self.ctx(out))
+        self.assertIn("continue without ISA (asking is off)", out["systemMessage"])
         self.assertEqual(self.stop(DECLARED)[:3:2], (0, ""))
         self.assertEqual(self.log_rows("prompt")[-1]["ask"], "config")
 
@@ -138,8 +144,7 @@ class TestAskLog(AskCase):
         self.ask("Continue without ISA (Recommended)")
         self.stop(DECLARED)
         row = self.log_rows("stop")[-1]
-        self.assertEqual((row["declared"], row["asked"], row["choice"], row["ask"]), (True, True, "continue", "model"))
-        self.assertEqual(row["reason"], "a question about the code.")
+        self.assertEqual((row["judge"], row["asked"], row["choice"], row["ask"]), ("jev", True, "continue", "model"))
         post = [r for r in self.log_rows("post_tool") if r.get("tool") == "AskUserQuestion"][-1]
         self.assertEqual(post["choice"], "continue")
 

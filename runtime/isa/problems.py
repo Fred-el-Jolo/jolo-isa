@@ -8,7 +8,9 @@
     reevaluate(isa_path, text=None) → [(code, isc)]           unblock what no longer holds; → still open
 
 Codes: no-isa (session state only — an ISA-less problem has no ledger), lint-error, tick-unproven,
-tick-order, tick-unattested, unclosed, complete-without-close. A blocked item is matched by its key,
+tick-order, tick-unattested, unclosed, complete-without-close, ledger-changed (a shell command changed the
+ledger, SPEC-v2 § 12.9: only a full `isa verify <ISA>` clears it, never a partial run, a lint or a close).
+A blocked item is matched by its key,
 never by its wording, so rewording a message never strands an item.
 """
 import os
@@ -30,7 +32,10 @@ SHORT = {
     "tick-unattested": "ticked without `isa verify --attest`",
     "unclosed": "every criterion is ticked but the ISA is still open",
     "complete-without-close": "`phase: complete` was not written by `isa close`",
+    "ledger-changed": "a shell command changed this ISA's evidence ledger — re-prove everything with a full "
+                      "`isa verify <ISA>` (no ISC list)",
 }
+STICKY = {"ledger-changed"}  # not a property of the ISA text: cleared only by a full re-proof
 CLOSE_RESOLVES = {"unclosed", "complete-without-close"}  # what a successful `isa close` itself fixes
 
 
@@ -114,6 +119,11 @@ def render(items):
 
 # ------------------------------------------------------------------ the ledger side
 
+def record_ledger_changed(isa_path):
+    evidence.record(isa_path, [{"v": 2, "t": time.time(), "kind": "blocked",
+                                "items": [{"code": "ledger-changed", "isc": None}]}])
+
+
 def record_blocked(isa_path, items):
     keys = [{"code": it["code"], "isc": it["isc"]} for it in items if it["code"] != "no-isa"]
     if keys:
@@ -133,12 +143,15 @@ def open_items(isa_path):
     return list(open_)
 
 
-def reevaluate(isa_path, text=None):
-    """Append an `unblocked` row for every open key that no longer holds; → the keys still open."""
+def reevaluate(isa_path, text=None, full=False):
+    """Append an `unblocked` row for every open key that no longer holds; → the keys still open.
+    STICKY keys hold until a full re-proof (`full`: `isa verify` ran every mechanical ISC)."""
     keys = open_items(isa_path)
     if not keys:
         return []
     now = {(it["code"], it["isc"]) for it in current(isa_path, text=text)}
+    if not full:
+        now |= {k for k in keys if k[0] in STICKY}
     resolved = [k for k in keys if k not in now]
     if resolved:
         evidence.record(isa_path, [{"v": 2, "t": time.time(), "kind": "unblocked",

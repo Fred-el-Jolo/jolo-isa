@@ -1,0 +1,19 @@
+{
+  "name": "isa-continuation",
+  "version": 1,
+  "description": "ISA gate, Q2: with an open ISA, does the new message continue its task or start a new one? (SPEC-v2 § 12.3)",
+  "model": "jev-1.13.0",
+  "state": {
+    "template": "An ISA is open for this task:\n{{isa}}\n\nThe assistant's previous message (may be empty):\n{{context}}\n\nThe user's new message:\n{{prompt}}"
+  },
+  "questions": {
+    "new_task": {
+      "type": "noul",
+      "instructions": "Does the user's new message start a different task with its own end state, rather than continue the open one (refine it, answer a question about it, approve the next step, report on it, add to it)?"
+    },
+    "resumes": {
+      "type": "noul",
+      "instructions": "If it is a different task, will the user likely come back to the open task afterwards (a side task, an interruption) rather than leave it for good?"
+    }
+  }
+}

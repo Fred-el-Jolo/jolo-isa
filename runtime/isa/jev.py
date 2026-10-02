@@ -26,8 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PRESETS = os.path.join(HERE, "jev")
 HOOK_DEADLINE = 1.5
 CMD_DEADLINE = 3.0
-GATE_YES = 0.8      # an unsure prompt Jev reads as work at or above this gets the ON block
-PROBE_DOUBT = 0.5   # a red-exempt probe Jev rates below this gets a warning
+# the lines Jev's answers are read against are `jev_gate` and `jev_doubt` in ~/.isa/config.json (config.py)
 CREDIT = re.compile(r"credit|balance|insufficient|payment|billing|quota|\b402\b", re.I)
 
 

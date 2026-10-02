@@ -352,3 +352,49 @@ def _gh(args):
     if words[:1] in (["auth"], ["status"], ["search"], ["browse"]):
         return "read"
     return "unknown"
+
+
+# ------------------------------------------------------------------ write targets (the ledger guard)
+
+ONTO_LAST = {"cp", "install", "rsync", "ln"}  # only the destination is written; `mv` also removes its sources
+
+
+def write_targets(cmd, cwd):
+    """Absolute paths a shell command visibly writes or removes: redirect targets, and the path arguments
+    of file commands (`rm`, `mv`, `tee`, the destination of `cp` …). What a script writes is not visible
+    here; engine.py compares the ledger before and after such a command instead (SPEC-v2 § 12.9)."""
+    try:
+        toks = _tokens(_drop_heredoc_bodies(cmd or "").replace("\\\n", " ").replace("\n", " ; "))
+    except ValueError:
+        return []
+    out, seg = [], []
+    for t in toks + [";"]:
+        if t in SEPARATORS or all(c in ";&|()" for c in t):
+            out += _segment_targets(seg)
+            seg = []
+        else:
+            seg.append(t)
+    base = cwd or os.getcwd()
+    return [os.path.join(base, os.path.expanduser(p)) if not os.path.isabs(os.path.expanduser(p))
+            else os.path.expanduser(p) for p in out]
+
+
+def _segment_targets(words):
+    targets, clean, i = [], [], 0
+    while i < len(words):
+        w = words[i]
+        if (w in REDIRECTS or re.match(r"^\d*(>>?|>\|)$", w)) and i + 1 < len(words):
+            if not re.match(r"^&?\d+$", words[i + 1]):
+                targets.append(words[i + 1])
+            i += 2
+            continue
+        clean.append(w)
+        i += 1
+    while clean and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", clean[0]):
+        clean = clean[1:]
+    while clean and os.path.basename(clean[0]) in WRAPPERS:
+        clean = [a for a in clean[1:] if not a.startswith("-")]
+    if clean and os.path.basename(clean[0]) in PATH_CMDS:
+        paths = [a for a in clean[1:] if not a.startswith("-")]
+        targets += paths[-1:] if os.path.basename(clean[0]) in ONTO_LAST else paths
+    return targets

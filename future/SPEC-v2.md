@@ -1,6 +1,6 @@
 # ISA v2 — design spec
 
-Status: **implemented (M1–M7, 2026-10-02)** on branch `spec-v2-review`; **§ 11 revision (judge-free baseline, Jev on by default) implemented (M8, M9)**; **§ 12 revision (judge every prompt, ask the user; reviewed 2026-10-02) specified, not implemented (M11)**; the live whole-flow run `flow/20261002-125119` on `eval-results` passed 14/14 stages. It comes out of the 2026-10-01 eval session: batch
+Status: **implemented (M1–M7, 2026-10-02)** on branch `spec-v2-review`; **§ 11 revision (judge-free baseline, Jev on by default) implemented (M8, M9)**; **§ 12 revision (judge every prompt, ask the user; reviewed 2026-10-02) implemented (M11, 2026-10-02)**; the live whole-flow run `flow/20261002-125119` on `eval-results` passed 14/14 stages. It comes out of the 2026-10-01 eval session: batch
 `20261001-202941` on branch `eval-results`, and the reviews of runs A (review, no ISA) and B (bug fix,
 closed ISA). Each section says what changes, the exact behaviour, where it lives (hook / engine /
 command / skill), how it fails, and how it is tested. § Milestones orders the work.
@@ -891,6 +891,13 @@ What M11 builds on these facts:
 
 ### 12.10 Milestone M11
 
+Status: built 2026-10-02 — `engine.py` (`_q1`, `_q2`, `_stop_gate`, the binding rule, the ledger guard), `skills.py`, `isa current`, presets `isa-gate` v2 and `isa-continuation`, the pi extension judging at `input`; `fit.py`, `fit.md` and `isa fit` removed; tests `tests/test_m11.py` plus the rewritten `test_declaration`, `test_ask`, `test_gate` and the pi tests. Choices the text above left open:
+- The model's line is `ISA judge (model): yes|no|unsure — <reason>`, matched anywhere in the last assistant message; a `yes` with no ISA bound switches the session ON (`mode_source: model`) and Stop applies the ON rules (and, after a finished ISA, requires a new ISA or a reopen).
+- Q2 with Jev unavailable logs `"judge": "none"` (Q2 has no model line).
+- A `ledger-changed` blocked key (§ 12.9 fix 2) is cleared only by a full, passing `isa verify <ISA>` (every mechanical ISC) — never by a partial run, `isa lint` or `isa close` — so the close refuses until everything was re-proven. A change to another ISA's ledger file is reported, not recorded. Commands that contain `isa new|lint|verify|close` are not checked (they write the ledger legitimately).
+- "The write creates the file" is read in PreToolUse (the target `ISA.md` does not exist yet), with Claude Code's `tool_response.type == "create"` as a fallback.
+- In pi, a run that started without an `input` event is judged at `before_agent_start`, as before.
+
 (M10 stays the review of real-session logs.) M11 contains:
 - Code:
   - remove `fit.py` (its keyword rules and `isa fit`)
@@ -1004,3 +1011,7 @@ Taken in the sixth review round:
 35. **Second § 12 review (2026-10-02):** § 0 and §§ 1.3–1.7 now follow § 12 (the user decides what the
     judge does not settle; no fail-toward-ON). The user's explicit "no ISA" is a Q1 "no". pi judges
     only idle prompts. The "who judged" message shows on every judged prompt.
+36. **M11 built (2026-10-02):** the open points of § 12 were settled as listed under § 12.10 (the judge-line
+    format, `judge: none` for an unanswered Q2, `ledger-changed` cleared only by a full passing `isa verify`,
+    file creation read in PreToolUse). Writing `fails-when` into the canonical example exposed two probes there
+    that could never fail (`… | sort -u`, a bare `jq`); both were tightened.

@@ -11,7 +11,7 @@ import unittest
 
 from tests.test_commands import CommandCase
 from tests.test_evidence import read, tick
-from tests.test_hooks import E1, ISA, ROOT
+from tests.test_hooks import E1, ISA, ROOT, setup_fake
 
 sys.path.insert(0, os.path.join(ROOT, "runtime"))
 from isa import evidence, problems  # noqa: E402
@@ -54,6 +54,7 @@ class TestBlockedRow(BlockedCase):
 
 class TestNoIsaBlocked(BlockedCase):
     def test_session_state_then_cleared(self):
+        setup_fake(self, isa_gate=0.93)
         self.hook("UserPromptSubmit", prompt="Review utils.py for bugs and list each one with its line number.")
         self.let_through()
         self.assertEqual(self.session()["blocked_no_isa"], self.pid)

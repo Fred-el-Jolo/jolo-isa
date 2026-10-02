@@ -10,7 +10,7 @@ waived ISCs), in file order — the same set `lint` computes `progress` over.
 import json
 import os
 
-from . import lint, logs, problems, state
+from . import evidence, lint, logs, problems, state
 
 
 def view(harness, session):
@@ -22,7 +22,19 @@ def view(harness, session):
     v["blocked_no_isa"] = bool(st.get("blocked_no_isa"))
     v["gate"] = _last_gate(harness, session)
     v["jev"] = _last_jev(harness, session)
+    v["label"] = evidence.pause_label(bound) if v.get("bound") else None
     return v
+
+
+def current(harness, session):
+    """`isa current`: the session's bound ISA for a skill — path, task, tier, phase, progress, label and
+    the open criteria; {"path": None} when nothing is bound."""
+    v = view(harness, session)
+    if not v.get("bound"):
+        return {"path": None, "session": session, "harness": harness}
+    return {"path": v["bound"], "session": session, "harness": harness, "task": v.get("task"),
+            "tier": v.get("effort"), "phase": v.get("phase"), "progress": v.get("progress"), "label": v.get("label"),
+            "open": [{"id": i["id"], "text": i["text"]} for i in v["iscs"] if not i["done"]]}
 
 
 def _last_jev(harness, session):
@@ -35,13 +47,13 @@ def _last_jev(harness, session):
 
 
 def _last_gate(harness, session):
-    """The session's latest gate verdict from the debug log (logs.py, SPEC-v2 § 11.6), or None."""
+    """The session's latest gate verdict from the debug log (logs.py, SPEC-v2 § 11.6, § 12.5), or None."""
     last = None
     for row in logs.recent():  # reads only: never creates the log folder
         if row.get("step") == "prompt" and row.get("harness") == harness and row.get("session") == session:
-            if row.get("prefilter"):
-                last = {"verdict": row["prefilter"], "source": "prefilter", "reason": row.get("reason"),
-                        "ms": row.get("ms")}
+            if row.get("question"):  # SPEC-v2 § 12.5: who judged, which question, the score, the outcome
+                last = {"judge": row.get("judge"), "question": row["question"], "score": row.get("score"),
+                        "outcome": row.get("outcome"), "reason": row.get("jev_reason"), "ms": row.get("ms")}
             elif row.get("mode_source"):
                 last = {"verdict": row.get("mode"), "source": "override", "reason": row["mode_source"],
                         "ms": row.get("ms")}

@@ -20,11 +20,13 @@ Result (dict, all keys optional):
     block       stop: reason the turn must continue
     warn        text for the user (not the model)
 
-ISA mode (SPEC-v2 § 1, § 11): every session is OFF until the pre-filter (fit.py) answers yes for a
-prompt, a write is attempted, an unknown command changes project files, or an ISA is bound; then it
-is ON for good. An `unsure` prompt is decided by the running model itself: it writes an ISA, or its
-answer carries `ISA: not needed — <reason>`, which Stop checks as a string. No model is called here.
-OFF sessions get nothing else from this engine. `ISA_MODE=on|off` (the user's override) wins.
+ISA mode (SPEC-v2 § 1, § 12): every session is OFF until the gate says yes for a prompt, the user picks
+Enable ISA, a write is attempted, an unknown command changes project files, or an ISA is bound; then it
+is ON for good. The gate (§ 12.2) asks Jev first — Q1 "is this work?" with no ISA bound or a finished
+one, Q2 "continuation or new task?" with an open one — and, when Jev is unavailable, leaves Q1 to the
+running model, whose answer carries `ISA judge (model): yes|no|unsure — <reason>` (Stop reads it as a
+string). Whatever is not settled as yes goes to the user (§ 12.4). OFF sessions get nothing else from
+this engine. `ISA_MODE=on|off` (the user's override) wins, and no judge runs under it.
 Every event leaves one row in the debug log (logs.py).
 """
 import hashlib
@@ -33,7 +35,7 @@ import os
 import re
 import time
 
-from . import changes, classify, config, evidence, fit, isafile, jev, lint, logs, problems, rules, state
+from . import changes, classify, config, evidence, isafile, jev, lint, logs, problems, rules, skills, state
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STALE_NUDGE_EVERY = 5
@@ -120,7 +122,9 @@ def _project_listing(cwd, exclude=None):
     for p, fm in state.list_isas(cwd=cwd):
         if p == exclude or fm.get("phase") == "complete":
             continue
-        rows.append(f"  - {_tilde(p)} — {fm.get('task', '?')} (phase {fm.get('phase', '?')}, {fm.get('progress', '?')})")
+        label = evidence.pause_label(p)
+        rows.append(f"  - {_tilde(p)} — {fm.get('task', '?')} (phase {fm.get('phase', '?')}, {fm.get('progress', '?')}"
+                    + (f", {label}" if label else "") + ")")
         if len(rows) >= MAX_LISTED:
             break
     return ("Open ISAs in this project (edit one to continue it):\n" + "\n".join(rows)) if rows else ""
@@ -228,43 +232,61 @@ def _switch_on(st, source, reason):
     return True
 
 
-DECLARE = ("[ISA: unsure — this prompt may or may not ask for work with a checkable end state]\n"
-           "You decide. If it asks for work that will be either done or not done — a change, a fix, a review, "
-           "an audit, a plan, a comparison, an investigation of why something in the user's own system is slow, "
-           "failing or wrong — write the ISA first: read {skill_dir}/SKILL.md, then `isa new <slug>`. If it is "
-           "a question, an explanation or a conversation, just answer, and start your answer with one line: "
-           "`ISA: not needed — <one-line reason>`. The turn can't end with neither.")
-DECLARED = re.compile(r"ISA: not needed\s*[—–-]+\s*\S")
+# The model's Q1 verdict when Jev is unavailable (SPEC-v2 § 12.5), anywhere in its last message
+JUDGE_LINE = re.compile(r"ISA judge \(model\):\s*(yes|no|unsure)\b[ \t]*[—–-]*[ \t]*([^\n]*)", re.I)
 
-
-# Asking the user before a prompt goes on without an ISA (SPEC-v2 § 11.2, config `ask_without_isa`)
+# Asking the user whenever the gate does not say yes (SPEC-v2 § 12.4, config `ask_without_isa`)
 ASK_TITLE = "ISA is not enabled for this prompt"
 ASK_CONTINUE = "Continue without ISA"
 ASK_ENABLE = "Enable ISA"
-DECLARE_ASK = (f"\nBefore you go on without an ISA, ask the user with AskUserQuestion — question: \"{ASK_TITLE} "
-               f"(<your one-line reason>). Continue?\", options in this order: \"{ASK_CONTINUE} (Recommended)\" "
-               f"and \"{ASK_ENABLE}\". If they pick {ASK_ENABLE}, write the ISA and do the work under it.")
-ASK_MISSING = (f"You declared `ISA: not needed`, but the user was not asked. Ask them with AskUserQuestion "
-               f"(question \"{ASK_TITLE} (<your reason>). Continue?\", options \"{ASK_CONTINUE} (Recommended)\" "
-               f"and \"{ASK_ENABLE}\"), then follow their choice.")
 
 
-def _declare_text(ask=None):
-    return DECLARE.replace("{skill_dir}", _tilde(skill_dir())) + (DECLARE_ASK if ask == "model" else "")
+def _question(label):
+    return f"{ASK_TITLE} ({label}). Continue?"
+
+
+def _ask_text(label):
+    """The instruction to ask with AskUserQuestion (Claude Code: only the model can ask)."""
+    return (f"Before you answer, ask the user with AskUserQuestion — question: \"{_question(label)}\", options in "
+            f"this order: \"{ASK_CONTINUE} (Recommended)\" and \"{ASK_ENABLE}\". If they pick {ASK_ENABLE}, write the "
+            f"ISA (read {_tilde(skill_dir())}/SKILL.md, then `isa new <slug>`) and do the work under it.")
+
+
+def _q1_text():
+    """Q1, as the `isa-gate` preset asks it: one text for Jev and for the model."""
+    try:
+        with open(os.path.join(jev.PRESETS, "isa-gate.json"), encoding="utf-8") as f:
+            return json.load(f)["questions"]["work"]["instructions"]
+    except (OSError, ValueError, KeyError):
+        return "Does the user's message ask for a deliverable that could be done wrong in ways the reply alone would not reveal?"
+
+
+def _judge_text(ask, why):
+    """Q1 left to the running model (Jev unavailable)."""
+    if ask == "model":
+        below = ("no or unsure → before you go on without an ISA, ask the user with AskUserQuestion — question: "
+                 f"\"{_question('model: <your verdict> — <your reason>')}\", options in this order: "
+                 f"\"{ASK_CONTINUE} (Recommended)\" and \"{ASK_ENABLE}\"; if they pick {ASK_ENABLE}, write the ISA "
+                 "and do the work under it.")
+    elif ask == "extension":
+        below = "no or unsure → just answer; the user is asked when you finish."
+    else:
+        below = "no or unsure → answer without an ISA."
+    return (f"[ISA gate — Jev unavailable ({why}): you judge this prompt]\n{_q1_text()}\n"
+            "Answer that question in one line of your reply (anywhere in it): "
+            "`ISA judge (model): yes|no|unsure — <one-line reason>`.\n"
+            f"yes → write the ISA before the work: read {_tilde(skill_dir())}/SKILL.md, then `isa new <slug>`.\n"
+            f"{below}\nThe turn can't end without the line (or an ISA).")
 
 
 def _assistant_text(ev):
     return ev.get("context") or state.last_assistant_text(ev.get("transcript_path"))
 
 
-def _declared(ev):
-    """Did the last assistant message say `ISA: not needed — <reason>`?"""
-    return bool(DECLARED.search(_assistant_text(ev) or ""))
-
-
-def _declared_reason(ev):
-    m = re.search(r"ISA: not needed\s*[—–-]+\s*(.+)", _assistant_text(ev) or "")
-    return m.group(1).strip()[:200] if m else ""
+def _judge_line(ev):
+    """→ (verdict, reason) from `ISA judge (model): …` in the last assistant message, or (None, "")."""
+    m = JUDGE_LINE.search(_assistant_text(ev) or "")
+    return (m.group(1).lower(), m.group(2).strip()[:200]) if m else (None, "")
 
 
 def _headless():
@@ -321,7 +343,8 @@ def _ask_answer(ev):
     """pi: the adapter asked with its own dialog and reports the pick."""
     choice = "enable" if ASK_ENABLE.lower() in str(ev.get("choice") or "").lower() else "continue"
     res = _record_choice(ev, choice)
-    return {"block": res["context"], "warn": res["warn"]} if res else {}
+    # asked at `input`: the context goes before the model; asked at settle: the run continues with it
+    return {"context": res["context"], "block": res["context"], "warn": res["warn"]} if res else {}
 
 
 def _on_block(cwd):
@@ -351,12 +374,20 @@ def _needs_isa(st, bound, pid):
     scaffold may end it (only on the prompt that created it); False otherwise."""
     if not bound:
         return True
+    if _new_task_pending(st, bound):
+        return True
     phase = state.frontmatter(bound).get("phase")
     if st.get("needs_isa_since") and phase == "complete":
         return True
     if _scaffold(bound):
         return "scaffold" if st.get("bound_prompt") == pid else True
     return False
+
+
+def _new_task_pending(st, bound):
+    """Q2 said "new task" while `bound` was open: a new ISA must be bound (editing this one won't do)."""
+    q2 = st.get("q2") or {}
+    return q2.get("outcome") == "new" and q2.get("old") == bound
 
 
 def _session_start(ev):
@@ -402,36 +433,157 @@ def _prompt(ev):
                      context=context)
     with state.session(ev["harness"], ev["session"]) as st:
         st["prompt_started"] = time.time()  # Stop only checks turns where something happened after this
+        st.pop("gate", None)
         mode = _mode(st)
         forced = mode == "on" and _switch_on(st, "override" if _mode_env() == "on" else "binding",
                                              "ISA_MODE=on" if _mode_env() == "on" else "open ISA bound (v1 session)")
         bound = _bound(st)
     complete = bool(bound) and state.frontmatter(bound).get("phase") == "complete"
     note(mode_before=mode)
-    if mode == "on":
-        if forced and _mode_env() == "on":
-            return {"context": _on_block(cwd)}
-        if not complete:
-            if bound:
-                return {"context": _status_line(bound) + ". A new task gets a new ISA; continuing work keeps this one."}
-            return {"context": "ISA: ON — no ISA bound yet: write it before the work (`isa new <slug> --goal \"…\"`)."}
-    # OFF, or ON with only a finished ISA bound: the free pre-filter decides; an unsure prompt may get
-    # Jev's reading (add-only: only a confident "work" changes anything), else it is left to the model
-    verdict, why = fit.prefilter(prompt)
-    note(prefilter=verdict, reason=why)
-    source, jres = "prefilter", None
-    if verdict == "unsure" and jev.enabled():  # called outside the session lock: it may take up to 1.5 s
-        jres = jev.ask("isa-gate", {"prompt": prompt, "context": context or ""}, jev.HOOK_DEADLINE,
-                       harness=ev.get("harness"), session=ev.get("session"), prompt_id=pid)
-        note(jev=jres["answer"] if jres["served"] else jres["reason"])
-        if jres["served"] and jres["answer"] >= jev.GATE_YES:
-            verdict, why, source = "yes", f"Jev reads this as work ({jres['answer']:.2f})", "jev"
-    res = _gate(ev, mode, bound, verdict, why, source)
-    if jres:
-        outage = _jev_outage(ev, jres)
-        if outage:
-            res["warn"] = (res.get("warn", "") + "\n" + outage).strip()
-    return res
+    if forced and _mode_env() == "on":
+        return {"context": _on_block(cwd)}
+    # no judge (§ 12.2): an empty prompt, ON with no ISA yet (one is required already), or ISA_MODE=on
+    if not str(prompt or "").strip():
+        return {}
+    if mode == "on" and not bound:
+        return {"context": "ISA: ON — no ISA bound yet: write it before the work (`isa new <slug> --goal \"…\"`)."}
+    if _mode_env() == "on":
+        return {"context": _status_line(bound) + (". A new task gets a new ISA (or a reopen of this finished one)."
+                                                  if complete else ". A new task gets a new ISA; continuing work keeps this one.")}
+    if mode == "on" and not complete:
+        return _q2(ev, bound, prompt, context)
+    return _q1(ev, mode, bound, prompt, context)
+
+
+def _gate_line():
+    line, err = config.number("jev_gate")
+    if err:
+        note(config_error=err)
+    return line
+
+
+def _with_outage(ev, res, out):
+    outage = _jev_outage(ev, res)
+    if outage:
+        out["warn"] = (out.get("warn", "") + "\n" + outage).strip()
+    return out
+
+
+def _unavailable(res):
+    """What the user reads for a Jev call that was not served: credit, budget, or jev-kit's reason."""
+    return jev.kind(res) if jev.kind(res) in ("credit", "budget") else res.get("reason") or "error"
+
+
+def _q1(ev, mode, bound, prompt, context):
+    """Q1 — is this work? (no ISA bound, or the bound one is complete)."""
+    line = _gate_line()
+    res = jev.ask("isa-gate", {"prompt": prompt, "context": context or "",
+                               "skill": skills.describe(prompt, ev.get("harness"), ev.get("cwd"))},
+                  jev.HOOK_DEADLINE, harness=ev.get("harness"), session=ev.get("session"), prompt_id=ev.get("prompt_id"))
+    note(question="q1", judge="jev" if res["served"] else "model")
+    if not res["served"]:
+        note(jev_reason=res["reason"])
+        return _with_outage(ev, res, _q1_model(ev, mode, bound, _unavailable(res)))
+    score = res["answer"]
+    note(score=score)
+    label = f"Jev {score:.2f}"
+    out = _q1_yes(ev, mode, bound, label) if score >= line else _q1_ask(ev, mode, bound, score)
+    return _with_outage(ev, res, out)
+
+
+def _q1_yes(ev, mode, bound, label):
+    cwd, pid = ev.get("cwd"), ev.get("prompt_id")
+    with state.session(ev["harness"], ev["session"]) as st:
+        if mode == "on":  # a finished ISA is bound
+            st["needs_isa_since"] = pid
+            note(outcome="new_isa")
+            return {"warn": f"ISA gate — {label} → new task: new ISA, or reopen the finished one",
+                    "context": f"{_status_line(bound)}. This prompt is a new task: new ISA, or reopen the finished "
+                               "one (`phase: learn`, `iteration`, `resumed_at`, a `refined:` Decision)."}
+        _switch_on(st, "jev", f"Jev reads this as work ({label})")
+        note(outcome="on", mode_after="on")
+    return {"warn": f"ISA gate — {label} → ON", "context": _on_block(cwd)}
+
+
+def _not_settled(ev, mode, judge, score=None):
+    """Record that this prompt was not settled as work; → the ask mode (or None and why not)."""
+    ask, why_not = _ask_mode(ev)
+    with state.session(ev["harness"], ev["session"]) as st:
+        st.pop("needs_isa_since", None)
+        st["gate"] = {"pid": str(ev.get("prompt_id")), "judge": judge, "ask": ask, "score": score}
+        if mode != "on":
+            st.update(mode="off", mode_source=judge, mode_reason="not settled as work")
+    note(ask=ask or why_not)
+    return ask, why_not
+
+
+def _q1_ask(ev, mode, bound, score):
+    """Jev answered below the line: the user decides (§ 12.4)."""
+    label, qlabel = f"Jev {score:.2f}", f"Jev: {score:.2f}"
+    ask, why_not = _not_settled(ev, mode, "jev", score)
+    pre = f"{_status_line(bound)}. If this prompt is a new task, it needs a new ISA (or a reopen).\n" \
+        if mode == "on" and bound else ""
+    if ask == "model":
+        note(outcome="ask")
+        return {"warn": f"ISA gate — {label} → asking you",
+                "context": pre + f"[ISA gate — {label}: not settled as work]\n" + _ask_text(qlabel)}
+    if ask == "extension":
+        note(outcome="ask")
+        out = {"warn": f"ISA gate — {label} → asking you", "ask": _question(qlabel),
+               "options": [ASK_CONTINUE, ASK_ENABLE]}
+        return dict(out, context=pre.strip()) if pre else out
+    note(outcome="continue")
+    why = "nobody to ask" if why_not == "no-ui" else "asking is off"
+    out = {"warn": f"ISA gate — {label} → continue without ISA ({why})"}
+    return dict(out, context=pre.strip()) if pre else out
+
+
+def _q1_model(ev, mode, bound, why):
+    """Jev unavailable: the running model answers Q1 with its judge line (§ 12.5)."""
+    ask, _ = _not_settled(ev, mode, "model")
+    note(outcome="model")
+    pre = f"{_status_line(bound)}.\n" if mode == "on" and bound else ""
+    return {"warn": f"ISA gate — Jev unavailable ({why}) → the model judges", "context": pre + _judge_text(ask, why)}
+
+
+def _isa_summary(path):
+    fm = state.frontmatter(path)
+    return f"task: {fm.get('task', '')}\nGoal: {_goal_section(path)}"
+
+
+def _q2(ev, bound, prompt, context):
+    """Q2 — continuation or new task? (an open ISA is bound). Never asks the user."""
+    line = _gate_line()
+    res = jev.ask("isa-continuation", {"isa": _isa_summary(bound), "prompt": prompt, "context": context or ""},
+                  jev.HOOK_DEADLINE, harness=ev.get("harness"), session=ev.get("session"), prompt_id=ev.get("prompt_id"))
+    status = _status_line(bound)
+    pid = str(ev.get("prompt_id"))
+    note(question="q2", judge="jev" if res["served"] else "none")
+    with state.session(ev["harness"], ev["session"]) as st:
+        if not res["served"]:
+            note(jev_reason=res["reason"], outcome="continuation")
+            st["q2"] = {"pid": pid, "outcome": "unavailable", "old": bound}
+            out = {"warn": "ISA gate — Jev unavailable → continuation (the model may start a new ISA)",
+                   "context": status + ". A new task gets a new ISA (`isa new <slug>`); continuing work keeps this one."}
+            return _with_outage(ev, res, out)
+        new = res["answers"].get("new_task")
+        resumes = res["answers"].get("resumes")
+        new = float(new) if isinstance(new, (int, float)) else 0.0
+        note(score=new)
+        if new >= line:
+            label = "paused" if isinstance(resumes, (int, float)) and resumes >= 0.5 else "superseded"
+            st["q2"] = {"pid": pid, "outcome": "new", "old": bound, "label": label}
+            note(outcome="new_task", resumes=resumes)
+            out = {"warn": f"ISA gate — Jev {new:.2f} → new task: new ISA (open one {label})",
+                   "context": f"{status}. This prompt starts a new task (Jev {new:.2f}): write a new ISA for it "
+                              f"(`isa new <slug> --goal \"…\"`); the open one is then marked {label} and stays "
+                              "resumable. The turn can't end before the new ISA is bound."}
+        else:
+            st["q2"] = {"pid": pid, "outcome": "continuation", "old": bound}
+            note(outcome="continuation")
+            out = {"warn": f"ISA gate — Jev {new:.2f} → continuation",
+                   "context": status + ". This prompt continues it; a different task gets a new ISA."}
+    return _with_outage(ev, res, out)
 
 
 def _jev_outage(ev, res):
@@ -445,38 +597,6 @@ def _jev_outage(ev, res):
             return ""
         warned.append(kind)
     return jev.message(res)
-
-
-def _gate(ev, mode, bound, verdict, why, source):
-    cwd, pid = ev.get("cwd"), ev.get("prompt_id")
-    with state.session(ev["harness"], ev["session"]) as st:
-        st.pop("declare_for", None)
-        if mode == "on":  # a finished ISA is bound
-            if verdict == "yes":
-                st["needs_isa_since"] = pid
-                return {"context": f"{_status_line(bound)}. This prompt is a new task: new ISA, or reopen the "
-                                   "finished one (`phase: learn`, `iteration`, `resumed_at`, a `refined:` Decision)."}
-            st.pop("needs_isa_since", None)
-            if verdict == "unsure":
-                ask, why_not = _ask_mode(ev)
-                st.update(declare_for=str(pid), ask_mode=ask)
-                note(declare=True, ask=ask or why_not)
-                return {"context": f"{_status_line(bound)}. If this prompt is a new task, it needs a new ISA (or "
-                                   "a reopen of the finished one).\n" + _declare_text(ask)}
-            return {"context": _status_line(bound) + "."}
-        if verdict == "no":
-            st.update(mode="off", mode_source="prefilter", mode_reason=why)
-            note(mode_after="off")
-            return {"warn": f"ISA: OFF — {why}"}
-        if verdict == "unsure":
-            ask, why_not = _ask_mode(ev)
-            st.update(declare_for=str(pid), ask_mode=ask)
-            note(mode_after="off", declare=True, ask=ask or why_not)
-            return {"warn": "ISA: unsure — the agent decides (an ISA, or `ISA: not needed — <reason>`)",
-                    "context": _declare_text(ask)}
-        _switch_on(st, source, why)
-        note(mode_after="on")
-    return {"warn": f"ISA: ON — {why}", "context": _on_block(cwd)}
 
 
 def _pre_tool(ev):
@@ -494,6 +614,7 @@ def _pre_tool(ev):
     refused = _ownership_refusal(ev)
     if refused:
         return {"deny": refused}
+    _note_creating(ev)
     if kind == "read":
         return {}
     cwd = ev.get("cwd")
@@ -531,16 +652,78 @@ def _pre_tool(ev):
     return {}
 
 
+def _note_creating(ev):
+    """A file-tool write about to create an ISA.md: binding it is allowed even while another ISA is bound
+    (SPEC-v2 § 12.7). Recorded here because PostToolUse can no longer tell the file was new."""
+    if ev.get("tool") not in classify.FILE_TOOLS:
+        return
+    cwd = ev.get("cwd") or ""
+    new = [os.path.realpath(os.path.join(cwd, os.path.expanduser(p))) for p in classify.tool_paths(ev.get("tool_input"))]
+    new = [p for p in new if state.is_master_isa(p) and not os.path.exists(p)]
+    if new:
+        with state.session(ev["harness"], ev["session"]) as s:
+            s["creating"] = (s.get("creating", []) + new)[-10:]
+
+
 def _snapshot_unknown(ev, kind, cwd):
-    """Before an `unknown` shell command: snapshot the project so post_tool can tell whether it changed files."""
-    if ev.get("tool") in classify.SHELL_TOOLS and kind == "unknown" and not state.is_scratch_dir(cwd):
-        snap = changes.snapshot(state.project_root(cwd))
-        if snap:
-            with state.session(ev["harness"], ev["session"]) as s:
-                snaps = s.setdefault("shell_snaps", {})
-                snaps[_call_key(ev)] = snap
-                for k in list(snaps)[:-20]:
-                    snaps.pop(k, None)
+    """Before an `unknown` shell command: snapshot the project so post_tool can tell whether it changed files,
+    and the evidence ledger, which no tool may write (SPEC-v2 § 12.9)."""
+    if ev.get("tool") not in classify.SHELL_TOOLS or kind != "unknown":
+        return
+    snap = None if state.is_scratch_dir(cwd) else changes.snapshot(state.project_root(cwd))
+    ledger = None if _runs_isa_cmd(ev) else _ledger_state(state.read_session(ev["harness"], ev["session"]))
+    if snap or ledger:
+        with state.session(ev["harness"], ev["session"]) as s:
+            for name, value in (("shell_snaps", snap), ("ledger_snaps", ledger)):
+                if value:
+                    snaps = s.setdefault(name, {})
+                    snaps[_call_key(ev)] = value
+                    for k in list(snaps)[:-20]:
+                        snaps.pop(k, None)
+
+
+def _runs_isa_cmd(ev):
+    """`… && isa verify …`: an `isa` command inside a longer command writes the ledger legitimately."""
+    return bool(re.search(r"(^|[\s;&|(/])isa\s+(new|lint|verify|close)\b", str((ev.get("tool_input") or {}).get("command", ""))))
+
+
+def _ledger_state(st):
+    """{"bound": sha256 of the bound ISA's ledger, "files": {name: mtime} of the evidence folder}."""
+    files = {}
+    try:
+        for name in os.listdir(evidence.ledger_dir()):
+            files[name] = os.path.getmtime(os.path.join(evidence.ledger_dir(), name))
+    except OSError:
+        pass
+    bound, digest = _bound(st), None
+    if bound:
+        try:
+            with open(evidence.ledger_path(bound), "rb") as f:
+                digest = hashlib.sha256(f.read()).hexdigest()
+        except OSError:
+            digest = ""
+    return {"bound": bound, "sha": digest, "files": files}
+
+
+def _ledger_check(ev, st, out):
+    """After an `unknown` shell command: report a ledger it changed; the bound ISA's own ledger also gets a
+    `ledger-changed` blocked key, so `isa close` refuses until a full `isa verify` re-proves everything."""
+    before = st.get("ledger_snaps", {}).pop(_call_key(ev), None)
+    if not before:
+        return ""
+    now = _ledger_state(st)
+    if before.get("bound") and before["bound"] == now["bound"] and before["sha"] != now["sha"]:
+        problems.record_ledger_changed(before["bound"])
+        out.append(f"ISA evidence ledger changed by this command — only `isa` commands write it. `isa close "
+                   f"{_tilde(before['bound'])}` refuses until a full `isa verify` (no ISC list) re-proves everything.")
+        return "ISA: the evidence ledger changed under a shell command — the ISA can't close until it is re-proven"
+    changed = sorted(n for n in set(before["files"]) | set(now["files"])
+                     if before["files"].get(n) != now["files"].get(n))
+    if changed:
+        out.append("ISA evidence ledger changed by this command (" + ", ".join(changed[:5]) + ") — only `isa` "
+                   "commands write it.")
+        return "ISA: an evidence ledger changed under a shell command"
+    return ""
 
 
 # ------------------------------------------------------------------ evidence
@@ -553,12 +736,13 @@ def _parsed(path, text=None):
 
 
 def _targets_ledger(ev, kind):
-    """A write aimed at the evidence ledger: any file-tool write there, or a non-read shell command naming it."""
+    """A write aimed at the evidence ledger: a file-tool write there, or a shell redirect / `rm` / `mv` / `cp` …
+    whose resolved target is inside it. Merely naming the folder (`grep … evidence/`) is fine."""
     tool, ti, cwd = ev.get("tool", ""), ev.get("tool_input") or {}, ev.get("cwd") or ""
     if tool in classify.FILE_TOOLS:
         return any(evidence.is_ledger_path(os.path.join(cwd, os.path.expanduser(p))) for p in classify.tool_paths(ti))
-    if tool in classify.SHELL_TOOLS and kind != "read":
-        return bool(re.search(r"_state[/\\]+evidence", str(ti.get("command", ""))))
+    if tool in classify.SHELL_TOOLS:  # a path the command visibly writes; a script is caught after it ran
+        return any(evidence.is_ledger_path(p) for p in classify.write_targets(str(ti.get("command", "")), cwd))
     return False
 
 
@@ -696,8 +880,13 @@ def _is_verify(ev):
 def _bind(st, path, ev, out):
     """Bind `path` to the session (a Write/Edit of it, or `isa new` printing it). → the user line, or ""."""
     if st.get("bound") != path:
-        if st.get("bound"):
-            out.append(f"ISA binding switched to {_tilde(path)} (was {_tilde(st['bound'])}).")
+        old = st.get("bound")
+        if old:
+            out.append(f"ISA binding switched to {_tilde(path)} (was {_tilde(old)}).")
+            _mark_left(st, old, path, out)
+        if evidence.pause_label(path):  # a paused / superseded ISA bound again (SPEC-v2 § 12.7)
+            evidence.record(path, [{"v": 2, "t": time.time(), "kind": "resumed"}])
+            out.append(f"Resumed {_tilde(path)} (it was {evidence.pause_label(path) or 'paused'}).")
         st["bound"] = path
         st["bound_prompt"] = ev.get("prompt_id")  # the scaffold exit holds on this prompt only
         hist = st.setdefault("bound_history", [])  # waivers quote prompts of every session an ISA was bound to
@@ -707,6 +896,33 @@ def _bind(st, path, ev, out):
         st.pop("needs_isa_since", None)
         st.pop("blocked_no_isa", None)
     return "ISA: ON — an ISA was bound" if _switch_on(st, "binding", "an ISA was bound") else ""
+
+
+def _mark_left(st, old, path, out):
+    """A new ISA bound in place of an open one after Q2 said "new task" (or could not be asked): the old one
+    is marked paused or superseded in its ledger — hooks never edit the ISA (SPEC-v2 § 12.7)."""
+    q2 = st.pop("q2", None) or {}
+    if q2.get("old") != old or q2.get("outcome") not in ("new", "unavailable"):
+        return
+    if not os.path.isfile(old) or state.frontmatter(old).get("phase") == "complete":
+        return
+    label = q2.get("label") or "paused"  # no Q2 answer (Jev unavailable): the reversible label
+    evidence.record(old, [{"v": 2, "t": time.time(), "kind": label, "by": os.path.basename(os.path.dirname(path))}])
+    out.append(f"The open ISA {_tilde(old)} is now marked {label}; it stays resumable (`isa ls` lists it).")
+
+
+def _may_bind(st, path, ev):
+    """The binding rule (SPEC-v2 § 12.7): a Write/Edit of an ISA.md binds it only when no open ISA is bound,
+    when it is the bound one, or when the write creates the file."""
+    cur = _bound(st)
+    if not cur or cur == path or state.frontmatter(cur).get("phase") == "complete":
+        return True
+    creating = st.get("creating", [])
+    if path in creating:
+        creating.remove(path)
+        return True
+    resp = ev.get("tool_response")
+    return isinstance(resp, dict) and resp.get("type") == "create"
 
 
 def _printed_isa(output):
@@ -757,9 +973,15 @@ def _post_tool(ev):
         # the bound ISA changed on disk without a file-tool path naming it (a shell edit: heredoc,
         # `sed -i`, a script): that call was an ISA edit, not a project change
         shell_edit = not masters and _isa_touched(st)
+        other = None  # an ISA edited without binding it (another open ISA is bound)
         if masters:
             path = os.path.realpath(os.path.join(cwd or "", os.path.expanduser(masters[-1])))
-            warn = _bind(st, path, ev, out)
+            if _may_bind(st, path, ev):
+                warn = _bind(st, path, ev, out)
+            else:
+                other = path
+                out.append(f"Edited {_tilde(path)} — the session stays bound to {_tilde(_bound(st))} (editing "
+                           "another ISA changes its content, not the binding).")
             st["last_isa_edit"] = now
             st["since_isa"] = 0
             _isa_touched(st)  # baseline mtime for the next shell-edit check
@@ -775,7 +997,14 @@ def _post_tool(ev):
             touched = _changed_projects(ev, kind)
             if was_off and _switch_on(st, "change", "a command changed project files"):
                 warn = "ISA: ON — a command changed project files; the turn needs an ISA before it ends"
+        if kind == "unknown" and tool in classify.SHELL_TOOLS:
+            warn = _ledger_check(ev, st, out) or warn
         bound = _bound(st)
+    if other:
+        errors, _ = _lint(other, "auto", ev["harness"], ev["session"])
+        if errors:
+            out.append(f"ISA lint — {len(errors)} error(s) in {_tilde(other)}:\n{_fmt(errors)}")
+        masters = []  # the bound ISA did not change: no bound-ISA feedback below
     if bound:
         for key in touched:
             if state.note_project(bound, key) and key != state.isa_home_key(bound):
@@ -814,6 +1043,10 @@ def _tool_failed(ev):
             with state.session(ev["harness"], ev["session"]) as st:
                 if _script_changed(ev, st):
                     _count_change(st, time.time(), [])
+                ledger_out = []
+                ledger_warn = _ledger_check(ev, st, ledger_out)
+            if ledger_warn:
+                return {"warn": ledger_warn, "context": "\n".join(ledger_out)}
     st = state.read_session(ev["harness"], ev["session"])
     if _bound(st) and _is_verify(ev):
         return {"context": "A probe failed. Claim wrong or code wrong? If the claim, update the ISA now (split, "
@@ -845,56 +1078,81 @@ def _attested_notice(st, bound):
                     f"check them:\n{rows}"}
 
 
-DECLARE_MISSING = ("This prompt was left to you (unsure): either write the ISA (`isa new <slug>`, then the content) "
-                   "or, if it really needs none, end with an answer that carries the line "
-                   "`ISA: not needed — <one-line reason>`.")
+JUDGE_MISSING = ("Jev was unavailable, so this prompt is yours to judge: put the line "
+                 "`ISA judge (model): yes|no|unsure — <one-line reason>` in your answer (yes → write the ISA first: "
+                 "`isa new <slug>`), or write the ISA.")
+
+
+def _ask_missing(label):
+    return (f"This prompt is not settled as work and the user was not asked. Ask them with AskUserQuestion "
+            f"(question \"{_question(label)}\", options \"{ASK_CONTINUE} (Recommended)\" and \"{ASK_ENABLE}\"), "
+            "then follow their choice.")
+
+
+def _refuse_once(st, pid, ev, block, warn):
+    already = st["stop_blocks"].get(pid, 0) >= 1 or ev.get("retried")
+    st["stop_blocks"][pid] = st["stop_blocks"].get(pid, 0) + 1
+    if not already:
+        return {"block": "ISA check before ending the turn:\n- " + block}
+    st.pop("gate", None)
+    return {"warn": warn}
+
+
+def _stop_gate(ev, st, gate, pid):
+    """Stop for a prompt the gate did not settle as yes (SPEC-v2 § 12.4, § 12.5). → a result, or None when the
+    ON rules apply now (the model judged `yes`)."""
+    ans = st.get("ask_answer") if (st.get("ask_answer") or {}).get("pid") == str(ev.get("prompt_id")) else None
+    ask = gate.get("ask")
+    verdict, reason = _judge_line(ev) if gate.get("judge") == "model" else (None, "")
+    note(judge=gate.get("judge"), model_verdict=verdict, model_reason=reason, asked=bool(ans),
+         choice=ans and ans["choice"], ask=ask)
+    if ans:  # the user chose (Enable switched the session ON, and the ON rules took over before this)
+        st.pop("gate", None)
+        return {}
+    if verdict == "yes":  # work: the ON rules apply — an ISA, or after a finished one a new ISA or a reopen
+        st.pop("gate", None)
+        st["needs_isa_since"] = ev.get("prompt_id")
+        _switch_on(st, "model", f"the model judged this work: {reason}"[:200])
+        return None
+    if gate.get("judge") == "model" and not verdict:
+        return _refuse_once(st, pid, ev, JUDGE_MISSING,
+                            "ISA: the agent neither judged this prompt nor wrote an ISA — ending the turn anyway.")
+    if not ask:  # nobody to ask, or asking is off
+        st.pop("gate", None)
+        return {}
+    label = f"model: {verdict} — {reason}" if verdict else f"Jev: {gate.get('score', 0):.2f}" \
+        if gate.get("score") is not None else "Jev: below the line"
+    if ask == "extension":  # pi asks with its own dialog, then reports the pick (`ask_answer`)
+        return {"ask": _question(label), "options": [ASK_CONTINUE, ASK_ENABLE]}
+    return _refuse_once(st, pid, ev, _ask_missing(label),
+                        "ISA: the agent went on without an ISA and did not ask you — ending the turn anyway.")
 
 
 def _stop(ev):
     pid = str(ev.get("prompt_id") or "_")
     with state.session(ev["harness"], ev["session"]) as st:
-        declare = st.get("declare_for") == str(ev.get("prompt_id"))
+        gate = st.get("gate") if (st.get("gate") or {}).get("pid") == str(ev.get("prompt_id")) else None
         mode = _mode(st)
         bound = _bound(st)
         bound_now = bool(bound) and st.get("bound_prompt") == ev.get("prompt_id")
-        if declare:
+        if gate:
             open_isa = bool(bound) and state.frontmatter(bound).get("phase") != "complete"
             switched = mode == "on" and not bound and st.get("mode_since", 0) >= st.get("prompt_started", 0)
             if bound_now or open_isa or switched:
-                st.pop("declare_for", None)  # the model took the ISA path (or a change turned it ON): ON rules
-                declare = False
-        if declare:
-            ans = st.get("ask_answer") if (st.get("ask_answer") or {}).get("pid") == str(ev.get("prompt_id")) else None
-            ask = st.get("ask_mode")
-            found = _declared(ev) or bool(ans and ans["choice"] != "enable")  # the user chose to go on
-            note(declared=found, reason=_declared_reason(ev), asked=bool(ans), choice=ans and ans["choice"],
-                 ask=ask)
-            if found and ask == "extension" and not ans:
-                return {"ask": f"{ASK_TITLE} ({_declared_reason(ev) or 'the agent declared no ISA needed'}). "
-                               "Continue?", "options": [ASK_CONTINUE, ASK_ENABLE]}
-            if found and ask == "model" and not ans:
-                already = st["stop_blocks"].get(pid, 0) >= 1 or ev.get("retried")
-                st["stop_blocks"][pid] = st["stop_blocks"].get(pid, 0) + 1
-                if not already:
-                    return {"block": "ISA check before ending the turn:\n- " + ASK_MISSING}
-                st.pop("declare_for", None)
-                return {"warn": "ISA: the agent went on without an ISA and did not ask you — ending the turn anyway."}
-            if found:
-                st.pop("declare_for", None)
-                return {}
-            already = st["stop_blocks"].get(pid, 0) >= 1 or ev.get("retried")
-            st["stop_blocks"][pid] = st["stop_blocks"].get(pid, 0) + 1
-            if already:
-                st.pop("declare_for", None)
-                return {"warn": "ISA: the agent neither wrote an ISA nor said why none was needed — ending the "
-                                "turn anyway."}
-            return {"block": "ISA check before ending the turn:\n- " + DECLARE_MISSING}
+                st.pop("gate", None)  # the model took the ISA path (or a change turned it ON): ON rules
+                gate = None
+        if gate:
+            res = _stop_gate(ev, st, gate, pid)
+            if res is not None:
+                return res
+            mode = _mode(st)
         if mode != "on":
-            return {}  # OFF: the pre-filter (or the model's declaration) said this is no task
+            return {}  # OFF: the prompt was not settled as work, and the user (or nobody to ask) let it go on
         bound = _bound(st)
         if _isa_touched(st):  # edited by a call whose PostToolUse never ran (e.g. a failed command)
             st["last_isa_edit"] = time.time()
         need = _needs_isa(st, bound, ev.get("prompt_id"))
+        new_task = bool(bound) and _new_task_pending(st, bound)
         if need == "scaffold":
             return {}  # the clarify-first scaffold, on the prompt that created it
         started = st.get("prompt_started", 0.0)
@@ -903,8 +1161,8 @@ def _stop(ev):
     items = []
     if need is True:  # checked even on a turn that changed nothing: a review is work too
         items.append({"code": "no-isa", "isc": None, "line": NO_ISA})
-        bound = None if not bound or _scaffold(bound) or state.frontmatter(bound).get("phase") == "complete" \
-            else bound
+        bound = None if not bound or new_task or _scaffold(bound) \
+            or state.frontmatter(bound).get("phase") == "complete" else bound
     if bound:  # reads the ISA, the ledger and session state only — never runs a probe
         errors, _ = _lint(bound, "auto", ev["harness"], ev["session"])
         items += problems.current(bound, lint_errors=errors)

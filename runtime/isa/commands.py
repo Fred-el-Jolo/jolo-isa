@@ -19,7 +19,7 @@ import shlex
 import subprocess
 import time
 
-from . import evidence, fingerprint, isafile, jev, lint, logs, problems, rules, state
+from . import config, evidence, fingerprint, isafile, jev, lint, logs, problems, rules, state
 
 TAIL = evidence.TAIL_CHARS
 VAGUE = {"make", "this", "that", "good", "better", "thing", "things", "stuff", "please", "just", "with", "from",
@@ -460,15 +460,15 @@ def verify(path, select=(), red=False, attest=None, cwd=None, timeout=600, out=p
     isafile.write_atomic(path, text)
     out(f"\nISA updated: ticked {', '.join(ticked) or '—'}, unticked {', '.join(unticked) or '—'}, "
         f"progress {isafile.progress_of(text)} — re-read the ISA before editing it.")
-    _unblock(path, out)
+    _unblock(path, out, full=not select and not any(r[0] for r in results.values()))
     jev_probe_advice(path, parsed, [i for i in mech if results.get(i, (1,))[0] == 0], out)
     return 1 if any(r[0] for r in results.values()) else 0
 
 
-def _unblock(path, out):
+def _unblock(path, out, full=False):
     """Clear the `blocked` items (SPEC-v2 § 4.5) this run shows fixed; report the ones still open."""
     before = problems.open_items(path)
-    still = problems.reevaluate(path)
+    still = problems.reevaluate(path, full=full)
     if len(still) < len(before):
         out(f"cleared {len(before) - len(still)} blocked item(s) recorded by an earlier turn")
     if still:
@@ -682,6 +682,10 @@ def lint_cmd(args, out=print):
 
 # ------------------------------------------------------------------ Jev advice (SPEC-v2 § 11.2, never blocking)
 
+def _doubt():
+    return config.number("jev_doubt")[0]
+
+
 def _jev_line(results, out):
     """At most one `Jev:` line per command for calls that were not served (the ON block asks the model
     to relay it); timeouts and Jev being switched off say nothing."""
@@ -692,7 +696,7 @@ def _jev_line(results, out):
 
 def jev_probe_advice(path, parsed, passed, out=print):
     """First `isa verify` of a probe that can't be seen failing first (red-exempt): ask Jev once per
-    (ISC, probe text) whether it would fail if the claim were false; warn below jev.PROBE_DOUBT."""
+    (ISC, probe text) whether it would fail if the claim were false; warn below _doubt()."""
     if not jev.enabled():
         return
     pr = evidence.probes(parsed)
@@ -715,7 +719,7 @@ def jev_probe_advice(path, parsed, passed, out=print):
         _jev_line(results, out)
     for i, _ in exempt:
         row = cache.get((i, sha[i]))
-        if row and row.get("answer") is not None and row["answer"] < jev.PROBE_DOUBT:
+        if row and row.get("answer") is not None and row["answer"] < _doubt():
             out(f"Jev doubts {i}'s probe would fail if the claim were false ({row['answer']:g}) — advisory: "
                 "tighten it, or say why it holds in Decisions")
 
@@ -739,7 +743,7 @@ def jev_close_advice(path, text):
     for n, ((preset, payload), r) in enumerate(zip(items, results)):
         label = "goal delivered" if preset == "isa-goal" else f"Ask {n} (\"{payload['ask'][:60]}\") met"
         if r["served"]:
-            flag = " — check it" if r["answer"] < jev.PROBE_DOUBT else ""
+            flag = " — check it" if r["answer"] < _doubt() else ""
             lines.append(f"  - {label}: {r['answer']:g}{flag}")
         else:
             lines.append(f"  - {label}: not judged (Jev unavailable: {r['reason']})")

@@ -16,3 +16,5 @@ Run `isa verify` and `isa close` with a 600000 ms Bash timeout (or in the backgr
 slow): the default 120 s can stop a long run halfway, leaving the ISA open. When a command prints a
 `Jev:` line (Jev out of credit, over budget or down), relay it to the user word for word.
 The turn can't end without a bound ISA, and can't end with an unproven claim.
+Later prompts are judged again (SPEC-v2 § 12): a new task gets its own ISA (the open one is marked paused);
+when Jev is unavailable after a finished ISA, put `ISA judge (model): yes|no|unsure — <reason>` in your answer.

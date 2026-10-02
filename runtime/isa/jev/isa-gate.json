@@ -1,15 +1,15 @@
 {
   "name": "isa-gate",
-  "version": 1,
-  "description": "ISA gate: is this prompt a request for work with a checkable end state? (asked only for prompts the free pre-filter left unsure)",
+  "version": 2,
+  "description": "ISA gate, Q1: is this prompt work that needs an ISA? (SPEC-v2 § 12.3; asked of every prompt with no ISA bound or a finished one)",
   "model": "jev-1.13.0",
   "state": {
-    "template": "The assistant's previous message (may be empty; a short reply like \"go\" approves what it proposed):\n{{context}}\n\nThe user's prompt:\n{{prompt}}"
+    "template": "The assistant's previous message (may be empty; a short reply like \"go\" approves what it proposed):\n{{context}}\n\nThe skill the message invokes (empty when none):\n{{skill}}\n\nThe user's message:\n{{prompt}}"
   },
   "questions": {
     "work": {
       "type": "noul",
-      "instructions": "Is the user's prompt a request for work with a checkable end state, something that will be either done or not done? Work includes changing code or files, fixing a bug, reviewing or auditing something, writing a plan, comparing options and recommending one, and investigating why something in the user's own project or system is slow, failing or wrong. Not work: a question answered by an explanation of how something works or what existing code does, general knowledge, opinions, greetings, thanks, and conversation. A short approval (\"go\", \"yes do it\") is work only when the assistant's previous message proposed work."
+      "instructions": "The user's message (and, if it invokes a skill, that skill's description) — does it ask for a deliverable that could be done wrong in ways the reply alone would not reveal? Yes: changing code, files, configuration or systems; fixing a bug; reviewing or auditing something; writing a plan, spec, design or report as a document; comparing options and recommending one in writing; finding out why something in the user's own project or system is slow, failing or wrong; deploying or publishing something whose result can be broken while every command succeeds; any task that needs choosing what to include or where to change (splitting commits, selecting files, renaming across a codebase); running a skill whose description is one of these. No: the user explicitly asks to work without an ISA. Also anything the reply itself settles: looking something up; showing or listing what a file, log or command contains; explaining how something works or what code does; general knowledge; opinions; discussing an idea or a design in conversation, without a written deliverable; greetings and small talk. Also no: straightforward operations whose steps are evident and whose failure the tool reports by itself (an error, a non-zero exit), even with a few steps or details: commit (with or without a given message), commit and push, run the tests, install dependencies, rename a branch, tag and push a tag. A short reply (\"go\", \"yes do it\") counts as whatever it approves in the assistant's previous message."
     }
   }
 }

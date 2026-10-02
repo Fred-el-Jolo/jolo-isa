@@ -74,9 +74,11 @@ class TestCompleteBinding(HookCase):
         broken = CLOSED.replace('tool: test "$(bun arxiv.ts 2401.12345 | wc -l)"', 'tool: test "$(bun arxiv.ts <some id> | wc -l)"')
         self.write_isa(broken)
         self.pid = "p-quiet"
-        self.hook("UserPromptSubmit", prompt="thanks, looks good")  # pre-filter: no (a question would be judged)
+        self.config(ask_without_isa=False)
+        self.hook("UserPromptSubmit", prompt="thanks, looks good")  # Jev unavailable: the model judges it
         self.hook("PreToolUse", tool_name="Read", tool_input={"file_path": "/etc/hosts"})
-        code, _, err = self.hook("Stop", stop_hook_active=False)
+        code, _, err = self.hook("Stop", stop_hook_active=False,
+                                 last_assistant_message="ISA judge (model): no — thanks\n\nGlad it works.")
         self.assertEqual((code, err), (0, ""))
 
 

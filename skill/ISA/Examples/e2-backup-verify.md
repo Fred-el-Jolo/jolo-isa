@@ -162,6 +162,7 @@ Add a `--verify` flag that, after the rsync copy step completes, walks both sour
   check: --verify with a remote destination is rejected
   threshold: 'stderr "ERROR: --verify requires local destination" + non-zero exit'
   tool: rsync-verify --verify ./tmp/src ssh://host/path 2>&1 | grep -q 'requires local destination'
+  fails-when: "a remote destination is accepted, so the rejection message never appears"
 
 - isc: ISC-16
   type: bash
@@ -169,6 +170,7 @@ Add a `--verify` flag that, after the rsync copy step completes, walks both sour
   check: plain run opens no hash stream
   threshold: zero "hash:" lines in debug trace
   tool: RSYNC_VERIFY_DEBUG=1 rsync-verify ./tmp/src ./tmp/dst 2>&1 | grep -c '^hash:' | grep -qx 0
+  fails-when: "a plain run logs at least one `hash:` line, so the count is not 0"
 
 - isc: ISC-17
   type: bash
@@ -176,6 +178,7 @@ Add a `--verify` flag that, after the rsync copy step completes, walks both sour
   check: file contents never appear in any output stream or log
   threshold: 0 occurrences of the fixture sentinel
   tool: rsync-verify --verify ./tmp/src ./tmp/dst 2>&1 | cat - ~/.cache/rsync-verify/*.log | rg -c "TEST_FIXTURE_SENTINEL_BYTES" | grep -qx 0
+  fails-when: "the fixture's sentinel bytes show up in the output or a log"
 
 - isc: ISC-18
   type: property
@@ -184,6 +187,7 @@ Add a `--verify` flag that, after the rsync copy step completes, walks both sour
   generator: "random trees of 1–200 files, each file independently flipped / deleted / untouched / extra"
   runs: 500
   tool: bun test test/exit-code.property.test.ts
+  fails-when: "a generated tree with a mismatch or a missing file exits 0, or a clean one exits non-zero"
 ```
 
 <!--

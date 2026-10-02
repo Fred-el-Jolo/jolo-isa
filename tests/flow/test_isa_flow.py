@@ -7,8 +7,9 @@ Opt-in and paid (Sonnet 5.5, roughly $0.30–1 a run):
 
 Each session gets a sealed sandbox: a fresh git project copied from `fixture/`, a private ISA_HOME, the
 repo's `isa` first on PATH, a generated `--settings` with the repo's hooks only (the user's
-~/.claude/settings.json, skills, plugins and MCP servers are not loaded). No judge (SPEC-v2 § 11): the
-free pre-filter, and for an unsure prompt the model's own `ISA: not needed — <reason>` declaration.
+~/.claude/settings.json, skills, plugins and MCP servers are not loaded). The gate (SPEC-v2 § 12): Jev
+judges each prompt when the `jev` CLI is on PATH, else the model writes `ISA judge (model): … — <reason>`;
+`claude -p` is headless, so a prompt below the line continues without an ISA (nobody to ask).
 
 Output: `tests/evals/results/flow/<stamp>/` (or `$ISA_FLOW_OUT/<stamp>/`) with `ISA.articulation.md`
 (the ISA at the first project change), `ISA.final.md`, `timeline.md`, `verdict.md`, `verdict.json` and
@@ -188,11 +189,11 @@ class Run:
         return [r for r in rows if step is None or r.get("step") == step]
 
     def gate_rows(self):
-        """The pre-filter verdict of each prompt, from the debug log (SPEC-v2 § 11.6)."""
-        rows = [r for r in self.log_rows("prompt") if r.get("prefilter")]
+        """Who judged each prompt and how, from the debug log (SPEC-v2 § 12.5)."""
+        rows = [r for r in self.log_rows("prompt") if r.get("question")]
         mine = [r for r in rows if r.get("session") == self.session] or rows
-        return [{"verdict": r["prefilter"], "source": "prefilter", "ms": r.get("ms"), "reason": r.get("reason")}
-                for r in mine]
+        return [{"judge": r.get("judge"), "question": r["question"], "score": r.get("score"),
+                 "outcome": r.get("outcome"), "ms": r.get("ms"), "reason": r.get("jev_reason")} for r in mine]
 
     def session_state(self):
         for p in glob.glob(os.path.join(self.sb.isa_home, "_state", "sessions", "*.json")):
@@ -233,10 +234,10 @@ def judge_yes(run):
     st, s = run.session_state(), []
     gates = run.gate_rows()
     first = gates[0] if gates else {}
-    s.append(_stage(1, "pre-filter yes, user line `ISA: ON`",
-                    first.get("verdict") == "yes" and "ISA: ON" in run.hook_text("UserPromptSubmit"),
-                    f"debug log: {first.get('verdict')} via {first.get('source')} in {first.get('ms')} ms — "
-                    f"{first.get('reason')}"))
+    by_jev = first.get("judge") == "jev" and first.get("outcome") == "on" and "→ ON" in run.hook_text("UserPromptSubmit")
+    by_model = first.get("judge") == "model" and bool(JUDGED.search(run.raw)) and bool(run.isas())
+    s.append(_stage(1, "gate yes (Jev at or above the line, or the model's `yes` and an ISA)", by_jev or by_model,
+                    f"debug log: {_gate_text(first)}"))
     with open(os.path.join(REPO, "runtime", "isa", "protocol.md")) as f:
         marker = f.readline().strip()
     s.append(_stage(2, "ON block injected", marker in run.hook_text("UserPromptSubmit"), f"marker {marker!r}"))
@@ -321,7 +322,12 @@ def judge_yes(run):
     return s, path
 
 
-DECLARED = re.compile(r"ISA: not needed\s*[—–-]+\s*\S")
+JUDGED = re.compile(r"ISA judge \(model\):\s*(yes|no|unsure)\b")
+
+
+def _gate_text(g):
+    score = f"{g['score']:.2f}" if isinstance(g.get("score"), (int, float)) else g.get("reason")
+    return f"{g.get('question')} by {g.get('judge')} ({score}) → {g.get('outcome')} in {g.get('ms')} ms"
 
 
 def judge_no(run):
@@ -330,14 +336,18 @@ def judge_no(run):
     stops = [h for h in run.hooks if "Stop" in h["event"] + h["name"]]
     loud = [h for h in stops if h["exit"] not in (0, None) or "block" in h["text"] or "ISA" in h["text"]]
     ups = run.hook_text("UserPromptSubmit")
-    line = next((ln for ln in run.final.splitlines() if DECLARED.search(ln)), "")
+    line = next((m.group(0) for m in [JUDGED.search(run.final)] if m), "")
+    if first.get("judge") == "jev":  # expected: Jev below the line; headless, so nobody is asked
+        went_on = first.get("outcome") == "continue" and "continue without ISA (nobody to ask)" in ups
+        stage4 = _stage(4, "below the line, headless: continued without an ISA", went_on, "UserPromptSubmit output")
+    else:
+        stage4 = _stage(4, "the model judged `no` or `unsure` in its answer", line.endswith(("no", "unsure")), repr(line))
     return [
-        _stage(1, "pre-filter unsure, declaration line injected", first.get("verdict") == "unsure" and "[ISA: unsure" in ups,
-               f"debug log: {first.get('verdict')} via {first.get('source')} in {first.get('ms')} ms — "
-               f"{first.get('reason')}"),
-        _stage(2, "user line `ISA: unsure`", "ISA: unsure" in ups, "UserPromptSubmit output"),
+        _stage(1, "judged once, not settled as work", first.get("question") == "q1" and first.get("outcome") != "on",
+               f"debug log: {_gate_text(first)}"),
+        _stage(2, "user line `ISA gate — …` names the judge", "ISA gate — Jev" in ups, "UserPromptSubmit output"),
         _stage(3, "no ISA file", not run.isas(), f"{len(run.isas())} ISA file(s)"),
-        _stage(4, "the answer declares `ISA: not needed — <reason>`", bool(line), repr(line[:160])),
+        stage4,
         _stage(5, "Stop hook silent", not loud, f"{len(stops)} Stop hook event(s), {len(loud)} not silent"),
     ]
 
@@ -345,7 +355,7 @@ def judge_no(run):
 def timeline(run, title):
     out = [f"## {title}", "", f"session `{run.session}` · {run.secs:.0f} s · cost ${run.cost}", ""]
     for g in run.gate_rows():
-        out.append(f"- **gate** {g.get('verdict')} via {g.get('source')} in {g.get('ms')} ms — {g.get('reason')}")
+        out.append(f"- **gate** {_gate_text(g)}")
     for kind, x in run.items:
         if kind == "hook":
             text = " ".join(x["text"].split())[:220]
@@ -403,7 +413,8 @@ class TestIsaFlow(unittest.TestCase):
                 f.write(report)
             gates = [g.get("ms") for r in (yes_run, no_run) for g in r.gate_rows()]
             with open(os.path.join(cls.out, "verdict.json"), "w") as f:
-                json.dump({"stamp": stamp, "model": MODEL, "judge": "none", "jev": "on" if shutil.which("jev") else "off",
+                json.dump({"stamp": stamp, "model": MODEL, "judge": [(r.gate_rows() or [{}])[0].get("judge") for r in (yes_run, no_run)],
+                           "jev": "on" if shutil.which("jev") else "off",
                            "jev_calls": [len(r.log_rows("jev")) for r in (yes_run, no_run)], "gate_ms": gates, "cost_usd": [yes_run.cost, no_run.cost],
                            "secs": [round(yes_run.secs), round(no_run.secs)], "yes": cls.yes, "no": cls.no}, f, indent=1)
             print("\n" + report, file=sys.stderr)

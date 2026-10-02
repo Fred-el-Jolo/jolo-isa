@@ -10,28 +10,31 @@ import sys
 import unittest
 
 from tests.test_commands import CommandCase
-from tests.test_hooks import ISA, HookCase
+from tests.test_hooks import ISA, HookCase, setup_fake
 
 
 class TestHookRows(HookCase):
     def test_one_row_per_event(self):
+        setup_fake(self, isa_gate=0.05)
         self.hook("SessionStart", source="startup")
         self.hook("UserPromptSubmit", prompt="hi")
+        self.env["FAKE_JEV_P_isa_gate"] = "0.93"
         self.hook("UserPromptSubmit", prompt="Fix the bug in dates.py so the tests pass")
         self.hook("PreToolUse", tool_name="Write", tool_input={"file_path": f"{self.proj}/x.py", "content": "x"})
         self.hook("PostToolUse", tool_name="Read", tool_input={"file_path": "/etc/hosts"}, tool_response={})
         self.hook("Stop", stop_hook_active=False)
         rows = self.log_rows()
         self.assertEqual([r["step"] for r in rows],
-                         ["session_start", "prompt", "prompt", "pre_tool", "post_tool", "stop"])
+                         ["session_start", "jev", "prompt", "jev", "prompt", "pre_tool", "post_tool", "stop"])
+        rows = [r for r in rows if r["step"] != "jev"]
         for r in rows:
             self.assertEqual((r["harness"], r["session"], r["prompt_id"]), ("claude", self.sid, self.pid))
             self.assertIsInstance(r["ms"], int)
             self.assertIsInstance(r["t"], float)
             self.assertIn("decision", r)
         hi, fix = rows[1], rows[2]
-        self.assertEqual((hi["prefilter"], hi["mode_before"], hi["mode_after"]), ("no", "off", "off"))
-        self.assertEqual((fix["prefilter"], fix["mode_after"]), ("yes", "on"))
+        self.assertEqual((hi["judge"], hi["score"], hi["outcome"], hi["mode_before"]), ("jev", 0.05, "ask", "off"))
+        self.assertEqual((fix["score"], fix["outcome"], fix["mode_after"]), (0.93, "on", "on"))
         self.assertEqual((rows[3]["tool"], rows[3]["decision"]), ("Write", "deny"))
         self.assertEqual(rows[5]["decision"], "block")
         self.assertNotIn("Fix the bug", json.dumps(rows))  # no prompt text in the log
@@ -75,7 +78,8 @@ class TestStatusFromLog(HookCase):
                            text=True, capture_output=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         gate = json.loads(p.stdout)["gate"]
-        self.assertEqual((gate["verdict"], gate["source"]), ("unsure", "prefilter"))
+        self.assertEqual((gate["judge"], gate["question"], gate["outcome"], gate["reason"]),
+                         ("model", "q1", "model", "off"))
         self.assertFalse(os.path.exists(os.path.join(self.home, "_state", "judge.jsonl")))
 
 
