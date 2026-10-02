@@ -58,7 +58,7 @@ def evidence_items(isa_path, parsed, closing):
     for i, t in evidence.unattested_ticks(isa_path, parsed):
         items.append(_item("tick-unattested", i, f"  - {i}: {t}"))
     # freshness is the close's job (`isa close` re-runs every probe, SPEC-v2 § 4.2): no timestamps here
-    if closing and lint.is_v2(parsed["fm"]) and not any(r.get("kind") == "close" for r in evidence.rows(isa_path)):
+    if closing and lint.is_v2(parsed["fm"]) and not any(r.get("kind") in ("close", "closed") for r in evidence.rows(isa_path)):
         items.append(_item("complete-without-close", None,
                            f"`phase: complete` was not written by `isa close` — run `isa close {tilde(isa_path)}` "
                            "(it re-runs every probe and closes only when all pass)"))

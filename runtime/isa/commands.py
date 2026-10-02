@@ -561,6 +561,8 @@ def close(path, cwd=None, timeout=600, out=print):
             out(f"  - {m}")
         return 1
     isafile.write_atomic(path, closing)
+    # the close itself, also when no mechanical probe ran (all self-attested): Stop checks for it (problems.py)
+    evidence.record(path, [{"v": 2, "t": time.time(), "kind": "closed", "probes": len(results)}])
     out(summary(path, closing, results, fps, marks, run_t) + jev_close_advice(path, closing))
     return 0
 

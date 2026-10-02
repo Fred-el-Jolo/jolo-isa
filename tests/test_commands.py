@@ -559,5 +559,55 @@ class TestProbeEnv(CommandCase):
         self.assertEqual([v.split("=", 1)[0] for v in seen], ["ISA_HOME"])
 
 
+ATTESTED_ONLY = """---
+task: "Answer a question about the greeting filter"
+slug: 20261002-190000_t
+effort: E1
+phase: observe
+progress: 0/2
+started: 2026-10-02T19:00:00Z
+updated: 2026-10-02T19:00:00Z
+context_sufficient: true
+---
+
+## Goal
+
+The answer states the rule.
+
+## Criteria
+
+- [ ] ISC-1: The answer states the rule.
+- [ ] ISC-2: Anti: a repo file changed.
+"""
+
+
+class TestCloseAttestedOnly(CommandCase):
+    """An ISA whose criteria are all self-attested has no probe for `isa close` to re-run: the close must
+    still leave the ledger marker Stop looks for."""
+
+    def setup_isa(self):
+        path = self.write_isa(ATTESTED_ONLY)
+        self.hook("PostToolUse", tool_name="Write", tool_input={"file_path": path}, tool_response={})
+        self.isa("verify", path, "ISC-1", "--attest", "stated in the answer")
+        self.isa("verify", path, "ISC-2", "--attest", "git status is clean")
+        self.write_isa(read(path).rstrip("\n") + "\n- Goal: yes — answered\n", path)
+        return path
+
+    def test_close_marker(self):
+        path = self.setup_isa()
+        rc, out = self.isa("close", path)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.fm(path)["phase"], "complete")
+        code, _, err = self.hook("Stop", stop_hook_active=False)
+        self.assertNotIn("not written by `isa close`", err)
+
+    def test_hand_written_complete_still_caught(self):
+        path = self.setup_isa()
+        self.write_isa(read(path).replace("phase: observe", "phase: complete"), path)
+        code, _, err = self.hook("Stop", stop_hook_active=False)
+        self.assertEqual(code, 2)
+        self.assertIn("not written by `isa close`", err)
+
+
 if __name__ == "__main__":
     unittest.main()
