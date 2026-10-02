@@ -15,6 +15,9 @@
     isa close ISA                re-run every probe; close the ISA only when all pass and lint --close is clean
     isa status --session ID [--harness H] [--json]
                                  the session's bound ISA: tier, phase, progress, open ISCs (read-only)
+    isa purge-logs [--days N] [--dry-run]
+                                 delete debug log day files (~/.isa/_state/logs) older than N days (7);
+                                 never touches the evidence ledger, sessions, prompts or ISAs
     isa hook <harness>           hook entry point: event JSON on stdin, harness JSON on stdout
 """
 import json
@@ -22,7 +25,7 @@ import os
 import sys
 import traceback
 
-from . import commands, engine, fit, state, status
+from . import commands, engine, fit, logs, state, status
 
 
 def main(argv=None):
@@ -55,6 +58,8 @@ def main(argv=None):
         return _verify(args)
     if cmd == "status":
         return _status(args)
+    if cmd == "purge-logs":
+        return logs.purge_cmd(args)
     if cmd == "where":
         print(f"project key: {state.project_key(os.getcwd())}\nISA folder:  {state.project_dir(os.getcwd())}")
         return 0

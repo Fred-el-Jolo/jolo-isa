@@ -46,6 +46,8 @@ print(json.dumps({"type": "result", "result": "", "structured_output": answer}))
 class AdviceCase(CommandCase):
     def setUp(self):
         super().setUp()
+        for k in ("ISA_ADVICE", "ISA_ADVICE_TIMEOUT", "ISA_JUDGE_TIMEOUT"):  # e.g. inherited from `isa verify`
+            self.env.pop(k, None)
         bin_ = os.path.join(self.tmp, "fakebin")
         fake_cli(bin_, "claude", JUDGE)
         self.log = os.path.join(self.tmp, "judge-calls.jsonl")

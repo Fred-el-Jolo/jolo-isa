@@ -46,8 +46,9 @@ isa-skill-export/
 │       ├── state.py              ← ~/.isa layout, project keys, per-session state, prompt log
 │       ├── yamlish.py            ← the YAML subset ISA files use (no PyYAML)
 │       ├── changes.py            ← did an `unknown` shell command change project files? (git status + mtimes)
+│       ├── logs.py               ← debug log location and `isa purge-logs` (day files older than 7 days; never state)
 │       ├── status.py             ← read-only view of a session's mode and bound ISA (`isa status`), for status lines
-│       ├── cli.py                ← `isa ls|new|where|lint|fit|verify|close|status|hook`; the Claude Code adapter lives here
+│       ├── cli.py                ← `isa ls|new|where|lint|fit|verify|close|status|purge-logs|hook`; the Claude Code adapter lives here
 │       └── protocol.md           ← the ON block injected when a session turns ON
 ├── adapters/pi/isa.ts            ← pi extension → `isa hook pi` (installed to ~/.pi/agent/extensions/)
 ├── install.py                    ← install / --uninstall / --dry-run for both harnesses
@@ -227,7 +228,7 @@ Exported 2026-09-22 from a LifeOS 7.1.1 install:
 ## Working rules for this folder
 
 - What installs: `skill/ISA/`, `runtime/`, `adapters/pi/isa.ts` (via `install.py`). `future/` and this file are design notes.
-- Run the tests before installing: `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install tests.test_fit tests.test_status tests.test_evidence tests.test_shell_changes tests.test_feature_order tests.test_home_and_complete tests.test_seamless_projects tests.test_gate tests.test_commands tests.test_fingerprint tests.test_blocked tests.test_red tests.test_lint_v2 tests.test_advice tests.flow.test_isa_flow` and `node --test adapters/pi/test/extension.test.ts`. No unit test calls a model: `HookCase` runs with `ISA_JUDGE=heuristic`, and the judge tests use fake `claude` / `pi` CLIs and a fake API server. With PyYAML on `PYTHONPATH`, also `tests/test_yamlish.py` and `tests/test_lint_parity.py`.
+- Run the tests before installing: `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install tests.test_fit tests.test_status tests.test_evidence tests.test_shell_changes tests.test_feature_order tests.test_home_and_complete tests.test_seamless_projects tests.test_gate tests.test_commands tests.test_fingerprint tests.test_blocked tests.test_red tests.test_lint_v2 tests.test_advice tests.test_purge tests.flow.test_isa_flow` and `node --test adapters/pi/test/extension.test.ts`. No unit test calls a model: `HookCase` runs with `ISA_JUDGE=heuristic`, and the judge tests use fake `claude` / `pi` CLIs and a fake API server. With PyYAML on `PYTHONPATH`, also `tests/test_yamlish.py` and `tests/test_lint_parity.py`.
 - The whole-flow test (`tests/flow/test_isa_flow.py`, SPEC-v2 § 9) is live and paid (two Sonnet 5.5 sessions, about $0.30): `ISA_FLOW_LIVE=1 python3 -m unittest tests.flow.test_isa_flow`. It writes `flow/<stamp>/` (articulation and final ISA, timeline, verdict, transcripts, sandbox state) into the `eval-results` worktree at `tests/evals/results/` and commits it there. A run that dies on an API error is neither graded nor committed. Without the switch it is skipped.
 - Keep `runtime/` standard-library only (`python3 tests/check_stdlib.py runtime/`).
 - Keep it free of LifeOS: no `LIFEOS/` paths, no `localhost:31337`, no personal data. Check with `rg -n -i 'lifeos|31337|MEMORY/WORK|\btelos\b|\bpulse\b' skill/`. Expected: zero hits. Provenance lives only in this file (§ Source provenance), never inside `skill/`.

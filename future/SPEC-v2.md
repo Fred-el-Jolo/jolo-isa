@@ -1,6 +1,6 @@
 # ISA v2 — design spec
 
-Status: **implemented (M1–M7, 2026-10-02)** on branch `spec-v2-review`; the live whole-flow run `flow/20261002-125119` on `eval-results` passed 14/14 stages. It comes out of the 2026-10-01 eval session: batch
+Status: **implemented (M1–M7, 2026-10-02)** on branch `spec-v2-review`; **§ 11 revision (judge-free baseline, Jev on by default) specified, not implemented (M8–M10)**; the live whole-flow run `flow/20261002-125119` on `eval-results` passed 14/14 stages. It comes out of the 2026-10-01 eval session: batch
 `20261001-202941` on branch `eval-results`, and the reviews of runs A (review, no ISA) and B (bug fix,
 closed ISA). Each section says what changes, the exact behaviour, where it lives (hook / engine /
 command / skill), how it fails, and how it is tested. § Milestones orders the work.
@@ -789,6 +789,81 @@ decided then.
 
 ---
 
+## 11. Revision (2026-10-02): a judge-free baseline, Jev on top
+
+M1–M7 shipped with model-call judges. Measured in use, they are too slow and too fragile for a system that has to be extremely reliable:
+- **The gate (in the UserPromptSubmit hook):** Haiku took 4.1–7.6 s on every prompt the pre-filter left `unsure`. A 429 rate limit or an outage flips it to "fail toward ON", so a plain question then gets ISA busywork at Stop.
+- **`probe_adequacy` (`isa lint`):** one batch took 11–26 s, then over 60 s on an 11-probe ISA, and the time grows with the ISA.
+- **`extract_asks` (`isa new`) and `goal_met` / `asks_met` (`isa close`):** these are the same calls, with the same failure modes.
+
+This revision replaces them with a baseline that makes **no model call anywhere**. Every hook and every `isa` command becomes deterministic. Jev, called through jev-kit, runs on top as a fast extra layer. It is **on by default for the whole system** and switched off system-wide in `~/.isa/config.json` (§ 11.3). There is no per-project switch, for Jev or for ISA.
+
+### 11.1 Reliability rules
+
+1. **Correct with Jev off.** The baseline is complete on its own. With Jev off, unavailable, out of credit or slow, behaviour is exactly the baseline. Nothing needs Jev in order to be correct.
+2. **Engine deadline.** The engine kills each `jev` call at its own hard limit: 1.5 s in hooks, 3 s in commands. jev-kit's breaker does a different job: it makes calls fail fast after repeated failures. It does not bound a single call.
+3. **Add-only.** A Jev verdict can only add: turn the session ON early, or add a warning or a note. A Jev "no", a low-confidence answer or no answer always falls back to the baseline, so a wrong Jev answer never removes a check.
+4. **Advisory until calibrated.** No Jev verdict blocks anything. Each judgment can be made blocking later, one at a time, on eval data (§ 11.6).
+
+### 11.2 Judgment points
+
+| Judgment | Baseline (always on, no model call) | Jev (on by default) | Deadline | Not served |
+|---|---|---|---|---|
+| Gate (UserPromptSubmit) | Pre-filter `yes` → ON plus the ON block; `no` → OFF. For `unsure`, inject one line: *"If this asks for work with a checkable end state, write an ISA first; otherwise start your answer with `ISA: not needed — <reason>`."* At Stop, an unsure prompt needs a bound ISA or that line in the last assistant message (a string check). | Noul "is this a request for work with a checkable end state?"; ≥ 0.8 → ON plus the ON block on the prompt | 1.5 s | Baseline line |
+| Asks (`isa new`) | `isa new` makes no model call. The model writes `asks:` as verbatim spans, and lint checks each span against the logged prompts. The asks list in force at the first `isa verify` is recorded in the ledger; removing an ask afterwards needs a `refined:` row. | None (Jev can't produce text spans) | — | — |
+| Probe adequacy | A `fails-when: "<what the probe sees when the claim is false>"` field, required from E2 on every entry that can't get a red baseline (Anti, config/doc/file/decision, `(no red baseline)`). Lint checks only that it is present. Red-then-green stays the real proof. The close summary shows `fails-when` next to each "never seen failing" ISC. | One Noul per such ISC at its first `isa verify`, given the ISC, probe and `fails-when`; < 0.5 → a warning | 3 s per batch | No warning |
+| Goal / asks met (`isa close`) | `- Goal:` and `- Ask N:` lines written by the model, with their shape checked by lint | One Noul per line, shown under the close summary | 3 s | "not judged (Jev unavailable)" |
+| Waiver quote | Deterministic substring check (unchanged) | None, stays in code | — | — |
+
+Removed from the runtime: the `claude`, `pi` and `api` backends, `gate.md` and `judge/*.md`, `ISA_JUDGE`, `ISA_ADVICE`, `ISA_ADVICE_TIMEOUT` and `ISA_JUDGE_TIMEOUT`. Jev is the only judge, and the config file of § 11.3 is its only switch. The installer's 20 s UserPromptSubmit timeout drops back to the common 15 s.
+
+### 11.3 Jev on by default, one system-wide switch
+
+- **On by default** for every session and every project. Nothing has to be configured beyond jev-kit itself (`jev` on PATH and a key).
+- **The only switch is system-wide.** `~/.isa/config.json` (`$ISA_HOME/config.json`) with `{"jev": false}` turns Jev off for ISA everywhere. A missing file, unreadable JSON or a missing key means on. A broken config never stops ISA; the engine logs the parse error and carries on. jev-kit's own `jev disable [--for 2h]` also stops it, for every consumer of jev-kit.
+- **No per-project switch,** for Jev or for ISA (the user's call, 2026-10-02). A consequence to keep in mind: ISA text from every project is sent to TypeSafe, bky included. The system switch is the only way to stop that.
+- **Presets** live in this repo (`runtime/isa/jev/*.json`). The engine runs `jev run isa-<question> --consumer isa` with `JEV_KIT_PRESETS=<runtime>/isa/jev`, which comes first on jev-kit's search path. The model ID is pinned in each preset (`jev-1.13.0`).
+- **Measured on 2026-10-02:** `jev check` takes about 110 ms (CLI startup only). Two real `jev run` calls with a 3-question preset took 482 ms and 432 ms end to end, which leaves about 3× margin under the 1.5 s hook deadline.
+
+### 11.4 Credit shortage and other outages
+
+Jev credit is low, so running out is an expected state, not an edge case.
+
+- **What jev-kit does.** An API failure is returned with a non-zero exit (`4` unavailable, `5` local budget) and `unavailable: {reason, detail}`. A 401/403 is `auth` and trips the `isa` consumer's breaker at once. Other API errors, out-of-credit responses included, are `error` and trip it after 5 consecutive failures. While tripped, calls return `tripped` without touching the network. After the 60 s cooldown, one probe call decides whether to close the breaker again. The ISA engine never retries; the breaker governs the attempts.
+- **What the engine does.** Every not-served call falls back to the baseline (§ 11.2) and is logged in `judge.jsonl` (`served: false`, `reason`, `detail`, `ms`). The engine reads a credit problem from the `detail` text: `credit|balance|insufficient|payment|billing|quota|402`, case-insensitive.
+- **What the user sees.** Once per session and per kind of problem, as a hook `systemMessage` (it reaches the user directly). When the not-served call came from an `isa` command, the line goes into the command's output, and the ON block tells the model to relay any `Jev:` line to the user word for word:
+  - Credit: `Jev credit looks exhausted (<detail>). ISA keeps working on its baseline checks. To fix: top up TypeSafe credits, then run \`jev reset\`; or stop the attempts with \`jev disable\` (every jev-kit consumer) or \`"jev": false\` in ~/.isa/config.json (ISA only).`
+  - Local budget (exit 5): `Jev's daily budget for consumer "isa" is used up (<detail>). ISA keeps working on its baseline checks; raise the budget in ~/.config/jev-kit/config.json or wait for the window to roll.`
+  - Anything else (`tripped`, `error`, `auth`, `no_key`): `Jev unavailable (<reason>: <detail>). ISA keeps working on its baseline checks; \`jev status\` shows the breaker.`
+- **`isa status`** shows the last Jev state for the session (served, or the reason).
+- **Follow-up in jev-kit (separate repo):** classify an out-of-credit response (HTTP 402 or the provider's credit error) as its own `credit` reason that trips the breaker at once, like `auth`. Then neither the user nor the engine has to read the `detail` text.
+
+### 11.5 Timeout fixes from the 2026-10-02 audit
+
+The audit's finding: the gate is the only model call inside a hook; the three command calls are listed in § 11.2; the only other work on the hook path is one `git status` (5 s cap) plus a walk capped at 5,000 files.
+- **pi:** the default `ISA_HOOK_TIMEOUT_MS` goes from 5000 to 15000, matching Claude Code's 15 s. At 5 s it equalled git's own cap, so a large repo could kill the hook and fail it open (the tool call would run ungated).
+- **`isa verify` / `isa close` inside the model's Bash tool:** Claude Code stops a Bash command at 120 s by default, while a probe may run up to 600 s and `isa close` re-runs every probe in sequence. The ON block and SKILL.md tell the model to run them with a 600000 ms Bash timeout, or with `run_in_background` when the suite is slow. `isa close` prints its elapsed time. A killed run corrupts nothing (the ISA is written atomically at the end), but it leaves the ISA open.
+- **`isa new` makes no model call** (§ 11.2, asks), so it is instant and can't fail on the network.
+
+### 11.6 Calibration by reviewing real sessions
+
+There are no eval tests for the judgments. The user reviews the debug log of real sessions, and that review decides any promotion of a Jev judgment to blocking, and at what threshold. French prompts are looked at separately.
+
+**Debug log.** Every ISA step appends one JSON row to `~/.isa/_state/logs/YYYY-MM-DD.jsonl` (the local date). The engine writes it; a write failure is ignored, because a log must never block or fail a hook.
+- Common fields: `"t"` (epoch seconds), `"step"`, `"harness"`, `"session"`, `"prompt_id"`, `"project"`, `"ms"` (time the step took).
+- `"step"` is one of `session_start`, `prompt` (pre-filter verdict, mode before/after, the declaration line injected or not), `pre_tool` (tool, kind, decision `allow|deny`, reason code), `post_tool` (binding, lint error count, change counted), `stop` (problem codes, blocked or let through, the `ISA: not needed` line found or not), `jev` (question, served or not, reason/detail when not, answer, confidence, latency, whether it changed anything), and `cmd` (`new|lint|verify|close|purge-logs`: ISA path, ISCs run, pass/fail counts, exit code).
+- Prompt text and ISA text are not copied into the log. The prompt log and the ISA already hold them; the debug row refers to them by `prompt_id` and path.
+- `isa status` reads the latest `jev` row of the session to show the Jev state. This replaces `judge.jsonl`, which goes away.
+
+**Retention.** `isa purge-logs [--days N] [--dry-run]` deletes the day files whose date (from the file name, never the mtime) is more than N days old, 7 by default. **Not scheduled** for now; it is run by hand. **Never purged:** the evidence ledger, sessions, prompt logs, `errors.log` and the ISAs. They are state that open ISAs depend on (stated-goal and waiver checks read the prompt logs), not debug logs.
+
+### 11.7 Milestones
+
+- **M8, judge-free baseline:** the gate's declaration line and Stop check; `asks` written by the model plus the ledger snapshot; `fails-when` and the close-summary listing; all model calls removed from the runtime; the debug log writer (§ 11.6) on every step; the pi limit and the Bash timeout guidance; skill, ON block and examples updated. (`isa purge-logs` already exists.) Tests: every judgment point with no model available; Stop refusing an unsure prompt with neither an ISA nor the line; the whole-flow test re-run with `ISA_JUDGE=off`.
+- **M9, Jev layer:** the `~/.isa/config.json` switch, the presets, the `jev` backend with engine deadlines, add-only application, `jev` rows in the debug log, the user messages of § 11.4. Tests with a fake `jev` CLI: served, slow (killed at the deadline), exit 4 `error` with a credit `detail` (the credit message, shown once), exit 4 `tripped`, exit 5, garbled output, `"jev": false` in the config (no call made), an unreadable config (Jev stays on).
+- **M10, calibration:** review of the debug logs from real sessions (§ 11.6), with no eval tests.
+
+
 ## Decisions
 
 Taken in the spec review of 2026-10-01:
@@ -854,3 +929,13 @@ Taken in the sixth review round:
     question answered by running code stays a question.
 26. **Red is conditional in the ON block:** only behaviour/http/schema criteria get the red step,
     matching § 4.6.
+27. **No model call in the runtime by default (§ 11):** the gate, asks, probe adequacy and close
+    verdicts each have a deterministic baseline; the model-call judges move to the offline eval
+    harness. Reason: measured latency (4–60+ s) and failure under rate limits made the hook path fragile.
+28. **Jev is on by default for the whole system, and add-only (§ 11.1, § 11.3):** one switch,
+    `"jev": false` in `~/.isa/config.json`; no per-project switch for Jev or ISA (the user's call,
+    bky included). A Jev verdict can only add a check or a warning, and is advisory until calibrated.
+29. **Credit shortage is an expected state (§ 11.4):** jev-kit's breaker governs the attempts, the
+    engine falls back to the baseline, and the user gets one clear message with the actions.
+30. **Debug logs replace eval tests (§ 11.6):** every ISA step is logged per day; the user reviews
+    real sessions; `isa purge-logs` keeps 7 days, run by hand for now.
