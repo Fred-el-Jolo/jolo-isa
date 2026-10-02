@@ -66,7 +66,7 @@ def _git_fp(root, top):
         if os.path.isfile(idx):
             shutil.copy2(idx, tmp)
         env = dict(os.environ, GIT_INDEX_FILE=tmp)
-        spec = ["--", "." if rel == "." else rel]
+        spec = ["--", "." if rel == "." else rel, *changes.ISA_FILES]  # the repo's ISA files never count (§ 13.3)
         if _inside(home, root):
             spec.append(f":(exclude){os.path.relpath(home, top)}")
         if _git(["add", "-A", *spec], top, env).returncode != 0:

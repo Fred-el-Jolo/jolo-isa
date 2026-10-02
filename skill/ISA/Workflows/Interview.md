@@ -77,3 +77,7 @@ Run `Workflows/CheckCompleteness.md` with `moment: articulation` after the inter
 - **User abandons mid-interview:** the partial population is still valuable. Save what you have, leave a Decisions entry: "interview paused at <section> — N questions answered, M skipped."
 - **User answers contradict the existing ISA:** treat new answers as the canonical source. Log the contradiction in Decisions with a `refined:` prefix.
 - **User answers are aspirational rather than concrete:** push gently — "what would a test that proves that look like?" If the user can't articulate, the ISC is not yet hard-to-vary; flag in Decisions.
+
+## Quoting the user
+
+When an answer is recorded word for word (in Decisions or anywhere else), write it as `user: "<words>"` — one per line, a `"` inside written `\"`. In a repo, that form is encrypted in git; any other quote of the user would be pushed in plain text. Paraphrase otherwise.

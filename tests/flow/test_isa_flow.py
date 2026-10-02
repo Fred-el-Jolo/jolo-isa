@@ -52,12 +52,15 @@ if os.path.exists(dest):
 inp = ev.get("tool_input") or {}
 proj = os.path.realpath(os.environ["ISA_FLOW_PROJECT"])
 target = inp.get("file_path") or inp.get("notebook_path") or ""
+rt = os.path.realpath(target) if target else ""
+isa_file = rt.startswith(os.path.join(proj, ".isa") + os.sep) or rt == os.path.join(proj, "ISA.md")  # § 13: ISA, not code
 change = ev.get("tool_name") in ("Edit", "Write", "MultiEdit", "NotebookEdit") and \
-    os.path.realpath(target).startswith(proj + os.sep)
+    rt.startswith(proj + os.sep) and not isa_file
 cmd = inp.get("command") or "" if ev.get("tool_name") == "Bash" else ""
 change = change or (cmd and "todo.py" in cmd and any(s in cmd for s in (">", "sed -i", "<<", "tee ", "patch")))
 if change:
-    isas = sorted(glob.glob(os.path.join(os.environ["ISA_HOME"], "*", "*", "ISA.md")), key=os.path.getmtime)
+    isas = sorted(glob.glob(os.path.join(proj, ".isa", "*", "ISA.md")) +
+                  glob.glob(os.path.join(os.environ["ISA_HOME"], "*", "*", "ISA.md")), key=os.path.getmtime)
     if isas:
         shutil.copyfile(isas[-1], dest)
 '''
@@ -111,6 +114,7 @@ class Sandbox:
     def env(self):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("ISA_", "CLAUDE_CODE_", "CLAUDECODE"))}
         env.update(ISA_HOME=self.isa_home, ISA_SKILL_DIR=SKILL_DIR,
+                   ISA_KEY="Zmxvdy10ZXN0LWtleS1mbG93LXRlc3Qta2V5LWZsb3c=",  # the sandbox is a repo (§ 13.7)
                    ISA_FLOW_PROJECT=self.proj, ISA_FLOW_SNAPSHOT=os.path.join(self.out, "ISA.articulation.md"),
                    PATH=self.bin + os.pathsep + os.environ.get("PATH", ""), ENABLE_CLAUDEAI_MCP_SERVERS="false")
         return env
@@ -202,11 +206,14 @@ class Run:
         return {}
 
     def isas(self):
-        return sorted(glob.glob(os.path.join(self.sb.isa_home, "*", "*", "ISA.md")))
+        """Task ISAs: in the sandbox repo's `.isa/` (SPEC-v2 § 13), or under ISA_HOME."""
+        return sorted(glob.glob(os.path.join(os.path.realpath(self.sb.proj), ".isa", "*", "ISA.md")) +
+                      glob.glob(os.path.join(self.sb.isa_home, "*", "*", "ISA.md")))
 
     def ledger(self):
         rows = []
-        for p in glob.glob(os.path.join(self.sb.isa_home, "_state", "evidence", "*.jsonl")):
+        for p in glob.glob(os.path.join(self.sb.isa_home, "_state", "evidence", "*.jsonl")) + \
+                glob.glob(os.path.join(os.path.realpath(self.sb.proj), ".isa", "*", "evidence.jsonl")):
             with open(p) as f:
                 rows += [json.loads(line) for line in f if line.strip()]
         return sorted(rows, key=lambda r: r.get("t", 0))
@@ -301,7 +308,8 @@ def judge_yes(run):
     acc = subprocess.run(["bash", "-c", ACCEPT], cwd=run.sb.proj, capture_output=True, text=True)
     status = _git(["status", "--porcelain", "--untracked-files=all"], run.sb.proj).stdout.split("\n")
     changed = sorted(ln[3:] for ln in status if ln.strip() and "__pycache__" not in ln)
-    allowed = all(f == "todo.py" or f.endswith(".json") or os.path.basename(f).startswith("test") for f in changed)
+    allowed = all(f == "todo.py" or f.endswith(".json") or os.path.basename(f).startswith("test")
+                  or f in ("ISA.md", ".gitattributes") or f.startswith(".isa/") for f in changed)  # § 13: ISA files
     s.append(_stage(8, "acceptance passes, only allowed files changed", acc.returncode == 0 and allowed,
                     f"acceptance exit {acc.returncode}; changed: {changed}"))
 
@@ -338,8 +346,10 @@ def judge_no(run):
     ups = run.hook_text("UserPromptSubmit")
     line = next((m.group(0) for m in [JUDGED.search(run.final)] if m), "")
     if first.get("judge") == "jev":  # expected: Jev below the line; headless, so nobody is asked
-        went_on = first.get("outcome") == "continue" and "continue without ISA (nobody to ask)" in ups
-        stage4 = _stage(4, "below the line, headless: continued without an ISA", went_on, "UserPromptSubmit output")
+        went_on = (first.get("outcome") == "continue" and "continue without ISA (nobody to ask)" in ups) or \
+            (first.get("outcome") == "quiet" and "continue without ISA (below" in ups)  # M11.2: the quiet line
+        stage4 = _stage(4, "below the line: continued without an ISA (quiet, or headless)", went_on,
+                        f"outcome {first.get('outcome')}")
     else:
         stage4 = _stage(4, "the model judged `no` or `unsure` in its answer", line.endswith(("no", "unsure")), repr(line))
     return [
@@ -420,6 +430,8 @@ class TestIsaFlow(unittest.TestCase):
             print("\n" + report, file=sys.stderr)
             for name, sb in (("yes", yes_sb), ("no", no_sb)):  # ledger, judge log, sessions: re-gradable later
                 shutil.copytree(sb.isa_home, os.path.join(cls.out, f"isa-home.{name}"), symlinks=True)
+                if os.path.isdir(os.path.join(sb.proj, ".isa")):
+                    shutil.copytree(os.path.join(sb.proj, ".isa"), os.path.join(cls.out, f"repo-isa.{name}"))
         finally:
             shutil.rmtree(no_sb.out, ignore_errors=True)
             yes_sb.cleanup()

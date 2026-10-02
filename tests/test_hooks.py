@@ -14,6 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ISA = os.path.join(ROOT, "runtime", "bin", "isa")
 E1 = open(os.path.join(ROOT, "skill/ISA/Examples/e1-minimal.md")).read()
 CLOSED = open(os.path.join(ROOT, "skill/ISA/Examples/e3-project.md")).read()
+TEST_KEY = "dGVzdC1rZXktdGVzdC1rZXktdGVzdC1rZXktdGVzdDE="  # 32 bytes, base64
 
 
 class HookCase(unittest.TestCase):
@@ -27,8 +28,9 @@ class HookCase(unittest.TestCase):
         self.env = {k: v for k, v in os.environ.items()
                     if not k.startswith("ISA_") and k not in ("CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_ENTRYPOINT")}
         # ISA_JEV_BIN → nothing: no test reaches the real `jev` (tests/test_jev.py points it at a fake)
+        # ISA_KEY: a fixed test key, so a test project (a repo) can hold task ISAs (SPEC-v2 § 13.7)
         self.env.update(ISA_HOME=self.home, ISA_SKILL_DIR=os.path.join(ROOT, "skill/ISA"),
-                        ISA_JEV_BIN=os.path.join(self.tmp, "no-jev-here"))
+                        ISA_JEV_BIN=os.path.join(self.tmp, "no-jev-here"), ISA_KEY=TEST_KEY)
         self.sid = "s-" + os.path.basename(self.tmp)
         self.pid = "p1"
 
@@ -62,9 +64,11 @@ class HookCase(unittest.TestCase):
         return [r for r in rows if step is None or r.get("step") == step]
 
     def isa_path(self, slug="20260101-000000_t"):
-        key = subprocess.run([sys.executable, ISA, "where"], cwd=self.proj, env=self.env, text=True,
-                             capture_output=True).stdout.split()[2]
-        return os.path.join(self.home, key, slug, "ISA.md")
+        """Where `isa new` would file a task ISA of the test project (its `.isa/` since SPEC-v2 § 13)."""
+        out = subprocess.run([sys.executable, ISA, "where"], cwd=self.proj, env=self.env, text=True,
+                             capture_output=True).stdout
+        folder = next(line.split(":", 1)[1].strip() for line in out.splitlines() if line.startswith("ISA folder:"))
+        return os.path.join(folder, slug, "ISA.md")
 
     def write_isa(self, text, path=None):
         path = path or self.isa_path()

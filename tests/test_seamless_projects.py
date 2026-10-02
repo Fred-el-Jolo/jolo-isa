@@ -162,25 +162,26 @@ class TestProjects(HookCase):
         f = os.path.join(self.other, "b.py")
         self.hook("PostToolUse", tool_name="Write", tool_input={"file_path": f, "content": "x"}, tool_response={})
 
-    def test_other_repo_change_indexed(self):
+    # SPEC-v2 § 13.1: a repo ISA lives in the repo of its `root` only — another repo it touches gets nothing
+    def test_other_repo_change_not_linked(self):
         path = self.write_isa(E1)
         self.change_other()
-        with open(os.path.join(os.path.dirname(path), ".projects.json")) as f:
-            keys = json.load(f)
-        self.assertIn(self.key(self.other), keys)
+        self.assertFalse(os.path.exists(os.path.join(os.path.dirname(path), ".projects.json")))
+        self.assertFalse(os.path.exists(os.path.join(self.other, ".isa")))
+        self.assertFalse(os.path.exists(os.path.join(self.home, self.key(self.other))))
 
-    def test_ls_in_other_project_lists_isa(self):
+    def test_ls_in_other_project_lists_nothing(self):
         self.write_isa(E1)
         self.change_other()
         out = subprocess.run([sys.executable, ISA, "ls"], cwd=self.other, env=self.env, text=True,
                              capture_output=True).stdout
-        self.assertIn("20260101-000000_t", out)
+        self.assertNotIn("20260101-000000_t", out)
 
     def test_suggestion_follows_target_file(self):
         _, out, _ = self.hook("PreToolUse", tool_name="Write",
                               tool_input={"file_path": os.path.join(self.other, "b.py"), "content": "x"})
         reason = out["hookSpecificOutput"]["permissionDecisionReason"]
-        self.assertIn("/" + self.key(self.other) + "/", reason)
+        self.assertIn(os.path.basename(self.other) + "/.isa/", reason)
 
     def test_non_git_temp_cwd_ignored(self):
         self.write_isa(E1)

@@ -1,6 +1,6 @@
 # ISA v2 — design spec
 
-Status: **implemented (M1–M7, 2026-10-02)** on branch `spec-v2-review`; **§ 11 revision (judge-free baseline, Jev on by default) implemented (M8, M9)**; **§ 12 revision (judge every prompt, ask the user; reviewed 2026-10-02) implemented (M11, 2026-10-02)**; **§ 13 revision (ISAs in the repo, encrypted prompts) specified, not implemented (M12)**; the live whole-flow run `flow/20261002-125119` on `eval-results` passed 14/14 stages. It comes out of the 2026-10-01 eval session: batch
+Status: **implemented (M1–M7, 2026-10-02)** on branch `spec-v2-review`; **§ 11 revision (judge-free baseline, Jev on by default) implemented (M8, M9)**; **§ 12 revision (judge every prompt, ask the user; reviewed 2026-10-02) implemented (M11, 2026-10-02)**; **§ 13 revision (ISAs in the repo, encrypted prompts) implemented (M12, 2026-10-03)**; the live whole-flow run `flow/20261002-125119` on `eval-results` passed 14/14 stages. It comes out of the 2026-10-01 eval session: batch
 `20261001-202941` on branch `eval-results`, and the reviews of runs A (review, no ISA) and B (bug fix,
 closed ISA). Each section says what changes, the exact behaviour, where it lives (hook / engine /
 command / skill), how it fails, and how it is tested. § Milestones orders the work.
@@ -928,7 +928,7 @@ Status: built 2026-10-02 — `engine.py` (`_q1`, `_q2`, `_stop_gate`, the bindin
 
 ## 13. Revision (2026-10-02, night): ISAs live in the repo, prompts are encrypted
 
-Status: **specified, not implemented (M12)**. Missing-key behaviour (§ 13.7): **Option A chosen by the user (2026-10-03).**
+Status: **implemented (M12, 2026-10-03)** — `state.py` (repo paths), `crypt.py` / `quotes.py` (filter, key, quoting forms), `evidence.py` (ledger beside the ISA, ids, redaction, time order), `commands.py` (`isa new` setup, project ISA, `promote:`, `isa migrate`), `engine.py` (never-bound project ISA, key refusals, missing bound ISA), tests `tests/test_m12.py`. Missing-key behaviour (§ 13.7): **Option A chosen by the user (2026-10-03).** Built differently from the text below: see § 13.15.
 
 ISAs live in `~/.isa`, on one machine. The user works on several machines, wants to continue a pending task elsewhere through git, and wants a living spec per repo (Future C). Two constraints shape this section: the pushed repo must never show the user's verbatim prompts, and everything else in an ISA must stay publicly readable (diffs, reviews, merges).
 
@@ -1135,6 +1135,14 @@ Settled by the user (2026-10-03): ISAs follow branches (§ 13.4b, option a); the
 4. **Stale test after dropping the password manager:** `isa key new` no longer prints anything → test reworded (§ 13.10).
 5. **The live flow runs in a sandbox repo** and would hit the hard stop → it sets `ISA_KEY` (§ 13.10).
 
+### 13.15 Built differently (M12, 2026-10-03)
+
+1. **`anchors_to:` is a quoting form.** Test Strategy entries often anchor to `stated_goal` or an ask verbatim; such a value is encrypted too (found while building: the spec's table missed it).
+2. **The filter is registered by the first `isa` command** in a clone (`isa new|lint|verify|close`), not by a hook — hooks don't write `.git/config`. Re-checkout of encrypted files removes each unmodified file first: git doesn't rewrite a file it sees as clean.
+3. **A one-letter flag inside each encrypted value** (`V`: a whole value `clean` wrapped in quotes, `Q`: a span inside quotes the file already had) lets `smudge` restore the exact bytes.
+4. **`isa migrate` refuses without a key** (it writes HMACs into the moved ledgers); `--dry-run` works without one.
+5. **ISA_HOME keys starting with `.`** (a project under a hidden folder, e.g. `~/.cache/x`) are migrated like any other — an early version skipped them.
+
 ## Decisions
 
 Taken in the spec review of 2026-10-01:
@@ -1240,3 +1248,5 @@ Taken in the sixth review round:
 39. **No password-manager key source (2026-10-03):** `key_command` / `key_store_command` were specified in
     the third § 13 review and dropped by the user — too much complexity, not used. The key comes from
     `ISA_KEY` or `$ISA_HOME/key`; § 13.8's agent rule (no key printed into a session) stays.
+40. **M12 built (2026-10-03):** § 13 as specified, with the deviations of § 13.15 (`anchors_to:` encrypted,
+    filter registered by commands, the V/Q flag, migrate needs the key).

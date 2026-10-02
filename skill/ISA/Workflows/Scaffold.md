@@ -44,7 +44,7 @@ Run the four-signal detector on the prompt:
 | 3 | **Completion condition** | "until X" / "such that X" | "refactor until tests pass" · "ship such that the review returns no critical findings" |
 | 4 | **Structural/design directive** | explicit verb-object on the system | "design how the ISA absorbs /goal semantics" · "unify three skills into one" |
 
-**Fail-closed minimum-content rule:** if a candidate literal is under 6 tokens OR contains no propositional content ("make it good", "do better", "refactor this"), set `stated_goal: null` and log the candidate to a Decisions row. Better silent than anchoring against useless text.
+**Fail-closed minimum-content rule:** if a candidate literal is under 6 tokens OR contains no propositional content ("make it good", "do better", "refactor this"), set `stated_goal: null` and log the candidate to a Decisions row in exactly this form: `stated_goal null — candidate: "<literal>"` (the form a repo's git filter encrypts — SKILL.md § Where ISA files live). Better silent than anchoring against useless text.
 
 **Multi-literal:** if multiple candidates ("do X and Y by Z"), **first wins as `stated_goal:`**; others demote to derived Constraints with `derived_from: stated_goal compound` annotation.
 

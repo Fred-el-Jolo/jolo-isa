@@ -1,8 +1,13 @@
 """Where ISAs live and what each harness session has done. Standard library only.
 
-Layout (ISA_HOME defaults to ~/.isa):
+Layout (SPEC-v2 § 13): a git repo's ISAs live at its root, committed with it —
 
-    ~/.isa/<project-key>/<YYYYMMDD-HHMMSS>_<slug>/ISA.md    one task ISA
+    <repo>/ISA.md                                            the project ISA (kind: project)
+    <repo>/.isa/<YYYYMMDD-HHMMSS>_<slug>/ISA.md              one task ISA, its ledger beside it
+
+and everything else under ISA_HOME (default ~/.isa):
+
+    ~/.isa/<project-key>/<YYYYMMDD-HHMMSS>_<slug>/ISA.md    a task ISA of a directory outside any repo
     ~/.isa/_state/sessions/<harness>-<session>.json         binding + counters
     ~/.isa/_state/prompts/<harness>-<session>.jsonl         raw user prompts
     ~/.isa/_state/errors.log                                hook failures
@@ -60,16 +65,74 @@ def project_key(cwd):
     return key or "_root"
 
 
+def _is_repo(d):
+    return os.path.exists(os.path.join(d, ".git"))
+
+
+def repo_root(cwd):
+    """The git repo whose root holds cwd's ISAs (SPEC-v2 § 13.1), or None: no repo, or a repo rooted at
+    $HOME or holding ISA_HOME (a dotfiles work tree — its `.isa/` would be ISA_HOME itself)."""
+    root = project_root(cwd)
+    if not _is_repo(root):
+        return None
+    ih = os.path.realpath(home())
+    if root == os.path.realpath(os.path.expanduser("~")) or (ih + os.sep).startswith(root + os.sep) or ih == root:
+        return None
+    return root
+
+
 def project_dir(cwd):
+    """Where a new task ISA of cwd goes: `<repo>/.isa`, or `ISA_HOME/<project-key>` outside any repo."""
+    if not _inside_home(cwd):
+        repo = repo_root(cwd)
+        if repo:
+            return os.path.join(repo, ".isa")
     return os.path.join(home(), project_key(cwd))
 
 
-def is_isa_path(path):
-    """True for anything inside an ISA folder (the ISA itself, ephemeral slices, probes)."""
+def _inside_home(path):
+    try:
+        p, h = os.path.realpath(path or os.getcwd()), os.path.realpath(home())
+    except (TypeError, ValueError):
+        return False
+    return p == h or (p + os.sep).startswith(h + os.sep)
+
+
+def repo_isa_dir(path):
+    """`<repo>/.isa` when `path` lies inside a repo's ISA folder, else None."""
+    try:
+        p = os.path.realpath(os.path.expanduser(path))
+    except (TypeError, ValueError):
+        return None
+    d = p
+    while True:
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        if os.path.basename(d) == ".isa" and _is_repo(parent) and repo_root(parent) == parent:
+            return d
+        d = parent
+
+
+def is_project_isa(path):
+    """`<repo>/ISA.md`: the repo's living spec — never bound, never encrypted (§ 13.2, § 13.5)."""
     try:
         p = os.path.realpath(os.path.expanduser(path))
     except (TypeError, ValueError):
         return False
+    d = os.path.dirname(p)
+    return os.path.basename(p) == "ISA.md" and _is_repo(d) and repo_root(d) == d
+
+
+def is_isa_path(path):
+    """True for anything inside an ISA folder (the ISA itself, ephemeral slices, probes, the repo's ledger),
+    and for a repo's project ISA."""
+    try:
+        p = os.path.realpath(os.path.expanduser(path))
+    except (TypeError, ValueError):
+        return False
+    if repo_isa_dir(p) or is_project_isa(p):
+        return True
     h = os.path.realpath(home())
     if not (p + os.sep).startswith(h + os.sep):
         return False
@@ -79,6 +142,17 @@ def is_isa_path(path):
 
 def is_master_isa(path):
     return is_isa_path(path) and os.path.basename(path) == "ISA.md" and "_ephemeral" not in path
+
+
+def is_task_isa(path):
+    """A master ISA that can be bound to a session: every master ISA but a repo's project ISA."""
+    return is_master_isa(path) and not is_project_isa(path)
+
+
+def isa_repo(isa_path):
+    """The repo a repo-filed ISA belongs to (the parent of its `.isa/`), or None."""
+    d = repo_isa_dir(isa_path)
+    return os.path.dirname(d) if d else None
 
 
 def new_isa_path(cwd, slug="task"):
@@ -105,16 +179,22 @@ def frontmatter(path):
 
 
 def isa_home_key(isa_path):
-    """The project folder an ISA was filed under (its real location, not a link)."""
+    """The project folder an ISA was filed under (its real location, not a link); a repo ISA → its repo's key."""
     real = os.path.realpath(isa_path)
+    repo = isa_repo(real)
+    if repo:
+        return project_key(repo)
     return os.path.basename(os.path.dirname(os.path.dirname(real)))
 
 
 def note_project(isa_path, key):
     """Record that the session bound to `isa_path` changed files in project `key`. The ISA stays filed in
     its home project; every other project gets a link `~/.isa/<key>/<slug>` → the ISA folder, so
-    `isa ls` there lists it. Idempotent. → True when `key` was new for this ISA."""
+    `isa ls` there lists it. Idempotent. → True when `key` was new for this ISA.
+    A repo ISA links nowhere: it lives in the repo of its `root` only (SPEC-v2 § 13.1)."""
     folder = os.path.dirname(os.path.realpath(isa_path))
+    if isa_repo(isa_path):
+        return False
     index = os.path.join(folder, ".projects.json")
     try:
         with open(index) as f:
@@ -157,9 +237,9 @@ def is_scratch_dir(d):
     return False
 
 
-def list_isas(key=None, cwd=None):
-    """[(path, frontmatter)] for one project, newest first."""
-    d = os.path.join(home(), key) if key else project_dir(cwd)
+def list_isas(key=None, cwd=None, folder=None):
+    """[(path, frontmatter)] for one project (a key under ISA_HOME, cwd's ISA folder, or a folder), newest first."""
+    d = folder or (os.path.join(home(), key) if key else project_dir(cwd))
     out = []
     if os.path.isdir(d):
         for slug in sorted(os.listdir(d), reverse=True):

@@ -33,7 +33,7 @@ TIER_ARTICULATION = {
 CORE = ["task", "slug", "effort", "phase", "progress", "started", "updated"]
 PHASES = {"observe", "think", "plan", "build", "execute", "verify", "learn", "complete"}
 TS_KEYS = {"isc", "anchors_to", "type", "check", "threshold", "tool",
-           "property", "generator", "runs", "cwd", "risk", "root", "kind", "red", "class", "fails-when"}
+           "property", "generator", "runs", "cwd", "risk", "root", "kind", "red", "class", "fails-when", "promote"}
 FEATURE_KEYS = {"name", "description", "satisfies", "depends_on", "parallelizable"}
 # Test Strategy types a machine can't run: their ticks are self-attested (evidence.py)
 SELF_ATTESTED = {"manual", "screenshot", "eval"}
