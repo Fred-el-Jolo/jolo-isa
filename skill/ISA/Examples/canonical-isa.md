@@ -199,7 +199,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
   kind: schema
   check: quality-lead approval time per lot, last 7 days
   threshold: p95 ≤ 600s
-  tool: wrangler d1 execute beanline --command "SELECT p95 FROM review_timing_7d" --json | jq '.[0].results[0].p95'
+  tool: |-
+    wrangler d1 execute beanline --command "SELECT p95 FROM review_timing_7d" --json | jq -e '.[0].results[0].p95 <= 600'
 
 - isc: ISC-8
   anchors_to: literal
@@ -309,7 +310,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
   kind: http
   check: checkout as an unverified buyer
   threshold: 403 + body contains "verification required"
-  tool: curl -s -w '\n%{http_code}' -X POST -b "session=$UNVERIFIED" https://beanline.example.com/checkout | rg -c 'verification required|^403$'
+  tool: |-
+    out=$(curl -s -w '\n%{http_code}' -X POST -b "session=$UNVERIFIED" https://beanline.example.com/checkout) && test "$(tail -1 <<<"$out")" = 403 && grep -q 'verification required' <<<"$out"
 
 - isc: ISC-21
   anchors_to: literal
@@ -317,7 +319,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
   kind: http
   check: payouts page for a verified roaster
   threshold: HTTP 200 + a connect.stripe.com onboarding link
-  tool: curl -s -b "session=$ROASTER" https://beanline.example.com/account/payouts | rg -c 'connect\.stripe\.com'
+  tool: |-
+    test "$(curl -s -o /dev/null -w '%{http_code}' -b "session=$ROASTER" https://beanline.example.com/account/payouts)" = 200 && curl -s -b "session=$ROASTER" https://beanline.example.com/account/payouts | rg -q 'connect\.stripe\.com'
 
 - isc: ISC-22
   anchors_to: literal
@@ -360,7 +363,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
   risk: low — an email sent after the payment; no money moves in this claim
   check: handoff-card email in the roaster test inbox
   threshold: 1 message with a PDF attachment
-  tool: bun run scripts/mailbox.ts --to roaster@test --subject 'Handoff card' --json | jq '[.[] | select(.attachments[]?.type=="application/pdf")] | length'
+  tool: |-
+    bun run scripts/mailbox.ts --to roaster@test --subject 'Handoff card' --json | jq -e '[.[] | select(.attachments[]?.type=="application/pdf")] | length == 1'
 
 - isc: ISC-25.1
   anchors_to: literal
@@ -409,7 +413,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
   kind: schema
   check: retention window configured on the messages table
   threshold: ≥ 365 days
-  tool: wrangler d1 execute beanline --command "SELECT retention_days FROM retention_policy WHERE tbl='messages'" --json | jq '.[0].results[0].retention_days'
+  tool: |-
+    wrangler d1 execute beanline --command "SELECT retention_days FROM retention_policy WHERE tbl='messages'" --json | jq -e '.[0].results[0].retention_days >= 365'
 
 - isc: ISC-29
   anchors_to: "derived: buyer trust — disputes have a path"
@@ -425,7 +430,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
   kind: http
   check: protected endpoints without a session
   threshold: every one returns 401
-  tool: for p in /checkout /messages /listings; do curl -s -o /dev/null -w '%{http_code}\n' -X POST https://beanline.example.com$p; done | sort -u
+  tool: |-
+    test "$(for p in /checkout /messages /listings; do curl -s -o /dev/null -w '%{http_code}\n' -X POST https://beanline.example.com$p; done | sort -u)" = 401
 
 - isc: ISC-31
   anchors_to: "derived: buyer trust — pending lots stay private"
@@ -466,7 +472,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
   kind: behaviour
   check: content type of every image URL on the sitemap
   threshold: every line is image/webp
-  tool: bash scripts/image-format-audit.sh | sort -u
+  tool: |-
+    test "$(bash scripts/image-format-audit.sh | sort -u)" = image/webp
 
 - isc: ISC-35
   anchors_to: "derived: Constraints — public API rate limit"
@@ -603,9 +610,9 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - ISC-16: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun test test/auth.test.ts -t "magic link"` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L13)
 - ISC-17: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `curl -si "https://beanline.example.com/auth/callback?token=$TEST_TOKEN" | rg -i '^set-cookie:.*HttpOnly.*Secure.*SameSite=Lax'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L14)
 - ISC-18: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun test test/roles.test.ts -t "verification gate"` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L15)
-- ISC-21: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `curl -s -b "session=$ROASTER" https://beanline.example.com/account/payouts | rg -c 'connect\.stripe\.com'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L16)
+- ISC-21: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `test "$(curl -s -o /dev/null -w '%{http_code}' -b "session=$ROASTER" https://beanline.example.com/account/payouts)" = 200 && curl -s -b "session=$ROASTER" https://beanline.example.com/account/payouts | rg -q 'connect\.stripe\.com'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L16)
 - ISC-22: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun run scripts/checkout-test.ts --sandbox --lot-price=25000 | jq -r '.payment_intent.capture_method'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L17)
-- ISC-30: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `for p in /checkout /messages /listings; do curl -s -o /dev/null -w '%{http_code}\n' -X POST https://beanline.example.com$p; done | sort -u` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L18)
+- ISC-30: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `test "$(for p in /checkout /messages /listings; do curl -s -o /dev/null -w '%{http_code}\n' -X POST https://beanline.example.com$p; done | sort -u)" = 401` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L18)
 - ISC-36: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `! for p in follow dm friends; do curl -s -o /dev/null -w '%{http_code}\n' https://beanline.example.com/api/$p; done | grep -vqx 404` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L19)
 - ISC-37: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun test test/images.property.test.ts` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L20)
 - ISC-38: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bunx playwright test e2e/third-party.spec.ts --reporter=json | jq -e '.stats.unexpected == 0'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L21)

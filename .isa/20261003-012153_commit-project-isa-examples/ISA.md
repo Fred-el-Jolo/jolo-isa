@@ -3,9 +3,9 @@ task: "Commit, fill the project ISA, fix the examples"
 slug: 20261003-012153_commit-project-isa-examples
 effort: E2
 phase: build
-progress: 0/9
+progress: 5/9
 started: 2026-10-03T01:21:53
-updated: 2026-10-03T01:21:53
+updated: 2026-10-03T01:28:45
 root: .
 stated_goal: null
 asks: ["enc:v1:0ddf368a:1J0lQWwzBW_h1OzM8lqHdg0QPgxJxjEbEBFbnEhK8_0FAW-vDBdBOJMeUnksNWuNTwIumGdJw9YaqeA", "enc:v1:0ddf368a:A72Vpyyt1iYKEKvr9BbYBcuV35Z7x9YbqOFmEceuDvnxcy80hw-I2k4gboZyuj0N4gnhLKT-cqF7SnCLv0sSQl4DVQcY7P53eHcSpFE"]
@@ -25,11 +25,11 @@ Everything is committed and pushed to `main`, and what git stored is checked: ev
 - [ ] ISC-1: HEAD is on `origin/main` and the working tree is clean.
 - [ ] ISC-2: At HEAD, no quoting form in a committed `.isa/` file is plain text.
 - [ ] ISC-3: At HEAD, the committed root `ISA.md` holds no ciphertext.
-- [ ] ISC-4: The project ISA lints clean and states every AGENTS.md working rule as a standing claim.
-- [ ] ISC-5: `isa verify ISA.md` re-proves every standing claim.
-- [ ] ISC-6: No example has a red-exempt entry without `fails-when:`.
-- [ ] ISC-7: Every example still lints ok.
-- [ ] ISC-8: Anti: the full unit suite or the pi tests fail.
+- [x] ISC-4: The project ISA lints clean and states every AGENTS.md working rule as a standing claim.
+- [x] ISC-5: `isa verify ISA.md` re-proves every standing claim.
+- [x] ISC-6: No example has a red-exempt entry without `fails-when:`.
+- [x] ISC-7: Every example still lints ok.
+- [x] ISC-8: Anti: the full unit suite or the pi tests fail.
 - [ ] ISC-9: Anti: a git or encryption error is left unreported to the user.
 
 ## Test Strategy
@@ -114,3 +114,11 @@ Everything is committed and pushed to `main`, and what git stored is checked: ev
 
 - 2026-10-03 01:22: stated_goal null: the prompt is a short list of items; the asks hold its spans.
 - 2026-10-03 01:22: ISC-2/3 are checked on what git stored (`git show HEAD:path`), not the working tree, which is always plain by design.
+
+## Verification
+
+- ISC-4: verified 2026-10-03T01:28:45 — exit 0 in 0.06s — `isa lint ISA.md && test "$(grep -c '^- ISC-P' ISA.md)" -ge 5` (ledger: 8a1048dbff)
+- ISC-5: verified 2026-10-03T01:28:45 — exit 0 in 83.51s — `isa verify ISA.md` (ledger: 5ff78c0db3)
+- ISC-6: verified 2026-10-03T01:28:45 — exit 0 in 0.1s — `! python3 tools/lint_isa.py skill/ISA/Examples/*.md | grep -q "can't get a red baseline"` (ledger: ced7542e0f)
+- ISC-7: verified 2026-10-03T01:28:45 — exit 0 in 0.11s — `test "$(python3 tools/lint_isa.py skill/ISA/Examples/*.md | grep -c '.md. ok$')" = 12` (ledger: bd0e872d2f)
+- ISC-8: verified 2026-10-03T01:28:45 — exit 0 in 83.47s — `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install tests.test_status tests.test_evidence tests.test_shell_changes tests.test_feature_order tests.test_home_and_complete tests.test_seamless_projects tests.test_gate tests.test_commands tests.test_fingerprint tests.test_blocked tests.test_red tests.test_lint_v2 tests.test_purge tests.test_declaration tests.test_logs tests.test_ask tests.test_jev tests.test_m11 tests.test_m12 && node --test adapters/pi/test/extension.test.ts` (ledger: bc4c838b29)

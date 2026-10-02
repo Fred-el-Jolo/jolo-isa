@@ -195,7 +195,8 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   kind: behaviour
   check: p99 at 1000 rps
   threshold: < 800ms
-  tool: k6 run loadtests/p99-1000rps.js --summary-export=/tmp/p99.json && jq '.metrics.http_req_duration["p(99)"]' /tmp/p99.json
+  tool: |-
+    k6 run loadtests/p99-1000rps.js --summary-export=/tmp/p99.json && jq -e '.metrics.http_req_duration["p(99)"] < 800' /tmp/p99.json
 
 - isc: ISC-9
   type: bash
@@ -244,14 +245,16 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   kind: behaviour
   check: request-log lines without partner_id over the last 24h
   threshold: "0"
-  tool: logcli query '{app="api"} | json | partner_id=""' --since 24h --quiet | wc -l
+  tool: |-
+    test "$(logcli query '{app="api"} | json | partner_id=""' --since 24h --quiet | wc -l)" -eq 0
 
 - isc: ISC-16
   type: bash
   kind: behaviour
   check: scheduled migration emails per partner
   threshold: 6 sends (T-90, -60, -30, -14, -7, -1) for each of 47 partners
-  tool: bun scripts/email-schedule.ts --campaign graphql-migration --json | jq '[group_by(.partner_id)[] | length == 6] | all'
+  tool: |-
+    bun scripts/email-schedule.ts --campaign graphql-migration --json | jq -e '(group_by(.partner_id) | length == 47) and ([group_by(.partner_id)[] | length == 6] | all)'
 
 - isc: ISC-17
   type: screenshot
@@ -273,6 +276,7 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   check: REST shape diff vs frozen golden bodies
   threshold: zero diffs
   tool: bun test parity/rest-stability.test.ts   # daily cron
+  fails-when: "a REST response's shape differs from its recorded fixture"
 
 - isc: ISC-20
   type: bash
@@ -280,7 +284,8 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   check: depth-limit middleware blocks deep queries
   threshold: 400 on depth 9
   tool: |-
-    curl -s -o /dev/null -w '%{http_code}' -X POST https://api.apibridge.example.org/graphql -H "Authorization: Bearer $PARTNER" --data @test/queries/depth9.json
+    test "$(curl -s -o /dev/null -w '%{http_code}' -X POST https://api.apibridge.example.org/graphql -H "Authorization: Bearer $PARTNER" --data @test/queries/depth9.json)" = 400
+  fails-when: "a depth-9 query gets anything but 400"
 
 - isc: ISC-21
   type: bash
@@ -288,7 +293,8 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   check: cost-analysis middleware blocks expensive queries
   threshold: 400 on cost 1001
   tool: |-
-    curl -s -o /dev/null -w '%{http_code}' -X POST https://api.apibridge.example.org/graphql -H "Authorization: Bearer $PARTNER" --data @test/queries/cost1001.json
+    test "$(curl -s -o /dev/null -w '%{http_code}' -X POST https://api.apibridge.example.org/graphql -H "Authorization: Bearer $PARTNER" --data @test/queries/cost1001.json)" = 400
+  fails-when: "a cost-1001 query gets anything but 400"
 
 - isc: ISC-22
   type: bash
@@ -297,6 +303,7 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   check: introspection disabled in production
   threshold: 403 on __schema query with non-admin token
   tool: bun test security/introspection.test.ts
+  fails-when: "an __schema query with a non-admin token gets anything but 403"
 
 - isc: ISC-23
   type: bash
@@ -304,20 +311,23 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   check: cutover requires partner confirmation
   threshold: cutover.ts exits non-zero if any active partner_id lacks confirmed_migration_date
   tool: bun scripts/cutover.ts --dry-run --fixture test/fixtures/partner-status-missing-one.json; test $? -ne 0
+  fails-when: "the cutover dry run exits 0 although a partner lacks a confirmed migration date"
 
 - isc: ISC-24
   type: bash
   kind: behaviour
   check: flag default and per-env overrides
   threshold: default false; enabled only in the envs listed
-  tool: bun scripts/flags.ts show graphql_endpoint_enabled --json | jq '.default == false and (.overrides | length > 0)'
+  tool: |-
+    bun scripts/flags.ts show graphql_endpoint_enabled --json | jq -e '.default == false and (.overrides | length > 0)'
 
 - isc: ISC-25
   type: bash
   kind: behaviour
   check: sunset-header flag default
   threshold: "false"
-  tool: bun scripts/flags.ts show rest_sunset_headers_enabled --json | jq '.default'
+  tool: |-
+    bun scripts/flags.ts show rest_sunset_headers_enabled --json | jq -e '.default == false'
 
 - isc: ISC-26
   type: bash
@@ -325,14 +335,17 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   check: runbook exists and staging dry-run is logged
   threshold: file exists + 1 dry-run record
   tool: |-
-    test -f docs/runbooks/graphql-rollback.md && rg -c 'dry-run: staging' docs/runbooks/graphql-rollback.md
+    test -f docs/runbooks/graphql-rollback.md && rg -q 'dry-run: staging' docs/runbooks/graphql-rollback.md
+  fails-when: "the rollback runbook is missing or records no staging dry run"
 
 - isc: ISC-27
   type: bash
   kind: file
   check: CODEOWNERS entry for schema/
   threshold: 1 line
-  tool: rg -c '^/?schema/\s+@api-team' .github/CODEOWNERS
+  tool: |-
+    rg -q '^/?schema/\s+@api-team' .github/CODEOWNERS
+  fails-when: "CODEOWNERS has no api-team rule for schema/"
 
 - isc: ISC-28
   type: unit-test
@@ -369,14 +382,16 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   kind: http
   check: Accept-Migration echoed into the request log
   threshold: log line carries the sent value
-  tool: "curl -s -H 'Accept-Migration: graphql-testing' https://api.apibridge.example.org/v1/orgs/test-org >/dev/null && logcli query '{app=\"api\"} |= \"graphql-testing\"' --since 1m --quiet | wc -l"
+  tool: |-
+    curl -s -H 'Accept-Migration: graphql-testing' https://api.apibridge.example.org/v1/orgs/test-org >/dev/null && logcli query '{app="api"} |= "graphql-testing"' --since 1m --quiet | grep -q .
 
 - isc: ISC-33
   type: bash
   kind: behaviour
   check: every partner_id has all four fields
   threshold: jq prints true
-  tool: jq '[.[] | has("confirmed_migration_date") and has("last_rest_request") and has("first_graphql_request") and has("migration_pct")] | all' partner-status.json
+  tool: |-
+    jq -e '[.[] | has("confirmed_migration_date") and has("last_rest_request") and has("first_graphql_request") and has("migration_pct")] | all' partner-status.json
 
 - isc: ISC-34
   type: bash
@@ -397,14 +412,16 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   kind: http
   check: availability changelog entry with an example query
   threshold: entry present + ≥ 1 graphql code block
-  tool: curl -s https://docs.apibridge.example.org/changelog | rg -c 'GraphQL (is )?available'
+  tool: |-
+    curl -s https://docs.apibridge.example.org/changelog | rg -q 'GraphQL (is )?available'
 
 - isc: ISC-37
   type: bash
   kind: http
   check: deprecation changelog entry names the sunset date
   threshold: ≥ 1 match
-  tool: curl -s https://docs.apibridge.example.org/changelog | rg -c 'October 22, 2026'
+  tool: |-
+    curl -s https://docs.apibridge.example.org/changelog | rg -q 'October 22, 2026'
 
 - isc: ISC-38
   type: bash
@@ -424,8 +441,9 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   type: bash
   kind: schema
   check: SQL/query-builder calls inside resolvers
-  threshold: zero matches (rg exits 1)
-  tool: rg -n 'db\.(query|select|insert|update)\(' src/graphql/resolvers/
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! rg -q 'db\.(query|select|insert|update)\(' src/graphql/resolvers/
 
 - isc: ISC-41
   type: load
@@ -453,7 +471,9 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   kind: regression
   check: synthetic monitor status for /v1/orgs/:id/projects, last 7 days
   threshold: zero 404 results before 2026-10-22
-  tool: bun scripts/monitor-history.ts rest-projects --since 7d --status 404 --count
+  tool: |-
+    test "$(bun scripts/monitor-history.ts rest-projects --since 7d --status 404 --count)" -eq 0
+  fails-when: "the endpoint returned a 404 in the last 7 days"
 
 - isc: ISC-45
   type: parity-test
@@ -461,13 +481,15 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   check: PII-tagged fields reachable via GraphQL vs REST per endpoint
   threshold: GraphQL set ⊆ REST set for every endpoint
   tool: bun test parity/pii-coverage.test.ts
+  fails-when: "a GraphQL field returns PII its REST twin does not"
 
 - isc: ISC-46
   type: bash
   kind: schema
   check: T-30 staging dry-run report
   threshold: 47/47 simulated partners pass
-  tool: jq '.partners | map(select(.result=="pass")) | length' reports/cutover-dryrun-T30.json
+  tool: |-
+    jq -e '.partners | length == 47 and (map(select(.result=="pass")) | length == 47)' reports/cutover-dryrun-T30.json
 
 - isc: ISC-47
   type: bash
@@ -482,7 +504,8 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   kind: behaviour
   check: on-call schedule window
   threshold: covers 2026-10-22 through 2026-11-05
-  tool: pd schedule show graphql-launch --json | jq '.start <= "2026-10-22" and .end >= "2026-11-05"'
+  tool: |-
+    pd schedule show graphql-launch --json | jq -e '.start <= "2026-10-22" and .end >= "2026-11-05"'
 
 - isc: ISC-49
   type: bash
@@ -497,7 +520,9 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   kind: file
   check: REST routes resolved through the adapter
   threshold: 14/14 route registrations import src/rest/adapter.ts
-  tool: rg -l "from '../rest/adapter'" src/rest/routes/ | wc -l
+  tool: |-
+    test "$(rg -l "from '../rest/adapter'" src/rest/routes/ | wc -l)" -eq 14
+  fails-when: "fewer than 14 route files import the adapter"
 
 - isc: ISC-51
   type: load
@@ -512,13 +537,15 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   check: legacy direct handlers
   threshold: directory absent
   tool: test ! -d src/rest/handlers
+  fails-when: "src/rest/handlers still exists"
 
 - isc: ISC-53
   type: bash
   kind: behaviour
   check: rollout steps recorded for rest_via_adapter_enabled
   threshold: steps are multiples of 10%
-  tool: bun scripts/flags.ts history rest_via_adapter_enabled --json | jq '[.[].percent % 10 == 0] | all'
+  tool: |-
+    bun scripts/flags.ts history rest_via_adapter_enabled --json | jq -e '[.[].percent % 10 == 0] | all'
 
 - isc: ISC-54
   type: bash
@@ -546,7 +573,9 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   kind: file
   check: breaker section in the incident runbook
   threshold: ≥ 1 match
-  tool: rg -c -i '^#+ .*circuit.breaker' docs/runbooks/incident-response.md
+  tool: |-
+    rg -q -i '^#+ .*circuit.breaker' docs/runbooks/incident-response.md
+  fails-when: "the incident runbook has no circuit-breaker heading"
 
 - isc: ISC-58
   type: bash
@@ -561,14 +590,16 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   risk: low — a read-only adoption count
   check: distinct partners sending APQ hashes in production
   threshold: ≥ 3 by 2026-10-01
-  tool: logcli query '{app="api"} | json | apq="true"' --since 7d --quiet | jq -r .partner_id | sort -u | wc -l
+  tool: |-
+    test "$(logcli query '{app="api"} | json | apq="true"' --since 7d --quiet | jq -r .partner_id | sort -u | wc -l)" -ge 3
 
 - isc: ISC-60
   type: bash
   kind: schema
   check: retention rule on the access-log bucket
   threshold: 90 days
-  tool: aws s3api get-bucket-lifecycle-configuration --bucket apibridge-logs | jq '.Rules[] | select(.Filter.Prefix=="graphql/") | .Expiration.Days'
+  tool: |-
+    aws s3api get-bucket-lifecycle-configuration --bucket apibridge-logs | jq -e '.Rules[] | select(.Filter.Prefix=="graphql/") | .Expiration.Days == 90'
 
 - isc: ISC-61
   type: bash
@@ -584,6 +615,7 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   threshold: rule enabled + 0 violations
   tool: |-
     bunx eslint --rule 'apibridge/no-sequential-db-calls: error' src/graphql/
+  fails-when: "a resolver makes a fourth sequential database call (the rule reports an error)"
 
 - isc: ISC-63
   type: unit-test
@@ -628,6 +660,7 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   check: cutover with one partner above 100 REST req/day
   threshold: script exits non-zero
   tool: bun scripts/cutover.ts --dry-run --fixture test/fixtures/partner-high-rest.json; test $? -ne 0
+  fails-when: "the cutover dry run proceeds with a partner above the REST traffic limit"
 
 - isc: ISC-69
   type: bash
@@ -635,20 +668,23 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
   check: contract template exists
   threshold: exit 0
   tool: test -s legal/extended-rest-support-template.md
+  fails-when: "the contract template is missing or empty"
 
 - isc: ISC-70
   type: bash
   kind: schema
   check: partners with extended_support after cutover
   threshold: ≤ 3
-  tool: jq '[.[] | select(.extended_support == true)] | length' partner-status.json
+  tool: |-
+    jq -e '[.[] | select(.extended_support == true)] | length <= 3' partner-status.json
 
 - isc: ISC-71
   type: bash
   kind: http
   check: status-page components and their SLOs
   threshold: graphql and rest components, each with its own SLO
-  tool: curl -s https://status.apibridge.example.org/api/v2/components.json | jq '[.components[] | select(.name=="graphql" or .name=="rest") | .slo] | length'
+  tool: |-
+    curl -s https://status.apibridge.example.org/api/v2/components.json | jq -e '[.components[] | select((.name=="graphql" or .name=="rest") and .slo != null)] | length == 2'
 
 - isc: ISC-72
   type: bash
@@ -740,21 +776,21 @@ Ship the GraphQL endpoint at `api.apibridge.example.org/graphql` with full cover
 - ISC-9: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bash scripts/rest-header-audit.sh Sunset 'Wed, 22 Oct 2026 00:00:00 GMT'` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L8)
 - ISC-10: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bash scripts/rest-header-audit.sh Deprecation 'true'` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L9)
 - ISC-11: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bash scripts/rest-header-audit.sh Link '<https://docs.apibridge.example.org/graphql>; rel="successor-version"'` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L10)
-- ISC-15: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `logcli query '{app="api"} | json | partner_id=""' --since 24h --quiet | wc -l` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L11)
+- ISC-15: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `test "$(logcli query '{app="api"} | json | partner_id=""' --since 24h --quiet | wc -l)" -eq 0` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L11)
 - ISC-17: attested 2026-04-22T03:48:00 — screenshot `shots/playground-2026-03-04.png` viewed — three example tabs (`orgs`, `projects`, `createProject`) pre-populated. Verified 2026-03-04. (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L12)
 - ISC-18: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bun scripts/docs-audit.ts --require-tabs graphql,rest` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L13)
 - ISC-22: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bun test security/introspection.test.ts` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L14)
-- ISC-24: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bun scripts/flags.ts show graphql_endpoint_enabled --json | jq '.default == false and (.overrides | length > 0)'` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L15)
-- ISC-25: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bun scripts/flags.ts show rest_sunset_headers_enabled --json | jq '.default'` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L16)
-- ISC-27: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `rg -c '^/?schema/\s+@api-team' .github/CODEOWNERS` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L17)
+- ISC-24: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bun scripts/flags.ts show graphql_endpoint_enabled --json | jq -e '.default == false and (.overrides | length > 0)'` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L15)
+- ISC-25: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bun scripts/flags.ts show rest_sunset_headers_enabled --json | jq -e '.default == false'` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L16)
+- ISC-27: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `rg -q '^/?schema/\s+@api-team' .github/CODEOWNERS` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L17)
 - ISC-28: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bun test tracing/spans.test.ts` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L18)
-- ISC-32: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `curl -s -H 'Accept-Migration: graphql-testing' https://api.apibridge.example.org/v1/orgs/test-org >/dev/null && logcli query '{app="api"} |= "graphql-testing"' --since 1m --quiet | wc -l` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L19)
+- ISC-32: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `curl -s -H 'Accept-Migration: graphql-testing' https://api.apibridge.example.org/v1/orgs/test-org >/dev/null && logcli query '{app="api"} |= "graphql-testing"' --since 1m --quiet | grep -q .` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L19)
 - ISC-38: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `diff <(curl -s https://schema.apibridge.example.org/api.graphql) schema/api.graphql` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L20)
-- ISC-40: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `rg -n 'db\.(query|select|insert|update)\(' src/graphql/resolvers/` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L21)
+- ISC-40: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `! rg -q 'db\.(query|select|insert|update)\(' src/graphql/resolvers/` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L21)
 - ISC-42: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `head -c 103424 /dev/zero | tr '\0' 'a' | curl -s -o /dev/null -w '%{http_code}' -X POST --data-binary @- https://api.apibridge.example.org/graphql` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L22)
 - ISC-43: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bun test resolvers/timeout.test.ts` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L23)
 - ISC-49: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bash scripts/log-claim-check.sh graphql` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L24)
-- ISC-50: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `rg -l "from '../rest/adapter'" src/rest/routes/ | wc -l` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L25)
+- ISC-50: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `test "$(rg -l "from '../rest/adapter'" src/rest/routes/ | wc -l)" -eq 14` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L25)
 - ISC-52: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `test ! -d src/rest/handlers` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L26)
 - ISC-56: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bun test gateway/circuit-breaker.test.ts` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L27)
 - ISC-58: verified 2026-04-22T03:48:00 — exit 0 in 0.3s — `bash scripts/apq-smoke.sh` (ledger: 20260112-091500_apibridge-rest-to-graphql-migration-13b6eccca5ac#L28)

@@ -125,14 +125,16 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
   kind: behaviour
   check: distinct Logic project files in sketches/
   threshold: ≥ 30 by 2025-12-15
-  tool: ls sketches/*.logicx | wc -l
+  tool: |-
+    test "$(ls sketches/*.logicx | wc -l)" -ge 30
 
 - isc: ISC-2
   type: bash
   kind: behaviour
   check: sketch notes with all four fields
   threshold: every sketch has title, tempo, key, intent
-  tool: for n in sketches/*/notes.md; do rg -c '^(Title|Tempo|Key|Intent):' "$n"; done | sort -u
+  tool: |-
+    for n in sketches/*/notes.md; do test "$(rg -c '^(Title|Tempo|Key|Intent):' "$n")" -eq 4 || exit 1; done
 
 - isc: ISC-3
   type: bash
@@ -203,7 +205,7 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
   check: arrangement maps with bar-numbered sections
   threshold: 12 tracks × 4 sections
   tool: |-
-    rg -c '^\s*(intro|development|climax|decay): bars [0-9]+–[0-9]+' arrangement-maps.md
+    test "$(rg -c '^\s*(intro|development|climax|decay): bars [0-9]+–[0-9]+' arrangement-maps.md)" -eq 48
 
 - isc: ISC-13
   type: bash
@@ -238,7 +240,8 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
   kind: behaviour
   check: open mix notes
   threshold: 0 items tagged TODO or PENDING in mix-notes.md
-  tool: rg -c 'TODO|PENDING' mix-notes.md
+  tool: |-
+    ! rg -q 'TODO|PENDING' mix-notes.md
 
 - isc: ISC-18
   type: bash
@@ -252,7 +255,8 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
   kind: behaviour
   check: mix bus plugin chain across all 12 projects
   threshold: one distinct chain, no limiter
-  tool: python3 scripts/logic-bus-chain.py projects/*.logicx | sort -u
+  tool: |-
+    out=$(python3 scripts/logic-bus-chain.py projects/*.logicx | sort -u) && test "$(wc -l <<<"$out")" -eq 1 && ! grep -qi limiter <<<"$out"
 
 - isc: ISC-20
   type: bash
@@ -323,7 +327,8 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
   kind: behaviour
   check: ISRC tag per delivered file
   threshold: 12 unique ISRCs
-  tool: for f in mastered/16-44/*.wav; do ffprobe -v quiet -show_entries format_tags=ISRC -of csv=p=0 "$f"; done | sort -u | wc -l
+  tool: |-
+    test "$(for f in mastered/16-44/*.wav; do ffprobe -v quiet -show_entries format_tags=ISRC -of csv=p=0 "$f"; done | sort -u | wc -l)" -eq 12
 
 - isc: ISC-30
   type: bash
@@ -352,14 +357,18 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
   kind: regression
   check: final sequence track count
   threshold: "12"
-  tool: jq '.tracks | length' bounces/sequence-manifest.json
+  tool: |-
+    jq -e '.tracks | length <= 12' bounces/sequence-manifest.json
+  fails-when: "the final sequence holds more than 12 tracks"
 
 - isc: ISC-34
   type: bash
   kind: regression
   check: simultaneous audio tracks at densest bar per project
   threshold: ≤ 24 per track
-  tool: python3 scripts/logic-density.py projects/*.logicx --max
+  tool: |-
+    python3 scripts/logic-density.py projects/*.logicx --max | awk '{exit !($1 <= 24)}'
+  fails-when: "a project plays more than 24 tracks at once"
 
 - isc: ISC-35
   type: manual
@@ -373,7 +382,9 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
   kind: regression
   check: final sequence runtime
   threshold: ≤ 55:00
-  tool: python3 scripts/runtime.py bounces/sequence-manifest.json
+  tool: |-
+    python3 scripts/runtime.py bounces/sequence-manifest.json | awk -F: '{exit !($1*60+$2 <= 3300)}'
+  fails-when: "the sequence runs longer than 55:00"
 
 - isc: ISC-37
   type: bash
@@ -381,7 +392,8 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
   check: integrated LUFS per mastered track
   threshold: ≥ −16 LUFS
   tool: |-
-    for f in mastered/24-48/*.wav; do ffmpeg -nostats -i "$f" -filter_complex ebur128 -f null - 2>&1 | rg -o 'I: +\S+'; done
+    for f in mastered/24-48/*.wav; do l=$(ffmpeg -nostats -i "$f" -filter_complex ebur128 -f null - 2>&1 | rg -o 'I: +\S+' | tail -1 | awk '{print $2}'); awk -v l="$l" 'BEGIN{exit !(l >= -16)}' || exit 1; done
+  fails-when: "a mastered track measures below -16 LUFS integrated"
 
 - isc: ISC-38
   type: manual
@@ -395,7 +407,9 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
   kind: regression
   check: arrangement-map edits after sequence lock
   threshold: empty diff
-  tool: git diff --stat sequence-lock..HEAD -- arrangement-maps.md projects/*/arrangement.json
+  tool: |-
+    git diff --quiet sequence-lock..HEAD -- arrangement-maps.md 'projects/*/arrangement.json'
+  fails-when: "the arrangement changed after the sequence lock"
 
 - isc: ISC-40
   type: bash
@@ -403,7 +417,9 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
   risk: low — the album's release date, not a software release
   check: cover art final commit date
   threshold: ≤ 2026-04-10
-  tool: git log -1 --format=%as -- art/cover-3000.jpg
+  tool: |-
+    [[ "$(git log -1 --format=%as -- art/cover-3000.jpg)" < 2026-04-11 ]]
+  fails-when: "the cover art was last changed after 2026-04-10"
 ```
 
 ## Features
@@ -508,8 +524,8 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
 
 ## Verification
 
-- ISC-1: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `ls sketches/*.logicx | wc -l` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L2)
-- ISC-2: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `for n in sketches/*/notes.md; do rg -c '^(Title|Tempo|Key|Intent):' "$n"; done | sort -u` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L3)
+- ISC-1: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `test "$(ls sketches/*.logicx | wc -l)" -ge 30` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L2)
+- ISC-2: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `for n in sketches/*/notes.md; do test "$(rg -c '^(Title|Tempo|Key|Intent):' "$n")" -eq 4 || exit 1; done` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L3)
 - ISC-3: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `rg -c '^- ' candidate-list.md && git log --diff-filter=A --format=%as -- candidate-list.md` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L4)
 - ISC-4: attested 2026-04-25T19:00:00 — listening-session-notes-2025-12-30.md — "skipped impulse on candidates 9 and 14; 12 stuck" (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L5)
 - ISC-5: attested 2026-04-25T19:00:00 — `soxi -d bounces/01.wav` — 3:41; first 30s listened, opens on a −31 dBFS pad swell, no transient (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L6)
@@ -519,8 +535,8 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
 - ISC-9: attested 2026-04-25T19:00:00 — per-track stem audit 2026-02-15 — 7 of 12 final tracks contain field recording as structural element (exceeded threshold) (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L10)
 - ISC-10: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `python3 scripts/stem-audit.py --synth --require midi,audio` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L11)
 - ISC-11: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `python3 scripts/stem-audit.py --guitar --require di,amp` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L12)
-- ISC-12: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `rg -c '^\s*(intro|development|climax|decay): bars [0-9]+–[0-9]+' arrangement-maps.md` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L13)
+- ISC-12: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `test "$(rg -c '^\s*(intro|development|climax|decay): bars [0-9]+–[0-9]+' arrangement-maps.md)" -eq 48` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L13)
 - ISC-13: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `python3 scripts/duration-deltas.py 4 7 10` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L14)
 - ISC-14: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `git log -1 --format=%as sequence-lock` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L15)
-- ISC-15: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `python3 scripts/runtime.py bounces/sequence-manifest.json` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L16)
-- ISC-33: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `jq '.tracks | length' bounces/sequence-manifest.json` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L17)
+- ISC-15: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `python3 scripts/runtime.py bounces/sequence-manifest.json | awk -F: '{exit !($1*60+$2 <= 3300)}'` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L16)
+- ISC-33: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `jq -e '.tracks | length <= 12' bounces/sequence-manifest.json` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L17)

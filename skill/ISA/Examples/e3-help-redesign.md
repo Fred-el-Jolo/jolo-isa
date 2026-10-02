@@ -134,21 +134,24 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
   kind: behaviour
   check: --help line count
   threshold: ≤ 100
-  tool: duck --help | wc -l
+  tool: |-
+    test "$(duck --help | wc -l)" -le 100
 
 - isc: ISC-2
   type: bash
   kind: behaviour
   check: lines longer than 80 columns
   threshold: "0"
-  tool: duck --help | awk 'length>80' | wc -l
+  tool: |-
+    ! duck --help | awk 'length>80' | grep -q .
 
 - isc: ISC-3
   type: bash
   kind: behaviour
   check: section rule lines
   threshold: "3"
-  tool: duck --help | rg -c '^[═─]{10,}'
+  tool: |-
+    test "$(duck --help | rg -c '^[═─]{10,}')" -eq 3
 
 - isc: ISC-4
   type: bash
@@ -162,7 +165,8 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
   kind: behaviour
   check: invocation lines and gloss lines in the Examples block
   threshold: 2 lines starting with "$ duck", each followed by an indented gloss
-  tool: duck --help | sed -n '/^Examples/,/^[═─]/p' | rg -c -A1 '^  \$ duck'
+  tool: |-
+    test "$(duck --help | sed -n '/^Examples/,/^[═─]/p' | rg -c '^  \$ duck')" -eq 2
 
 - isc: ISC-6
   type: bash
@@ -176,7 +180,8 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
   kind: behaviour
   check: category header count in Flag Reference
   threshold: 1–4
-  tool: duck --help | sed -n '/^Flag Reference/,/^See Also/p' | rg -c '^[A-Z][A-Za-z ]+:$'
+  tool: |-
+    n=$(duck --help | sed -n '/^Flag Reference/,/^See Also/p' | rg -c '^[A-Z][A-Za-z ]+:$') && test "$n" -ge 1 && test "$n" -le 4
 
 - isc: ISC-8
   type: unit-test
@@ -204,7 +209,8 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
   kind: http
   check: See Also footer lines
   threshold: 3 lines matching man / https / version patterns, in that order
-  tool: duck --help | sed -n '/^See Also/,$p' | rg -c '^  (man duck|https://|duck v[0-9.]+ \([0-9a-f]{7}\))'
+  tool: |-
+    test "$(duck --help | sed -n '/^See Also/,$p' | rg -c '^  (man duck|https://|duck v[0-9.]+ \([0-9a-f]{7}\))')" -eq 3
 
 - isc: ISC-12
   type: bash
@@ -246,7 +252,8 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
   kind: behaviour
   check: render time
   threshold: mean < 50 ms
-  tool: hyperfine --warmup 3 --export-json /tmp/h.json 'duck --help' && jq '.results[0].mean*1000' /tmp/h.json
+  tool: |-
+    hyperfine --warmup 3 --export-json /tmp/h.json 'duck --help' && jq -e '.results[0].mean*1000 < 50' /tmp/h.json
 
 - isc: ISC-18
   type: manual
@@ -280,15 +287,19 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
   type: bash
   kind: file
   check: "Note: preambles"
-  threshold: zero matches (rg exits 1)
-  tool: rg '^\s*Note:' new-help.txt
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! rg -q '^\s*Note:' new-help.txt
+  fails-when: "a help line starts with Note:"
 
 - isc: ISC-23
   type: bash
   kind: file
   check: the word please
-  threshold: zero matches (rg exits 1)
-  tool: rg -wi 'please' new-help.txt
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! rg -qwi 'please' new-help.txt
+  fails-when: "the help output says please"
 
 - isc: ISC-24
   type: bash
@@ -296,6 +307,7 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
   check: flag count old vs new
   threshold: equal
   tool: test $(rg -c '^\s*--' old-help.txt) -eq $(rg -c '^\s*--' new-help.txt)
+  fails-when: "the new help lists a different number of flags than the old"
 
 - isc: ISC-25
   type: bash
@@ -303,6 +315,7 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
   check: --help, -h and help all match
   threshold: both diffs empty
   tool: diff <(duck --help) <(duck -h) && diff <(duck --help) <(duck help)
+  fails-when: "one of the three invocations prints different help"
 
 - isc: ISC-26
   type: bash
@@ -310,6 +323,7 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
   check: placeholders in the template, no literal version
   threshold: 2 placeholders found, zero literal version strings
   tool: rg -c '\{\{(VERSION|SHA)\}\}' templates/help.txt && ! rg -q 'v[0-9]+\.[0-9]+\.[0-9]+' templates/help.txt
+  fails-when: "a placeholder is missing, or a literal version string is in the template"
 
 - isc: ISC-27
   type: unit-test
@@ -317,13 +331,16 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
   check: description lines per flag
   threshold: exactly 1 for every flag
   tool: bun test test/help-layout.test.ts -t "single-line descriptions"
+  fails-when: "a flag description wraps onto a second line in the rendered help"
 
 - isc: ISC-28
   type: bash
   kind: file
   check: diff document exists and holds a diff
   threshold: ≥ 1 line starting with + or -
-  tool: rg -c '^[+-]' docs/help-redesign-diff.md
+  tool: |-
+    rg -q '^[+-]' docs/help-redesign-diff.md
+  fails-when: "the diff file shows no added or removed line"
 
 - isc: ISC-29
   type: bash
@@ -331,14 +348,17 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
   risk: low — a release-note document, not a software release
   check: release note word count
   threshold: 1–300
-  tool: wc -w < docs/release-notes/help-redesign.md
+  tool: |-
+    n=$(wc -w < docs/release-notes/help-redesign.md) && test "$n" -ge 1 && test "$n" -le 300
+  fails-when: "the release note is missing, empty, or over 300 words"
 
 - isc: ISC-30
   type: bash
   kind: behaviour
   check: recording count
   threshold: "5"
-  tool: ls research/user-tests/help-redesign-2026-04/*.mp4 | wc -l
+  tool: |-
+    test "$(ls research/user-tests/help-redesign-2026-04/*.mp4 | wc -l)" -eq 5
 
 - isc: ISC-31
   type: unit-test
@@ -351,15 +371,17 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
   type: bash
   kind: behaviour
   check: combinations appendix
-  threshold: zero matches (rg exits 1)
-  tool: duck --help | rg -i 'combination|recipes|more examples'
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! duck --help | rg -qi 'combination|recipes|more examples'
 
 - isc: ISC-33
   type: bash
   kind: behaviour
   check: commit message references the Decisions entry
   threshold: ≥ 1 match
-  tool: git log -1 --format=%B -- templates/help.txt | rg -c 'Decisions 2026-04'
+  tool: |-
+    git log -1 --format=%B -- templates/help.txt | rg -q 'Decisions 2026-04'
 
 - isc: ISC-34
   type: bash
@@ -435,8 +457,8 @@ Three Antecedent ISCs (ISC-18, 19, 20) carry the experiential contract: hard-to-
 
 ## Verification
 
-- ISC-1: verified 2026-04-15T18:00:00 — exit 0 in 0.3s — `duck --help | wc -l` (ledger: 20260411-191500_duck-help-redesign-3154461c6412#L2)
-- ISC-2: verified 2026-04-15T18:00:00 — exit 0 in 0.3s — `duck --help | awk 'length>80' | wc -l` (ledger: 20260411-191500_duck-help-redesign-3154461c6412#L3)
+- ISC-1: verified 2026-04-15T18:00:00 — exit 0 in 0.3s — `test "$(duck --help | wc -l)" -le 100` (ledger: 20260411-191500_duck-help-redesign-3154461c6412#L2)
+- ISC-2: verified 2026-04-15T18:00:00 — exit 0 in 0.3s — `! duck --help | awk 'length>80' | grep -q .` (ledger: 20260411-191500_duck-help-redesign-3154461c6412#L3)
 - ISC-4: verified 2026-04-15T18:00:00 — exit 0 in 0.3s — `duck --help | awk 'NF{print; exit}' | awk 'length<=80 && /\.$/ && gsub(/\. /,"&")==0 {print "ok"}'` (ledger: 20260411-191500_duck-help-redesign-3154461c6412#L4)
 - ISC-13: verified 2026-04-15T18:00:00 — exit 0 in 0.3s — `bash test/help-grep.sh` (ledger: 20260411-191500_duck-help-redesign-3154461c6412#L5)
 - ISC-14: verified 2026-04-15T18:00:00 — exit 0 in 0.3s — `duck --help >/dev/null; echo $?` (ledger: 20260411-191500_duck-help-redesign-3154461c6412#L6)

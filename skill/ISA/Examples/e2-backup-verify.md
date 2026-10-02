@@ -97,8 +97,9 @@ Add a `--verify` flag that, after the rsync copy step completes, walks both sour
   type: bash
   kind: behaviour
   check: no whole-file buffer reads in the hash path
-  threshold: zero matches (rg exits 1)
-  tool: rg -n 'readFileSync|Buffer\.from\(|await .*\.arrayBuffer\(\)' src/verify/
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! rg -q 'readFileSync|Buffer\.from\(|await .*\.arrayBuffer\(\)' src/verify/
 
 - isc: ISC-7
   type: performance
@@ -133,7 +134,8 @@ Add a `--verify` flag that, after the rsync copy step completes, walks both sour
   kind: behaviour
   check: JSON output has the documented keys and types
   threshold: jq prints true
-  tool: "rsync-verify --verify --json ./tmp/src ./tmp/dst | jq '(.passed|type==\"boolean\") and (.mismatches|type==\"array\") and (.missing|type==\"array\") and (.extra|type==\"array\") and (.elapsed_ms|type==\"number\")'"
+  tool: |-
+    rsync-verify --verify --json ./tmp/src ./tmp/dst | jq -e '(.passed|type=="boolean") and (.mismatches|type=="array") and (.missing|type=="array") and (.extra|type=="array") and (.elapsed_ms|type=="number")'
 
 - isc: ISC-12
   type: bash
@@ -177,7 +179,8 @@ Add a `--verify` flag that, after the rsync copy step completes, walks both sour
   kind: regression
   check: file contents never appear in any output stream or log
   threshold: 0 occurrences of the fixture sentinel
-  tool: rsync-verify --verify ./tmp/src ./tmp/dst 2>&1 | cat - ~/.cache/rsync-verify/*.log | rg -c "TEST_FIXTURE_SENTINEL_BYTES" | grep -qx 0
+  tool: |-
+    ! (rsync-verify --verify ./tmp/src ./tmp/dst 2>&1 | cat - ~/.cache/rsync-verify/*.log | rg -q "TEST_FIXTURE_SENTINEL_BYTES")
   fails-when: "the fixture's sentinel bytes show up in the output or a log"
 
 - isc: ISC-18

@@ -123,14 +123,17 @@ Ship a 1400–1600-word essay in three sections that opens with a concrete first
   kind: behaviour
   check: total words in body (frontmatter excluded)
   threshold: 1400–1600
-  tool: awk '/^---$/{c++; next} c==2' essay.md | wc -w
+  tool: |-
+    n=$(awk '/^---$/{c++; next} c==2' essay.md | wc -w) && test "$n" -ge 1400 && test "$n" -le 1600
 
 - isc: ISC-2
   type: bash
   kind: file
   check: header counts
   threshold: 3 `##` headers, 0 `###`+ headers
-  tool: rg -c '^## ' essay.md; rg -c '^###' essay.md
+  tool: |-
+    test "$(rg -c '^## ' essay.md)" = 3 && ! rg -q '^###' essay.md
+  fails-when: "the essay has other than three `##` headers, or a deeper header"
 
 - isc: ISC-3
   type: bash
@@ -178,15 +181,17 @@ Ship a 1400–1600-word essay in three sections that opens with a concrete first
   type: bash
   kind: behaviour
   check: AI-writing tics
-  threshold: zero matches (rg exits 1)
-  tool: rg -i "here's the thing|it turns out|not just .* — it's" essay.md
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! rg -qi "here's the thing|it turns out|not just .* — it's" essay.md
 
 - isc: ISC-10
   type: bash
   kind: behaviour
   check: footnotes, numeric citations, appeal-to-person phrasing
-  threshold: zero matches (rg exits 1)
-  tool: rg '\[\^?\d+\]|\bas [A-Z][a-z]+ (says|said|wrote)' essay.md
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! rg -q '\[\^?\d+\]|\bas [A-Z][a-z]+ (says|said|wrote)' essay.md
 
 - isc: ISC-11
   type: bash
@@ -200,7 +205,8 @@ Ship a 1400–1600-word essay in three sections that opens with a concrete first
   kind: behaviour
   check: first-person plural count
   threshold: ≤ 5
-  tool: rg -o -w -i 'we|us|our' essay.md | wc -l
+  tool: |-
+    test "$(rg -o -w -i 'we|us|our' essay.md | wc -l)" -le 5
 
 - isc: ISC-13
   type: manual
@@ -241,57 +247,70 @@ Ship a 1400–1600-word essay in three sections that opens with a concrete first
   type: bash
   kind: regression
   check: numbered list items
-  threshold: zero matches (rg exits 1)
-  tool: rg '^\d+\. ' essay.md
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! rg -q '^\d+\. ' essay.md
+  fails-when: "a line of the essay starts a numbered list"
 
 - isc: ISC-19
   type: bash
   kind: regression
   check: longest sentence
   threshold: ≤ 50 words
-  tool: python3 scripts/sentence-lengths.py essay.md --max
+  tool: |-
+    python3 scripts/sentence-lengths.py essay.md --max | awk '{exit !($1 <= 50)}'
+  fails-when: "the longest sentence runs past 50 words"
 
 - isc: ISC-20
   type: bash
   kind: regression
   check: famous-founder names
-  threshold: zero matches (rg exits 1)
-  tool: rg -i 'paul graham|sam altman|peter thiel|naval|elon|jeff bezos|steve jobs' essay.md
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! rg -qi 'paul graham|sam altman|peter thiel|naval|elon|jeff bezos|steve jobs' essay.md
+  fails-when: "a listed founder's name appears in the essay"
 
 - isc: ISC-21
   type: bash
   kind: regression
   check: framework-introduction phrasing
-  threshold: zero matches (rg exits 1)
-  tool: rg -i 'introducing the|the [A-Z][a-z]+ (method|framework|system)\b' essay.md
+  threshold: zero matches (the negated rg exits 0)
+  tool: |-
+    ! rg -qi 'introducing the|the [A-Z][a-z]+ (method|framework|system)\b' essay.md
+  fails-when: "the essay introduces a named method, framework or system"
 
 - isc: ISC-22
   type: bash
   kind: behaviour
   check: draft count
   threshold: ≥ 3
-  tool: ls drafts/ | wc -l
+  tool: |-
+    test "$(ls drafts/ | wc -l)" -ge 3
 
 - isc: ISC-23
   type: bash
   kind: file
   check: read-aloud Decisions row
   threshold: ≥ 1 match
-  tool: rg -c -i 'read.aloud' ISA.md
+  tool: |-
+    rg -q -i 'read.aloud' ISA.md
+  fails-when: "no read-aloud entry is recorded in the ISA"
 
 - isc: ISC-24
   type: bash
   kind: behaviour
   check: Decisions rows citing a reader before publish
   threshold: ≥ 2 distinct reader initials
-  tool: rg -o 'reader [A-Z]{2}' ISA.md | sort -u | wc -l
+  tool: |-
+    test "$(rg -o 'reader [A-Z]{2}' ISA.md | sort -u | wc -l)" -ge 2
 
 - isc: ISC-25
   type: bash
   kind: behaviour
   check: required frontmatter keys
   threshold: 4 of 4 present
-  tool: awk '/^---$/{c++; next} c==1' essay.md | rg -c '^(title|published_at|word_count|reading_time_min):'
+  tool: |-
+    test "$(awk '/^---$/{c++; next} c==1' essay.md | rg -c '^(title|published_at|word_count|reading_time_min):')" -eq 4
 
 - isc: ISC-26
   type: screenshot
@@ -306,13 +325,16 @@ Ship a 1400–1600-word essay in three sections that opens with a concrete first
   check: pull-quote length
   threshold: 1–280 characters
   tool: test -s pullquote.txt && test $(wc -m < pullquote.txt) -le 280
+  fails-when: "pullquote.txt is missing, empty, or longer than 280 characters"
 
 - isc: ISC-28
   type: bash
   kind: file
   check: candidate-cut list exists and is non-empty
   threshold: ≥ 1 list item
-  tool: rg -c '^- ' cuts-on-deck.md
+  tool: |-
+    rg -q '^- ' cuts-on-deck.md
+  fails-when: "cuts-on-deck.md lists no candidate cut"
 
 - isc: ISC-29
   type: manual
@@ -333,7 +355,9 @@ Ship a 1400–1600-word essay in three sections that opens with a concrete first
   kind: file
   check: words of preserved cuts
   threshold: ≥ 500
-  tool: wc -w < cuts.md
+  tool: |-
+    test "$(wc -w < cuts.md)" -ge 500
+  fails-when: "cuts.md holds fewer than 500 words"
 
 - isc: ISC-32
   type: bash
@@ -347,14 +371,17 @@ Ship a 1400–1600-word essay in three sections that opens with a concrete first
   kind: behaviour
   check: most-rewritten-paragraph Decisions row
   threshold: ≥ 1 match
-  tool: rg -c -i 'most rewriting|most rewritten' ISA.md
+  tool: |-
+    rg -q -i 'most rewriting|most rewritten' ISA.md
 
 - isc: ISC-34
   type: bash
   kind: file
   check: dead-end Decisions rows
   threshold: ≥ 1
-  tool: rg -c 'DEAD END' ISA.md
+  tool: |-
+    rg -q 'DEAD END' ISA.md
+  fails-when: "no DEAD END entry is recorded in the ISA"
 ```
 
 ## Features
@@ -408,8 +435,8 @@ Three Antecedent ISCs (ISC-13, 14, 15) carry the experiential-goal contract: the
 
 ## Verification
 
-- ISC-1: verified 2026-03-21T15:00:00 — exit 0 in 0.3s — `awk '/^---$/{c++; next} c==2' essay.md | wc -w` (ledger: 20260317-203000_essay-productivity-fails-founders-26d36684982e#L2)
-- ISC-2: verified 2026-03-21T15:00:00 — exit 0 in 0.3s — `rg -c '^## ' essay.md; rg -c '^###' essay.md` (ledger: 20260317-203000_essay-productivity-fails-founders-26d36684982e#L3)
+- ISC-1: verified 2026-03-21T15:00:00 — exit 0 in 0.3s — `n=$(awk '/^---$/{c++; next} c==2' essay.md | wc -w) && test "$n" -ge 1400 && test "$n" -le 1600` (ledger: 20260317-203000_essay-productivity-fails-founders-26d36684982e#L2)
+- ISC-2: verified 2026-03-21T15:00:00 — exit 0 in 0.3s — `test "$(rg -c '^## ' essay.md)" = 3 && ! rg -q '^###' essay.md` (ledger: 20260317-203000_essay-productivity-fails-founders-26d36684982e#L3)
 - ISC-5: attested 2026-03-21T15:00:00 — Opening section ends with a one-sentence thesis statement. (ledger: 20260317-203000_essay-productivity-fails-founders-26d36684982e#L4)
-- ISC-9: verified 2026-03-21T15:00:00 — exit 0 in 0.3s — `rg -i "here's the thing|it turns out|not just .* — it's" essay.md` (ledger: 20260317-203000_essay-productivity-fails-founders-26d36684982e#L5)
+- ISC-9: verified 2026-03-21T15:00:00 — exit 0 in 0.3s — `! rg -qi "here's the thing|it turns out|not just .* — it's" essay.md` (ledger: 20260317-203000_essay-productivity-fails-founders-26d36684982e#L5)
 - ISC-13: attested 2026-03-21T15:00:00 — Antecedent: the second paragraph opens on a situation most first-time founders recognize as theirs. (ledger: 20260317-203000_essay-productivity-fails-founders-26d36684982e#L6)
