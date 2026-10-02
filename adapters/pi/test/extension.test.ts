@@ -278,3 +278,13 @@ test("M11: Jev unavailable → the model judges; pi asks at settle after its `no
     assert.deepEqual(asked, ["ISA is not enabled for this prompt (model: no — a question about the code.). Continue?"])
   })
 })
+
+test("M11.1: Continue at input lets the prompt's changes through", async () => {
+  await withJev("0.2", async () => {
+    const select = async (_t: string, options: string[]) => options[0]
+    const { fire } = harness("s-m111-pass", undefined, [], { select })
+    await fire("input", { text: "commit and push", source: "interactive" })
+    await fire("before_agent_start", { prompt: "commit and push" })
+    assert.equal(fire("tool_call", { toolName: "write", input: { path: join(PROJ, "z.py"), content: "x" } }), undefined)
+  })
+})

@@ -13,7 +13,7 @@ import sys
 
 from tests.test_commands import CommandCase
 from tests.test_evidence import read
-from tests.test_hooks import E1, ISA, ROOT, HookCase
+from tests.test_hooks import CLOSED, E1, ISA, ROOT, HookCase
 from tests.test_jev import calls, setup_fake
 
 sys.path.insert(0, os.path.join(ROOT, "runtime"))
@@ -499,6 +499,136 @@ class TestLedgerChecksum(M11Case):
         rc, out = self.isa("close", path)
         self.assertNotEqual(rc, 0)
         self.assertIn("ledger", out)
+
+
+class PassCase(M11Case):
+    """M11.1: the user's Continue lets the rest of that prompt run without the ISA gate."""
+    def write(self):
+        _, out, _ = self.hook("PreToolUse", tool_name="Write",
+                              tool_input={"file_path": os.path.join(self.proj, "x.py"), "content": "x"})
+        return out
+
+    def post_write(self):
+        return self.hook("PostToolUse", tool_name="Write",
+                         tool_input={"file_path": os.path.join(self.proj, "x.py"), "content": "x"}, tool_response={})
+
+    def low_prompt(self, text="commit and push"):
+        setup_fake(self, isa_gate=0.2)
+        return self.prompt(text)
+
+    def cont(self):
+        return self.ask("Continue without ISA (Recommended)", question="ISA is not enabled for this prompt (Jev: 0.20). Continue?")
+
+    def closed(self):
+        path = self.isa_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(CLOSED)
+        self.hook("PostToolUse", tool_name="Write", tool_input={"file_path": path}, tool_response={})
+        return path
+
+
+class TestPassOff(PassCase):
+    def test_write_allowed_stays_off(self):
+        self.low_prompt()
+        self.cont()
+        self.assertNotEqual(self.decision(self.write()), "deny")
+        self.post_write()
+        self.assertEqual(self.session().get("mode", "off"), "off")
+
+
+class TestPassAfterClose(PassCase):
+    def test_write_allowed(self):
+        self.closed()
+        self.pid = "p2"
+        self.low_prompt()
+        self.cont()
+        self.assertNotEqual(self.decision(self.write()), "deny")
+
+
+class TestPassStartsAtAnswer(PassCase):
+    def test_refused_before_answer(self):
+        self.closed()
+        self.pid = "p2"
+        self.low_prompt()
+        self.assertEqual(self.decision(self.write()), "deny")
+
+
+class TestPassEndsAtNextPrompt(PassCase):
+    def test_next_prompt(self):
+        self.closed()
+        self.pid = "p2"
+        self.low_prompt()
+        self.cont()
+        self.assertNotEqual(self.decision(self.write()), "deny")
+        self.pid = "p3"
+        self.prompt("and tag it")
+        self.assertEqual(self.decision(self.write()), "deny")
+
+
+class TestPassHeadlessAndQ2(PassCase):
+    def test_headless_below_line(self):
+        self.env.update(CLAUDE_CODE_SESSION_ATTENDED="0", CLAUDE_CODE_ENTRYPOINT="sdk-cli")
+        self.closed()
+        self.pid = "p2"
+        self.low_prompt()
+        self.assertNotEqual(self.decision(self.write()), "deny")
+
+    def test_q2_never(self):
+        self.open_isa()
+        self.q2(new_task=0.1)
+        self.pid = "p2"
+        self.prompt("also handle the empty file case")
+        self.assertNotIn("pass", self.session())
+
+
+class TestPassStop(PassCase):
+    def test_no_isa_needed(self):  # OFF session: before M11.1 the write switched it ON and Stop wanted an ISA
+        self.low_prompt()
+        self.cont()
+        self.write()
+        self.post_write()
+        self.assertEqual(self.stop()[:3:2], (0, ""))
+
+
+class TestPassLogged(PassCase):
+    def test_row(self):
+        self.closed()
+        self.pid = "p2"
+        self.low_prompt()
+        self.cont()
+        self.write()
+        row = [r for r in self.log_rows("pre_tool") if r.get("tool") == "Write"][-1]
+        self.assertTrue(row.get("pass"))
+
+
+class TestPassNeedsQuestion(PassCase):
+    def test_unprompted_answer(self):
+        self.closed()
+        self.pid = "p2"
+        setup_fake(self, isa_gate=0.93)  # a yes: no question was asked for this prompt
+        self.prompt("Fix the bug in dates.py")
+        self.cont()
+        self.assertEqual(self.decision(self.write()), "deny")
+        self.assertNotIn("pass", self.session())
+
+
+class TestPassKeepsGuards(PassCase):
+    def test_tick_and_ledger(self):
+        other = self.isa_path("20250101-000000_other")  # an open ISA, not bound
+        os.makedirs(os.path.dirname(other))
+        with open(other, "w") as f:
+            f.write(self.text)
+        self.closed()
+        self.pid = "p2"
+        self.low_prompt()
+        self.cont()
+        _, out, _ = self.hook("PreToolUse", tool_name="Write",
+                              tool_input={"file_path": other, "content": self.text.replace("- [ ] ISC-1:", "- [x] ISC-1:")})
+        self.assertEqual(self.decision(out), "deny")
+        ledger = os.path.join(self.home, "_state", "evidence", "x.jsonl")
+        _, out, _ = self.hook("PreToolUse", tool_name="Bash", tool_input={"command": f"echo '{{}}' >> {ledger}"})
+        self.assertEqual(self.decision(out), "deny")
 
 
 if __name__ == "__main__":

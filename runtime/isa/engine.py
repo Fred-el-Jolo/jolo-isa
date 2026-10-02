@@ -330,9 +330,13 @@ def _is_our_question(ev):
 def _record_choice(ev, choice):
     """Store the user's answer for this prompt; `enable` switches the session ON (ON rules then apply)."""
     with state.session(ev["harness"], ev["session"]) as st:
+        if not st.get("gate"):  # only an answer to the hook's own question for this prompt counts
+            note(asked=True, choice=choice, ignored="no gate question for this prompt")
+            return {}
         st["ask_answer"] = {"pid": str(ev.get("prompt_id")), "choice": choice}
         note(asked=True, choice=choice)
         if choice != "enable":
+            st["pass"] = st["gate"].get("pid")  # the Continue pass: no ISA gate for the rest of this prompt
             return {}
         _switch_on(st, "user", "the user chose to enable ISA")
     return {"warn": "ISA: ON — you chose to enable it",
@@ -434,6 +438,7 @@ def _prompt(ev):
     with state.session(ev["harness"], ev["session"]) as st:
         st["prompt_started"] = time.time()  # Stop only checks turns where something happened after this
         st.pop("gate", None)
+        st.pop("pass", None)  # the Continue pass lasts until the next prompt (SPEC-v2 § 12.4, M11.1)
         mode = _mode(st)
         forced = mode == "on" and _switch_on(st, "override" if _mode_env() == "on" else "binding",
                                              "ISA_MODE=on" if _mode_env() == "on" else "open ISA bound (v1 session)")
@@ -533,6 +538,8 @@ def _q1_ask(ev, mode, bound, score):
                "options": [ASK_CONTINUE, ASK_ENABLE]}
         return dict(out, context=pre.strip()) if pre else out
     note(outcome="continue")
+    with state.session(ev["harness"], ev["session"]) as st:
+        st["pass"] = str(ev.get("prompt_id"))  # nobody to ask: the prompt goes on, as after a Continue
     why = "nobody to ask" if why_not == "no-ui" else "asking is off"
     out = {"warn": f"ISA gate — {label} → continue without ISA ({why})"}
     return dict(out, context=pre.strip()) if pre else out
@@ -616,6 +623,9 @@ def _pre_tool(ev):
         return {"deny": refused}
     _note_creating(ev)
     if kind == "read":
+        return {}
+    if st.get("pass"):  # the user chose Continue for this prompt: no ISA gate until the next prompt
+        note(**{"pass": True})
         return {}
     cwd = ev.get("cwd")
     if _mode(st) == "off":
@@ -995,7 +1005,7 @@ def _post_tool(ev):
         elif kind == "write" or (kind == "unknown" and tool in classify.SHELL_TOOLS and _script_changed(ev, st)):
             _count_change(st, now, out)
             touched = _changed_projects(ev, kind)
-            if was_off and _switch_on(st, "change", "a command changed project files"):
+            if was_off and not st.get("pass") and _switch_on(st, "change", "a command changed project files"):
                 warn = "ISA: ON — a command changed project files; the turn needs an ISA before it ends"
         if kind == "unknown" and tool in classify.SHELL_TOOLS:
             warn = _ledger_check(ev, st, out) or warn

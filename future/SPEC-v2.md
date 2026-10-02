@@ -831,6 +831,8 @@ Not guaranteed: if the model skips the question, Stop refuses once and then lets
 
 Guaranteed while there is a UI: the extension asks, not the model.
 
+**The Continue pass (M11.1).** When the user picks Continue for a Q1 prompt — or nobody can be asked and Jev answered below the line — that prompt runs without the ISA gate until the next prompt is judged: changes are allowed, they don't switch the session ON (even a session already ON after a closed ISA), and Stop asks for no ISA. The pass starts at the answer, not at the verdict (a write before it is gated as before); only an answer to the hook's own question for this prompt counts; Q2 never grants one; the ownership and ledger guards still apply; calls let through carry `"pass": true` in the debug log. With Jev unavailable and nobody to ask, the model's verdict arrives only in its answer, so no pass is granted.
+
 **Nobody to ask** (`claude -p`: `CLAUDE_CODE_SESSION_ATTENDED=0` / `CLAUDE_CODE_ENTRYPOINT=sdk-cli`; pi without a UI; a failed question tool): continue without ISA, logged. `{"ask_without_isa": false}` (§ 11.3's file) also turns the question off: not settled then means continue without ISA.
 
 ### 12.5 Who judged — in the session and in the log
