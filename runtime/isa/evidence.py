@@ -20,8 +20,9 @@ ledger line for it passed and was made with the probe as it reads now (same `too
 import hashlib
 import json
 import os
+import socket
 
-from . import lint, state
+from . import lint, quotes, state
 
 SELF_ATTESTED = lint.SELF_ATTESTED
 TAIL_CHARS = 800
@@ -34,7 +35,11 @@ def ledger_dir():
 
 
 def ledger_path(isa_path):
+    """A repo ISA's ledger sits beside it, committed with it (`<repo>/.isa/<slug>/evidence.jsonl`, § 13.3);
+    any other ISA's lives under ISA_HOME/_state/evidence/."""
     real = os.path.realpath(isa_path)
+    if state.repo_isa_dir(real):
+        return os.path.join(os.path.dirname(real), "evidence.jsonl")
     slug = os.path.basename(os.path.dirname(real))[:60]
     return os.path.join(ledger_dir(), f"{slug}-{hashlib.sha256(real.encode()).hexdigest()[:12]}.jsonl")
 
@@ -45,6 +50,8 @@ def is_ledger_path(path):
     except (TypeError, ValueError):
         return False
     d = os.path.realpath(os.path.join(state.home(), "_state", "evidence"))
+    if os.path.basename(p) == "evidence.jsonl" and state.repo_isa_dir(p):
+        return True
     return p == d or p.startswith(d + os.sep)
 
 
@@ -52,15 +59,61 @@ def tool_sha(tool):
     return hashlib.sha256(str(tool).strip().encode()).hexdigest()
 
 
+MACHINE = hashlib.sha256(socket.gethostname().encode()).hexdigest()[:8]
+REDACTED = ("tail", "evidence")  # free text a probe or the model wrote: the user's words are taken out (§ 13.3)
+
+
+def row_id(row):
+    """A row's id: the first 10 hex of sha256 of the row without its id. Generated Verification lines cite
+    it — a line number would shift when a union merge interleaves two machines' rows (SPEC-v2 § 13.3)."""
+    body = {k: v for k, v in row.items() if k != "id"}
+    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:10]
+
+
 def record(isa_path, rows):
-    os.makedirs(ledger_dir(), exist_ok=True)
-    with open(ledger_path(isa_path), "a") as f:
+    """Append rows (each gets `machine` and `id`; the user's verbatim words are redacted from free text).
+    → the rows' ids, in order."""
+    words = None
+    ids = []
+    path = ledger_path(isa_path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a") as f:
         for row in rows:
+            row = dict(row)
+            if any(isinstance(row.get(k), str) and row[k] for k in REDACTED):
+                if words is None:
+                    words = _user_words(isa_path)
+                for k in REDACTED:
+                    row[k] = quotes.redact(row.get(k), words) if k in row else row.get(k)
+                row = {k: v for k, v in row.items() if v is not None or k not in REDACTED}
+            repo = state.isa_repo(isa_path)
+            if repo:  # paths differ between machines: a committed ledger stores them repo-relative (§ 13.3)
+                for k in ("root", "cwd"):
+                    if isinstance(row.get(k), str) and os.path.isabs(row[k]):
+                        row[k] = _rel(row[k], repo)
+            row.setdefault("machine", MACHINE)
+            row["id"] = row_id(row)
+            ids.append(row["id"])
             f.write(json.dumps(row) + "\n")
+    return ids
+
+
+def _rel(p, repo):
+    rp, rr = os.path.realpath(p), os.path.realpath(repo)
+    return os.path.relpath(rp, rr) if rp == rr or rp.startswith(rr + os.sep) else p
+
+
+def _user_words(isa_path):
+    try:
+        with open(isa_path, encoding="utf-8") as f:
+            return quotes.spans(f.read())
+    except OSError:
+        return []
 
 
 def rows(isa_path):
-    """Every ledger row of an ISA, in order (unparseable lines skipped)."""
+    """Every ledger row of an ISA, oldest first: sorted by `t`, file order breaking ties — a union merge of
+    two machines' ledgers interleaves rows, so file order alone is not time order (SPEC-v2 § 13.3)."""
     out = []
     try:
         with open(ledger_path(isa_path)) as f:
@@ -73,7 +126,12 @@ def rows(isa_path):
                     out.append(row)
     except OSError:
         pass
-    return out
+    return sorted(out, key=lambda r: r.get("t") if isinstance(r.get("t"), (int, float)) else 0)
+
+
+def find(isa_path, rid):
+    """The row with this id, or None."""
+    return next((r for r in rows(isa_path) if r.get("id") == rid), None)
 
 
 def latest(isa_path):

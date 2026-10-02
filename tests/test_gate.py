@@ -282,7 +282,7 @@ class TestPromptContext(GateHookCase):
         row = self.rows()[-1]
         self.assertEqual(row["text"], "go")
         self.assertEqual(row["cwd"], self.proj)
-        self.assertEqual(row["project"], os.path.basename(os.path.dirname(os.path.dirname(self.isa_path()))))
+        self.assertEqual(row["project"], state.project_key(self.proj))
         self.assertTrue(row["context"].endswith("I propose to review utils.py for bugs."))
         self.assertEqual(len(row["context"]), state.CONTEXT_CHARS)
 

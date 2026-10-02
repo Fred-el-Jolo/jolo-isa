@@ -33,9 +33,10 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import time
 
-from . import changes, classify, config, evidence, isafile, jev, lint, logs, problems, rules, skills, state
+from . import changes, classify, config, crypt, evidence, isafile, jev, lint, logs, problems, rules, skills, state
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STALE_NUDGE_EVERY = 5
@@ -63,22 +64,28 @@ def _goal_ok_file(isa_path):
 
 
 def _lint(isa_path, moment, harness, session):
-    """Lint with the verbatim-goal check. A goal verified once (in any session) stays verified."""
+    """Lint with the verbatim-goal check. A goal verified once (in any session) stays verified: for a repo ISA as
+    a keyed `quote-verified` ledger row (it travels with the repo, § 13.4), otherwise in a local digest file."""
     fm = state.frontmatter(isa_path)
     goal = fm.get("stated_goal") if isinstance(fm.get("stated_goal"), str) else None
     prompts = None
-    if goal:
-        digest = hashlib.sha256(goal.encode()).hexdigest()
-        try:
-            verified = open(_goal_ok_file(isa_path)).read().strip() == digest
-        except OSError:
-            verified = False
-        if not verified:
+    if goal and not goal.startswith("enc:v1:"):
+        if state.isa_repo(isa_path):
             prompts = state.prompts(harness, session)
-            if any(goal in p for p in prompts):
-                with open(_goal_ok_file(isa_path), "w") as f:
-                    f.write(digest + "\n")
+            if rules.quote_ok(isa_path, goal, prompts):
                 prompts = None
+        else:
+            digest = hashlib.sha256(goal.encode()).hexdigest()
+            try:
+                verified = open(_goal_ok_file(isa_path)).read().strip() == digest
+            except OSError:
+                verified = False
+            if not verified:
+                prompts = state.prompts(harness, session)
+                if any(goal in p for p in prompts):
+                    with open(_goal_ok_file(isa_path), "w") as f:
+                        f.write(digest + "\n")
+                    prompts = None
     try:
         text = isafile.normalize(open(isa_path, encoding="utf-8").read())
     except OSError:
@@ -133,6 +140,27 @@ def _project_listing(cwd, exclude=None):
 def _bound(st):
     p = st.get("bound")
     return p if p and os.path.isfile(p) else None
+
+
+def _missing_bound(st):
+    """The bound repo ISA a checkout removed (another branch, § 13.4b): the session keeps the path, and the
+    binding holds again when the file comes back."""
+    p = st.get("bound")
+    return p if p and not os.path.isfile(p) and state.repo_isa_dir(p) else None
+
+
+def _branch(path):
+    try:
+        r = subprocess.run(["git", "-C", os.path.dirname(path) if os.path.isdir(os.path.dirname(path)) else
+                            state.project_root(os.path.dirname(os.path.dirname(os.path.dirname(path)))),
+                            "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() or "?"
+    except (OSError, subprocess.TimeoutExpired):
+        return "?"
+
+
+def _not_on_branch(path):
+    return f"ISA: the bound ISA {os.path.basename(os.path.dirname(path))} is not on this branch ({_branch(path)})"
 
 
 def _isa_touched(st):
@@ -339,6 +367,7 @@ def _record_choice(ev, choice):
             st["pass"] = st["gate"].get("pid")  # the Continue pass: no ISA gate for the rest of this prompt
             return {}
         _switch_on(st, "user", "the user chose to enable ISA")
+        st["needs_isa_since"] = ev.get("prompt_id")
     return {"warn": "ISA: ON — you chose to enable it",
             "context": f"The user chose {ASK_ENABLE}: write the ISA and do the work under it.\n\n" + _on_block(ev.get("cwd"))}
 
@@ -377,7 +406,8 @@ def _needs_isa(st, bound, pid):
     """True when an ON turn may not end yet for lack of an ISA; "scaffold" when the clarify-first
     scaffold may end it (only on the prompt that created it); False otherwise."""
     if not bound:
-        return True
+        # a bound ISA a checkout removed: no `no-isa` block, unless this prompt was judged work (§ 13.4b)
+        return not (_missing_bound(st) and st.get("needs_isa_since") != pid)
     if _new_task_pending(st, bound):
         return True
     phase = state.frontmatter(bound).get("phase")
@@ -451,6 +481,12 @@ def _prompt(ev):
     if not str(prompt or "").strip():
         return {}
     if mode == "on" and not bound:
+        with state.session(ev["harness"], ev["session"]) as st:
+            missing = _missing_bound(st)
+        if missing:  # judged as with no ISA bound; the binding returns with the file
+            res = _q1(ev, "off", None, prompt, context)
+            res["warn"] = (_not_on_branch(missing) + "\n" + res.get("warn", "")).strip()
+            return res
         return {"context": "ISA: ON — no ISA bound yet: write it before the work (`isa new <slug> --goal \"…\"`)."}
     if _mode_env() == "on":
         return {"context": _status_line(bound) + (". A new task gets a new ISA (or a reopen of this finished one)."
@@ -533,8 +569,13 @@ def _q1_yes(ev, mode, bound, label):
                     "context": f"{_status_line(bound)}. This prompt is a new task: new ISA, or reopen the finished "
                                "one (`phase: learn`, `iteration`, `resumed_at`, a `refined:` Decision)."}
         _switch_on(st, "jev", f"Jev reads this as work ({label})")
+        st["needs_isa_since"] = pid  # this prompt is work: an ISA is required (read by Stop, § 13.4b)
         note(outcome="on", mode_after="on")
-    return {"warn": f"ISA gate — {label} → ON", "context": _on_block(cwd)}
+    out = {"warn": f"ISA gate — {label} → ON", "context": _on_block(cwd)}
+    if state.repo_root(cwd) and not crypt.key():  # Option A (§ 13.7): this repo's task ISA will need the key
+        out["warn"] += f"\nISA: {crypt.NO_KEY}"
+        out["context"] += f"\n\nISA: {crypt.NO_KEY} Tell the user; `isa new` refuses until they do."
+    return out
 
 
 def _not_settled(ev, mode, judge, score=None, ask=True):
@@ -648,6 +689,9 @@ def _pre_tool(ev):
     refused = _ownership_refusal(ev)
     if refused:
         return {"deny": refused}
+    refused = _key_refusal(ev)
+    if refused:
+        return {"deny": refused}
     _note_creating(ev)
     if kind == "read":
         return {}
@@ -700,6 +744,24 @@ def _note_creating(ev):
     if new:
         with state.session(ev["harness"], ev["session"]) as s:
             s["creating"] = (s.get("creating", []) + new)[-10:]
+
+
+KEY_CMD = re.compile(r"(^|[\s;&|(/])isa\s+key\s+(new|import|export)\b")
+
+
+def _key_refusal(ev):
+    """SPEC-v2 § 13.8: the model never handles the key (only `isa key status`); a repo task ISA can't be
+    written without one (Option A, § 13.7)."""
+    tool, ti = ev.get("tool", ""), ev.get("tool_input") or {}
+    if tool in classify.SHELL_TOOLS and KEY_CMD.search(str(ti.get("command", ""))):
+        return ("ISA: `isa key new|import|export` is the user's to run, in their own terminal (or as `! isa key …`) "
+                "— the key must never pass through the model. `isa key status` is fine.")
+    if tool in classify.FILE_TOOLS and not crypt.key():
+        for p in classify.tool_paths(ti):
+            full = os.path.join(ev.get("cwd") or "", os.path.expanduser(p))
+            if state.is_task_isa(full) and state.isa_repo(full):
+                return f"ISA: {crypt.NO_KEY}"
+    return None
 
 
 def _snapshot_unknown(ev, kind, cwd):
@@ -962,10 +1024,23 @@ def _may_bind(st, path, ev):
     return isinstance(resp, dict) and resp.get("type") == "create"
 
 
+def _project_feedback(path):
+    """An edit of the repo's project ISA: content only, never bound; quotes of the user are refused there."""
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError:
+        return {}
+    bad = crypt.lint_project(text)
+    if bad:
+        return {"context": f"Project ISA {_tilde(path)}: it never holds the user's words (it is committed unencrypted, "
+                           "SPEC-v2 § 13.5) — rewrite these in your own words:\n" + _fmt(bad)}
+    return {"context": f"Project ISA {_tilde(path)} edited (not bound to this session)."}
+
+
 def _printed_isa(output):
     """The ISA.md path `isa new` printed (the last one in the output), or None."""
     for m in reversed(re.findall(r"(?<!\S)(/\S+/ISA\.md)\b", str(output or ""))):
-        if state.is_master_isa(m) and os.path.isfile(m):
+        if state.is_task_isa(m) and os.path.isfile(m):
             return os.path.realpath(m)
     return None
 
@@ -1002,7 +1077,11 @@ def _post_tool(ev):
     kind, isa_paths = classify.classify(tool, ti, cwd, ev.get("temp_dirs", ()))
     if kind == "isa-cmd":
         return _post_isa_cmd(ev)
-    masters = [p for p in isa_paths if state.is_master_isa(os.path.join(cwd or "", os.path.expanduser(p)))]
+    full = [os.path.join(cwd or "", os.path.expanduser(p)) for p in isa_paths]
+    masters = [p for p, f in zip(isa_paths, full) if state.is_task_isa(f)]  # the project ISA never binds (§ 13.2)
+    project_edits = [f for f in full if state.is_project_isa(f)]
+    if project_edits and not masters:
+        return _project_feedback(project_edits[-1])
     now = time.time()
     out, touched, warn = [], [], ""
     with state.session(ev["harness"], ev["session"]) as st:

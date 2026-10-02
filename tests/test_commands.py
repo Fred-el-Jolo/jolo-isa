@@ -90,9 +90,9 @@ class TestVerifyTicks(CommandCase):
         self.assertEqual(self.fm(path)["root"], os.path.realpath(self.proj))
         lines = isafile.generated_lines(read(path))
         self.assertRegex(lines["ISC-2"], r"^- ISC-2: verified \S+ — exit 0 in [\d.]+s — `test -f .*/ok2` "
-                                         r"\(ledger: 20260101-000000_t-[0-9a-f]{12}#L\d+\)$")
-        n = int(lines["ISC-2"].rsplit("#L", 1)[1].rstrip(")"))
-        row = json.loads(read(evidence.ledger_path(path)).splitlines()[n - 1])
+                                         r"\(ledger: [0-9a-f]{10}\)$")
+        rid = lines["ISC-2"].rsplit("(ledger: ", 1)[1].rstrip(")")
+        row = evidence.find(path, rid)
         self.assertEqual((row["isc"], row["ok"], row["kind"], row["run"]), ("ISC-2", True, "verify", "green"))
         self.assertIn("re-read the ISA before editing it", out)
         self.assertEqual(lint.lint(path, "articulation").errors, 0)
@@ -134,7 +134,7 @@ class TestAttest(CommandCase):
         self.assertEqual(rc, 0, out)
         self.assertTrue(self.box(path, "ISC-3"))
         self.assertRegex(isafile.generated_lines(read(path))["ISC-3"],
-                         r"^- ISC-3: attested \S+ — the output reads right \(ledger: .*#L\d+\)$")
+                         r"^- ISC-3: attested \S+ — the output reads right \(ledger: [0-9a-f]{10}\)$")
         rc, out = self.isa("verify", path, "ISC-2", "--attest", "trust me")
         self.assertEqual(rc, 1)
         self.assertIn("has a runnable probe", out)
@@ -283,7 +283,7 @@ class TestNew(CommandCase):
         self.assertTrue(path.endswith("_shout-flag/ISA.md"))
         fm = self.fm(path)
         self.assertEqual((fm["root"], fm["stated_goal"], fm["asks"], fm["phase"], fm["effort"]),
-                         (os.path.realpath(self.proj), LONG_PROMPT, [], "observe", "E3"))
+                         (".", LONG_PROMPT, [], "observe", "E3"))  # root: repo-relative (§ 13.3)
         self.assertTrue(fm["slug"].endswith("_shout-flag"))
         _, hout, _ = self.hook("PostToolUse", tool_name="Bash", tool_input={"command": "isa new shout-flag"},
                                tool_response={"stdout": out, "stderr": ""})
@@ -326,14 +326,14 @@ class TestNewRefusals(CommandCase):
         first = out.strip().splitlines()[-1]
         rc, out = self.isa("new", "second", cwd=os.path.dirname(first))
         self.assertEqual(rc, 0, out)
-        self.assertEqual(self.fm(out.strip().splitlines()[-1])["root"], os.path.realpath(self.proj))
+        self.assertEqual(self.fm(out.strip().splitlines()[-1])["root"], ".")  # repo-relative (§ 13.3)
         bare = self.isa_path("20260101-000009_bare")
         os.makedirs(os.path.dirname(bare))
         with open(bare, "w") as f:
             f.write(self.text)  # a v1 ISA: no root
         rc, out = self.isa("new", "third", cwd=os.path.dirname(bare))
-        self.assertEqual(rc, 2)
-        self.assertIn("no root", out)
+        self.assertEqual(rc, 0, out)  # inside a repo's .isa/, the repo itself is the root (§ 13.1)
+        self.assertEqual(self.fm(out.strip().splitlines()[-1])["root"], ".")
 
 
 class TestArticulationFirst(CommandCase):
@@ -497,7 +497,10 @@ class TestAsksSnapshot(CommandCase):
         self.verify(path, "ISC-2")
         self.verify(path, "ISC-2")
         snaps = [r["asks"] for r in evidence.rows(path) if r.get("kind") == "asks"]
-        self.assertEqual(snaps, [["Add a --shout flag to greet.py", "with a test"]])  # once, at the first verify
+        self.assertEqual(len(snaps), 1)  # once, at the first verify
+        # a repo ISA's ledger is committed: the snapshot holds keyed HMACs, never the words (SPEC-v2 § 13.5)
+        self.assertTrue(all(s.startswith("hmac:v1:") for s in snaps[0]) and len(snaps[0]) == 2)
+        self.assertNotIn("shout", read(evidence.ledger_path(path)))
         self.write_isa(read(path).replace(', "with a test"]', "]"), path)
         rc, out = self.isa("lint", path)
         self.assertIn("ask removed from `asks:` without a `refined:`", out)

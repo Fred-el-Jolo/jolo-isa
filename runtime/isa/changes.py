@@ -16,13 +16,15 @@ import subprocess
 import time
 
 GIT_TIMEOUT = 5
+# a repo's own ISA files (SPEC-v2 § 13.3): written by `isa` commands and hooks, never a project change
+ISA_FILES = (":(top,exclude).isa", ":(top,exclude)ISA.md")
 WALK_CAP = 5000  # files looked at under one untracked directory, or in a non-git project
 
 
 def _git_status(root):
     try:
-        r = subprocess.run(["git", "-C", root, "status", "--porcelain=v1", "-z"], capture_output=True,
-                           timeout=GIT_TIMEOUT)
+        r = subprocess.run(["git", "-C", root, "status", "--porcelain=v1", "-z", "--", ".", *ISA_FILES],
+                           capture_output=True, timeout=GIT_TIMEOUT)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if r.returncode != 0:
