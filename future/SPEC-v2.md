@@ -831,6 +831,8 @@ Not guaranteed: if the model skips the question, Stop refuses once and then lets
 
 Guaranteed while there is a UI: the extension asks, not the model.
 
+**The quiet line (M11.2).** Below `jev_quiet` (default 0.3, kept below `jev_gate`), Jev's "not work" is clear enough: the user is not asked, the prompt goes on with the Continue pass, and the user line names the score (`ISA gate — Jev 0.16 → continue without ISA (below 0.30)`, logged as `outcome: quiet`). The question stays for the band between `jev_quiet` and `jev_gate`. Reason: in one session the question came four times for "commit and push" and "what's next" (Jev 0.16–0.47) and was answered Continue every time. Only Jev's score has a quiet line; a prompt the model judges keeps its line and the question.
+
 **The Continue pass (M11.1).** When the user picks Continue for a Q1 prompt — or nobody can be asked and Jev answered below the line — that prompt runs without the ISA gate until the next prompt is judged: changes are allowed, they don't switch the session ON (even a session already ON after a closed ISA), and Stop asks for no ISA. The pass starts at the answer, not at the verdict (a write before it is gated as before); only an answer to the hook's own question for this prompt counts; Q2 never grants one; the ownership and ledger guards still apply; calls let through carry `"pass": true` in the debug log. With Jev unavailable and nobody to ask, the model's verdict arrives only in its answer, so no pass is granted.
 
 **Nobody to ask** (`claude -p`: `CLAUDE_CODE_SESSION_ATTENDED=0` / `CLAUDE_CODE_ENTRYPOINT=sdk-cli`; pi without a UI; a failed question tool): continue without ISA, logged. `{"ask_without_isa": false}` (§ 11.3's file) also turns the question off: not settled then means continue without ISA.
@@ -874,10 +876,11 @@ What M11 builds on these facts:
 `~/.isa/config.json`, all keys optional:
 
 ```json
-{"jev": true, "ask_without_isa": true, "jev_gate": 0.8, "jev_doubt": 0.5}
+{"jev": true, "ask_without_isa": true, "jev_gate": 0.8, "jev_quiet": 0.3, "jev_doubt": 0.5}
 ```
 
 - `jev_gate` is the Q1/Q2 line (§ 12.2).
+- `jev_quiet` is the Q1 quiet line (M11.2): below it, no question. A value at or above `jev_gate` falls back to 0.3.
 - `jev_doubt` is the advisory line of § 11.2: a red-exempt probe Jev rates below it gets a warning at `isa verify`, and a goal or ask below it is flagged "check it" at `isa close`.
 - Out-of-range or non-numeric values fall back to the defaults and are noted in the debug log.
 
@@ -1017,3 +1020,6 @@ Taken in the sixth review round:
     format, `judge: none` for an unanswered Q2, `ledger-changed` cleared only by a full passing `isa verify`,
     file creation read in PreToolUse). Writing `fails-when` into the canonical example exposed two probes there
     that could never fail (`… | sort -u`, a bare `jq`); both were tightened.
+37. **M11.1 / M11.2 (2026-10-02):** a user's Continue lifts the ISA gate for the rest of that prompt (the
+    Continue pass, § 12.4) — ON stayed sticky over the user's answer before; below `jev_quiet` nobody is
+    asked at all, after four needless questions in one session.

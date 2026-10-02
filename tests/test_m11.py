@@ -95,7 +95,7 @@ class TestQ1Yes(M11Case):
         setup_fake(self, isa_gate=0.1)
         _, out, _ = self.prompt("Fix the bug in dates.py so the tests pass")  # a work verb: Jev decides now
         self.assertNotIn("[ISA: ON", self.ctx(out))
-        self.assertEqual(self.msg(out), "ISA gate — Jev 0.10 → asking you")
+        self.assertEqual(self.msg(out), "ISA gate — Jev 0.10 → continue without ISA (below 0.30)")
         self.pid = "p2"
         self.prompt("hi")  # no greeting list either: judged like any prompt
         self.assertEqual(len(calls(self, "isa-gate")), 2)
@@ -513,11 +513,11 @@ class PassCase(M11Case):
                          tool_input={"file_path": os.path.join(self.proj, "x.py"), "content": "x"}, tool_response={})
 
     def low_prompt(self, text="commit and push"):
-        setup_fake(self, isa_gate=0.2)
+        setup_fake(self, isa_gate=0.31)
         return self.prompt(text)
 
     def cont(self):
-        return self.ask("Continue without ISA (Recommended)", question="ISA is not enabled for this prompt (Jev: 0.20). Continue?")
+        return self.ask("Continue without ISA (Recommended)", question="ISA is not enabled for this prompt (Jev: 0.31). Continue?")
 
     def closed(self):
         path = self.isa_path()
@@ -629,6 +629,42 @@ class TestPassKeepsGuards(PassCase):
         ledger = os.path.join(self.home, "_state", "evidence", "x.jsonl")
         _, out, _ = self.hook("PreToolUse", tool_name="Bash", tool_input={"command": f"echo '{{}}' >> {ledger}"})
         self.assertEqual(self.decision(out), "deny")
+
+
+class TestQuietLine(PassCase):
+    """Below `jev_quiet` (0.3) the prompt continues silently, with the Continue pass."""
+    def test_silent_continue(self):
+        self.closed()
+        self.pid = "p2"
+        setup_fake(self, isa_gate=0.16)
+        _, out, _ = self.prompt("commit and push")
+        self.assertEqual(self.msg(out), "ISA gate — Jev 0.16 → continue without ISA (below 0.30)")
+        self.assertNotIn("AskUserQuestion", self.ctx(out))
+        self.assertNotEqual(self.decision(self.write()), "deny")
+        self.assertEqual(self.stop()[:3:2], (0, ""))
+        self.assertEqual(self.log_rows("prompt")[-1]["outcome"], "quiet")
+
+
+class TestQuietBand(PassCase):
+    def test_band_asks(self):
+        setup_fake(self, isa_gate=0.47)
+        _, out, _ = self.prompt("what's next?")
+        self.assertEqual(self.msg(out), "ISA gate — Jev 0.47 → asking you")
+        self.assertIn("AskUserQuestion", self.ctx(out))
+
+
+class TestQuietConfig(PassCase):
+    def test_fallbacks(self):
+        setup_fake(self, isa_gate=0.4)
+        for bad in ("x", 0.9):
+            self.config(jev_quiet=bad)
+            _, out, _ = self.prompt("hmm")
+            self.assertEqual(self.msg(out), "ISA gate — Jev 0.40 → asking you", bad)
+            self.assertIn("jev_quiet", self.log_rows("prompt")[-1]["config_error"])
+            self.sid += "x"
+        self.config(jev_quiet=0.5)
+        _, out, _ = self.prompt("hmm")
+        self.assertEqual(self.msg(out), "ISA gate — Jev 0.40 → continue without ISA (below 0.50)")
 
 
 if __name__ == "__main__":

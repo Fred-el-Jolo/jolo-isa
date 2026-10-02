@@ -15,7 +15,7 @@ from tests.test_hooks import ISA, HookCase, setup_fake
 
 class TestHookRows(HookCase):
     def test_one_row_per_event(self):
-        setup_fake(self, isa_gate=0.05)
+        setup_fake(self, isa_gate=0.5)
         self.hook("SessionStart", source="startup")
         self.hook("UserPromptSubmit", prompt="hi")
         self.env["FAKE_JEV_P_isa_gate"] = "0.93"
@@ -33,7 +33,7 @@ class TestHookRows(HookCase):
             self.assertIsInstance(r["t"], float)
             self.assertIn("decision", r)
         hi, fix = rows[1], rows[2]
-        self.assertEqual((hi["judge"], hi["score"], hi["outcome"], hi["mode_before"]), ("jev", 0.05, "ask", "off"))
+        self.assertEqual((hi["judge"], hi["score"], hi["outcome"], hi["mode_before"]), ("jev", 0.5, "ask", "off"))
         self.assertEqual((fix["score"], fix["outcome"], fix["mode_after"]), (0.93, "on", "on"))
         self.assertEqual((rows[3]["tool"], rows[3]["decision"]), ("Write", "deny"))
         self.assertEqual(rows[5]["decision"], "block")

@@ -492,8 +492,35 @@ def _q1(ev, mode, bound, prompt, context):
     score = res["answer"]
     note(score=score)
     label = f"Jev {score:.2f}"
-    out = _q1_yes(ev, mode, bound, label) if score >= line else _q1_ask(ev, mode, bound, score)
+    if score >= line:
+        out = _q1_yes(ev, mode, bound, label)
+    elif score < _quiet_line(line):
+        out = _q1_quiet(ev, mode, bound, score, _quiet_line(line))
+    else:
+        out = _q1_ask(ev, mode, bound, score)
     return _with_outage(ev, res, out)
+
+
+def _quiet_line(gate):
+    """`jev_quiet`: below it Jev's "not work" is clear enough not to ask (M11.2). Must sit below the gate."""
+    quiet, err = config.number("jev_quiet")
+    if quiet >= gate:
+        quiet, err = config.DEFAULTS["jev_quiet"], f"jev_quiet: {quiet} is not below jev_gate {gate}; using 0.3"
+    if err:
+        note(config_error=err)
+    return quiet
+
+
+def _q1_quiet(ev, mode, bound, score, quiet):
+    """Clearly not work: no question; the prompt goes on with the Continue pass."""
+    _not_settled(ev, mode, "jev", score, ask=False)
+    with state.session(ev["harness"], ev["session"]) as st:
+        st["pass"] = str(ev.get("prompt_id"))
+    note(outcome="quiet")
+    out = {"warn": f"ISA gate — Jev {score:.2f} → continue without ISA (below {quiet:.2f})"}
+    if mode == "on" and bound:
+        out["context"] = f"{_status_line(bound)}. This prompt was read as no new work (Jev {score:.2f})."
+    return out
 
 
 def _q1_yes(ev, mode, bound, label):
@@ -510,9 +537,9 @@ def _q1_yes(ev, mode, bound, label):
     return {"warn": f"ISA gate — {label} → ON", "context": _on_block(cwd)}
 
 
-def _not_settled(ev, mode, judge, score=None):
+def _not_settled(ev, mode, judge, score=None, ask=True):
     """Record that this prompt was not settled as work; → the ask mode (or None and why not)."""
-    ask, why_not = _ask_mode(ev)
+    ask, why_not = _ask_mode(ev) if ask else (None, "quiet")
     with state.session(ev["harness"], ev["session"]) as st:
         st.pop("needs_isa_since", None)
         st["gate"] = {"pid": str(ev.get("prompt_id")), "judge": judge, "ask": ask, "score": score}

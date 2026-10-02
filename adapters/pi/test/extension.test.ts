@@ -59,12 +59,12 @@ function isaPath() {
 }
 
 test("the gate: Jev below the line asks; a Jev yes injects the ON block once", async () => {
-  await withJev("0.05", async () => {
+  await withJev("0.5", async () => {
     const select = async (_t: string, options: string[]) => options[0]
     const { fire, notes } = harness("s-protocol", undefined, [], { select })
     await fire("input", { text: "hello", source: "interactive" })
     assert.equal(await fire("before_agent_start", { prompt: "hello" }), undefined)
-    assert.ok(notes.some((n) => /^ISA gate — Jev 0\.05 → asking you/.test(n)))
+    assert.ok(notes.some((n) => /^ISA gate — Jev 0\.50 → asking you/.test(n)))
     process.env.FAKE_JEV_P = "0.93"
     await fire("input", { text: "Fix the bug in dates.py so the tests pass", source: "interactive" })
     const on = await fire("before_agent_start", { prompt: "Fix the bug in dates.py so the tests pass" })
@@ -286,5 +286,16 @@ test("M11.1: Continue at input lets the prompt's changes through", async () => {
     await fire("input", { text: "commit and push", source: "interactive" })
     await fire("before_agent_start", { prompt: "commit and push" })
     assert.equal(fire("tool_call", { toolName: "write", input: { path: join(PROJ, "z.py"), content: "x" } }), undefined)
+  })
+})
+
+test("M11.2: below jev_quiet, pi asks nothing at input (quiet)", async () => {
+  await withJev("0.1", async () => {
+    let called = 0
+    const select = async (_t: string, options: string[]) => { called += 1; return options[0] }
+    const { fire, notes } = harness("s-m112-quiet", undefined, [], { select })
+    await fire("input", { text: "commit and push", source: "interactive" })
+    assert.equal(called, 0)
+    assert.ok(notes.some((n) => /continue without ISA \(below 0\.30\)/.test(n)))
   })
 })

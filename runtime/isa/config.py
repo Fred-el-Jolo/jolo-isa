@@ -3,6 +3,8 @@
     {"ask_without_isa": true}    ask the user before a prompt goes on without an ISA (default: true)
     {"jev": true}                Jev judgments through jev-kit (default: true; false = no Jev call at all)
     {"jev_gate": 0.8}            Jev's Q1/Q2 line: at or above it, an ISA is required (SPEC-v2 § 12.2)
+    {"jev_quiet": 0.3}           below it (and below jev_gate), a prompt goes on without an ISA silently —
+                                 no question, the Continue pass granted (SPEC-v2 § 12.4, M11.2)
     {"jev_doubt": 0.5}           the advisory line: a red-exempt probe, a goal or an ask Jev rates below it
                                  is flagged (§ 11.2)
 
@@ -14,7 +16,7 @@ import os
 
 from . import state
 
-DEFAULTS = {"ask_without_isa": True, "jev": True, "jev_gate": 0.8, "jev_doubt": 0.5}
+DEFAULTS = {"ask_without_isa": True, "jev": True, "jev_gate": 0.8, "jev_quiet": 0.3, "jev_doubt": 0.5}
 
 
 def path():

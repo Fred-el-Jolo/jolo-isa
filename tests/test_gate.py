@@ -1,6 +1,7 @@
 """SPEC-v2 M1 / § 12: the per-prompt gate and the session's ISA mode.
 
-No test calls a real model: a fake `jev` judges — 0.93 for work prompts, 0.05 for small talk (SMALL_TALK).
+No test calls a real model: a fake `jev` judges — 0.93 for work prompts, 0.50 for small talk (SMALL_TALK:
+in the asking band, above `jev_quiet`, so the write-while-OFF rules are what these tests see).
 Run: python3 -m unittest tests.test_gate
 """
 import json
@@ -47,7 +48,7 @@ class GateHookCase(HookCase):
         setup_fake(self)
 
     def prompt(self, text, **kw):
-        self.env["FAKE_JEV_P_isa_gate"] = "0.05" if text in SMALL_TALK else "0.93"
+        self.env["FAKE_JEV_P_isa_gate"] = "0.50" if text in SMALL_TALK else "0.93"
         return self.hook("UserPromptSubmit", prompt=text, **kw)
 
     def msg(self, out):
@@ -70,7 +71,7 @@ class TestOffStaysSilent(GateHookCase):
         self.assertEqual(self.ctx(self.hook("SessionStart", source="startup")[1]), "")
         _, out, _ = self.prompt("hi")
         self.assertEqual(self.ctx(out), "")
-        self.assertEqual(self.msg(out), "ISA gate — Jev 0.05 → continue without ISA (asking is off)")
+        self.assertEqual(self.msg(out), "ISA gate — Jev 0.50 → continue without ISA (asking is off)")
         self.assertEqual(self.session()["mode"], "off")
         self.hook("PreToolUse", tool_name="Read", tool_input={"file_path": "/etc/hosts"})
         self.assertEqual(self.stop()[:3:2], (0, ""))
@@ -240,7 +241,7 @@ class TestV1SessionFile(GateHookCase):
     def test_nothing_bound_reads_off(self):
         self.write_session({"bound": None, "stop_blocks": {}})
         _, out, _ = self.prompt("hi")
-        self.assertEqual(self.msg(out), "ISA gate — Jev 0.05 → asking you")
+        self.assertEqual(self.msg(out), "ISA gate — Jev 0.50 → asking you")
         self.assertEqual(self.session()["mode"], "off")
 
 
