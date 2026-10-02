@@ -157,7 +157,7 @@ check that it's true · **SELF** = honest self-attestation, listed to the user a
 | 5 | External prerequisites probed before execution; missing → blocked or deferred in Decisions | SELF | — |
 | 6 | Material ambiguity resolved before building (≤3 questions, or a stated reasoned default); `context_sufficient` set | CHECK (lint at articulation: E2+ requires `context_sufficient: true` before the first change) | — |
 | 7 | A reported bug is reproduced before its suspect code is read; the fix goes upstream when one fix kills the class | SELF + bypass row | Bypass row `repro-bypass: pure-additive \| non-isolable \| repro would cause damage — <why>` in Decisions |
-| 8 | No claim closes without tool evidence of the right type | HOOK (runner ticks, § 4) + CHECK (`kind:` rules and downgrade check, § 6); the `kind:` choice itself is SELF at articulation until `probe_adequacy` (§ 7) | Type list incl. web/UI → real browser or HTTP probe, appearance → image viewed, motion → frame scrub |
+| 8 | No claim closes without tool evidence of the right type | HOOK (runner ticks, § 4) + CHECK (`kind:` rules and downgrade check, § 6); the `kind:` choice itself is SELF, backed by `fails-when:` and Jev's probe check at the first `isa verify` (§ 11.2) | Type list incl. web/UI → real browser or HTTP probe, appearance → image viewed, motion → frame scrub |
 | 9 | A defect that is an instance of a class closes only after one search enumerated every sibling | SHAPE + SELF | Decisions line `class-sweep: <class> — N siblings via <probe>; M fixed, K tombstoned`; `isa close` requires it when an ISC is tagged `class:` |
 | 10 | Every explicit ask was met, skipped with a reason, or surfaced; scope narrowed only when ratified; no claim softened mid-run; a depth directive is an ask | SHAPE + SELF (`isa close` requires one `- Ask N:` line per entry in `asks:`) | `asks:` frontmatter list (extracted by `isa new`, § 3.2) + `- Ask N: met\|skipped — <why>\|surfaced` lines; a missing line is unmet → close refused |
 | 11 | The builder never rubber-stamps its own build: high-blast work gets an independent second look or a row saying why not; contradictions surfaced (two re-calls, then escalate); findings dispositioned | SHAPE + SELF (§ 6.3) | `risk: high` or E4+ triggers it; `second-look:` row; findings `adopted (diff) \| rebutted (reason) \| deferred (task)` |
@@ -190,11 +190,11 @@ gate.
 | `## Verification` `[DEFERRED-VERIFY]` lines | ✔ | |
 | `## Verification` `- Goal:` and `- Ask N:` lines | ✔ (judgment), checked by `isa close` | |
 | Frontmatter `task`, `effort`, `phase` (any value except `complete`), `context_sufficient`, `interview_*`, `iteration`, `resumed_at`, `frozen` | ✔ | |
-| Frontmatter `asks` | additions ✔; a removal needs a `refined:` Decisions row | ✔ extracted at creation |
+| Frontmatter `asks` | ✔ written by the model as verbatim spans (lint checks them); after the first `isa verify` a removal needs a `refined:` Decisions row | snapshot at the first `isa verify` |
 | Frontmatter `slug`, `started`, `stated_goal` (+ `_source`) | written by `isa new`; afterwards edited only on an explicit user revision (lint checks the logged prompt) | ✔ at creation |
 | Frontmatter `progress`, `phase: complete`, `root` | | ✔ |
 | Frontmatter `updated` | either | either |
-| `~/.isa/_state/**` (ledger incl. `blocked` rows, sessions, judge log) | | ✔ (v1 rule kept) |
+| `~/.isa/_state/**` (ledger incl. `blocked` rows, sessions, debug log) | | ✔ (v1 rule kept) |
 
 `updated` is not checked: the engine sets it on its own writes and the model may set it. Making it
 engine-owned would need a hook writing the ISA after every model edit (§ 0.3).
@@ -230,10 +230,10 @@ called it, so there is no session default. Exit codes: 0 ok · 1 check failed ·
 #### `isa new <slug> [--tier E1..E5] [--goal "<span>"]`
 - Creates `~/.isa/<project>/<YYYYMMDD-HHMMSS>_<slug>/ISA.md` with frontmatter: `task` (empty quoted,
   for the model), `slug`, `effort` (default E3), `phase: observe`, `progress: 0/0`, `started`,
-  `updated`, `root` (project root of cwd), `stated_goal` and `asks`.
+  `updated`, `root` (project root of cwd), `stated_goal`, and `asks: []` (the model writes them).
 - When `isa new` is run inside `ISA_HOME` (cwd in an ISA folder), `root` comes from that ISA's own
   `root:` field, never the ISA folder itself, which has no git root and would make probes run there.
-- `isa new` has no session, so it fills `stated_goal` and `asks` as a best effort from the project's
+- `isa new` has no session, so it fills `stated_goal` as a best effort from the project's
   most recent logged prompt (which can belong to another session in the same project). v1 prompt
   rows are `{t, id, text}` per session file, so v2 adds `cwd` and `project` to each prompt row
   (`_prompt` knows both); that is what makes "the project's prompts" a lookup.
@@ -243,12 +243,9 @@ called it, so there is no session default. Exit codes: 0 ok · 1 check failed ·
     with propositional content; "go" or "fix these" fail it); otherwise `null`, plus a comment
     telling the model to select a verbatim span. `--goal` spans must pass the minimum-content rule
     too (exit 1 otherwise).
-  - `asks`: extracted from that prompt, with the previous assistant message as context (§ 1.2), by
-    the judge (`asks_extract`, § 7). On a judge error the list is left empty with a comment, and the
-    model writes it.
-  - The context reaches `isa new` through the log: `_prompt`, which has the hook input,
-    stores the tail of the previous assistant message in the prompt row
-    (`{t, id, text, cwd, project, context}`), and `isa new` reads it from the row it uses.
+  - `asks`: left empty; the model writes them (each explicit ask, copied verbatim from the prompt),
+    lint checks each against the logged prompts of the ISA's sessions, and the first `isa verify`
+    snapshots the list (§ 11.2). `isa new` makes no model call.
 - The real check happens at binding: the binding hook checks the span against this session's logged
   prompts (v1 `stated_goal` rule) and reports a mismatch as lint feedback, and Stop refuses while it
   stands.
@@ -306,8 +303,8 @@ called it, so there is no session default. Exit codes: 0 ok · 1 check failed ·
    `isa lint --close` clean; one `- Goal: yes — …` line (latest Goal line is `yes`); one
    `- Ask N:` line per `asks:` entry, where a missing `- Ask N:` line counts as unmet and refuses the
    close; § 6.3 `second-look:` when it applies; § 2 rule 9 `class-sweep:` when it applies.
-3. Optional judge (§ 7): `goal_met` and `asks_met` advisory verdicts recorded in the ledger; not
-   blocking in v2.
+3. Jev's advice (§ 11.2): one verdict on the goal and one per ask line, recorded in the ledger and
+   shown under the summary; never blocking.
 4. On success writes `phase: complete`, `progress`, `updated` and prints the **close summary**:
    proven claims (with probe + stamp), attested claims, `(no red baseline)` claims, `risk: low`
    reasons, type/kind downgrades, changed by probe, waived, deferred, regressed-then-fixed, asks.
@@ -315,8 +312,8 @@ called it, so there is no session default. Exit codes: 0 ok · 1 check failed ·
 5. On failure changes nothing, prints each failure, exit 1.
 
 #### `isa status [--json]`
-- Unchanged, plus `mode` (`on|off`, reason), open `blocked` items (from the ledger), and the latest
-  judge verdict.
+- Unchanged, plus `mode` (`on|off`, reason), open `blocked` items (from the ledger), the latest gate
+  decision and the last Jev call (from the debug log, § 12.5).
 
 ### 3.3 Enforcement in hooks
 
@@ -461,8 +458,8 @@ The `#L<n>` reference lets a reader (or lint) check the line against the ledger.
   (never an error — an error would block every change, and its only fix, `red: exempt`, is written by
   the model, so it would add friction without a check). `isa close` lists it.
 - **Known limit:** a probe that greps for text the change will add is red before and green after, so
-  it passes this rule. That case is caught by § 6.1 (`behaviour` can't be a grep) and, later, by the
-  probe-adequacy judge (§ 7).
+  it passes this rule. That case is caught by § 6.1 (`behaviour` can't be a grep) and, as advice, by
+  Jev's probe check (§ 11.2).
 
 ---
 
@@ -470,21 +467,19 @@ The `#L<n>` reference lets a reader (or lint) check the line against the ledger.
 
 | Function | Change |
 |---|---|
-| `_prompt` | Gate (§ 1.2) while OFF or while the bound ISA is `complete` (→ `needs_isa_since`, § 1.3); logs `cwd` and `project` with the prompt; mode switch, ON block on the OFF → ON transition, user-visible mode line. The fit advice is removed |
+| `_prompt` | Gate (§ 12.2) while OFF or while the bound ISA is `complete` (→ `needs_isa_since`, § 1.3); logs `cwd` and `project` with the prompt; mode switch, ON block on the OFF → ON transition, user-visible mode line. The fit advice is removed |
 | `_session_start` | OFF/undecided: nothing. ON: ON block + status + open `blocked` items + Goal/open ISCs after compaction (v1 content) |
 | `_pre_tool` | `isa-cmd` → allow. OFF + write → switch ON + refuse. OFF + unknown → allow with the change check (snapshot here, verdict in `_post_tool`, § 1.4). ON: v1 gate + ownership rules (§ 3.3); the pending-tick refusal is **removed** (the runner ticks); no red-baseline gate (§ 4.6) |
 | `_tick_gate` | Replaced by the ownership check: the model can't tick at all |
 | `_post_tool` | OFF: an `unknown` call that changed project files switches ON (`mode_source: change`). ON: tick-related feedback removed; lint feedback kept; 5-change nudge kept; `isa-cmd`: mtime refresh, and binding of the path `isa new` printed; any binding switches the session ON (§ 1.3); new nudge: failed `isa verify` → "claim wrong or code wrong?" (rule 14) |
 | `_stop` | ON + no bound ISA, or `needs_isa_since` with no ISA bound after it → block once with the two-exit text (§ 1.4), checked before the "nothing happened this turn" early return; the scaffold exit only on the creating prompt; hook-side lint (§ 3.1); no fingerprint work (§ 4.2); a turn let through with problems open → `blocked` ledger row with item codes (§ 4.5) |
-| `ISA_JUDGE_CHILD` | Every event → `{}` |
 
 Adapters (the context of § 1.2 needs plumbing on both sides):
 - Claude Code: `_claude_in` (`cli.py`) forwards transcript_path from the hook input into the engine
   event; `_prompt` reads the last assistant message from that JSONL file.
-- pi: `before_agent_start` already carries the prompt event and `agent_before_settle` the Stop. Two
-  changes: the `prompt` engine call uses `ISA_PROMPT_TIMEOUT_MS` (§ 1.2) instead of the 5 s default,
-  and it passes the tail of the last assistant message from the session (today it sends only
-  `{prompt}`).
+- pi: the prompt is judged at the `input` event (§ 12.4) and `agent_before_settle` carries the Stop;
+  every engine call uses the one `ISA_HOOK_TIMEOUT_MS` limit (15 s), and the prompt and Stop calls
+  pass the tail of the last assistant message from the session.
 
 ---
 
@@ -550,30 +545,24 @@ session files whose `bound` is the ISA in `~/.isa/_state/sessions/` (v2 adds a `
 to the session file so a session that later switched ISA still counts). A waiver with no matching
 quote is a lint error (a warning for ISAs started before v2).
 
+### 6.6 Rules added in M8 (§ 11.2)
+
+- **`fails-when:`** from E2, on every mechanical Test Strategy entry whose ISC can't get a red
+  baseline (an `Anti:` ISC, a `kind:` without the red step, `red: exempt`): what the probe sees when
+  the claim is false. Lint checks only that it is there; `isa close` lists it.
+- **`asks` verbatim:** each `asks:` entry must be a byte-for-byte span of a prompt of the ISA's
+  sessions; after the first `isa verify` snapshot, a removal needs a `refined:` row.
+
 ---
 
-## 7. Judge interface (item #6, beyond the gate)
+## 7. Judge interface
 
-`runtime/isa/judge.py`:
+The M1–M7 judge (a Haiku-backed model call with its question templates) is gone. What replaced it:
+- **The gate** (Q1 "is this work?", Q2 "continuation or new task?"): Jev, or the running model when Jev is unavailable, with the user deciding whatever is not a yes (§ 12).
+- **Asks:** written by the model, checked by lint (§ 11.2, § 6.6).
+- **Probe adequacy, goal and asks at close:** Jev's advisory checks at the first `isa verify` and at `isa close`, never blocking (§ 11.2–11.3), thresholds in the config (§ 12.8).
 
-```python
-def judge(question: str, payload: dict, *, backend=None, timeout=None) -> dict:
-    """→ {"verdict": "yes"|"no"|"unsure", "reason": str, "source": "...", "ms": int, ...}"""
-```
-
-Questions (each a template under `runtime/isa/judge/`):
-
-| Question | Called from | Effect in v2 |
-|---|---|---|
-| `gate` (§ 1.1) | UserPromptSubmit | Decides the mode (blocking) |
-| `asks_extract`: "list each explicit ask in this prompt, verbatim" | `isa new` | Fills `asks:`; the model may add, a removal needs a `refined:` row |
-| `probe_adequacy`: "does this probe, as written, fail when ISC-N is false?" | `isa lint` at articulation, once per (ISC, tool_sha), cached | Warning only |
-| `goal_met`: "does the result described by the Verification lines deliver the stated goal?" | `isa close` | Recorded + shown; not blocking |
-| `asks_met`: "is each ask's line honest given the ISA?" | `isa close` | Recorded + shown; not blocking |
-
-Time limits: `gate` and `asks_extract` use `ISA_JUDGE_TIMEOUT` (12 s), since the gate runs inside a hook. The three advisory questions use `ISA_ADVICE_TIMEOUT` (default 60 s): they run in commands, and a batched `probe_adequacy` over 7 probes was measured past 12 s on 2026-10-02.
-
-Promotion from advisory to blocking is a later decision, made on eval data (false-positive rate).
+Promotion of any advisory judgment to blocking is decided on the review of real-session logs (§ 11.6).
 
 ---
 
@@ -592,50 +581,36 @@ Promotion from advisory to blocking is a later decision, made on eval data (fals
   Test Strategy entry, regenerate Verification lines in the v2 format, quote the user in `waived:`
   rows, and add `root:`, `asks:` and `second-look:` rows where the rules require them.
   `tools/lint_isa.py skill/ISA/Examples/*.md` must stay all `ok`.
-- **Installer:** a separate timeout for `UserPromptSubmit` (20 s), `ISA_JUDGE` and
-  `ISA_PROMPT_TIMEOUT_MS` documented, the `Bash(isa:*)` permission kept.
+- **Installer:** one 15 s limit for every ISA hook (§ 11.5), the `Bash(isa:*)` permission kept.
 - **AGENTS.md:** § Enforcement rewritten from this spec; "read-only advice" text removed.
 
 ---
 
 ## 9. Whole-flow test
 
-`tests/flow/test_isa_flow.py`: stdlib only, opt-in (`ISA_FLOW_LIVE=1`), one live Claude Code
-session (Sonnet 5.5) in a sealed sandbox (fresh git project, private `ISA_HOME`, repo skill and
-runtime, the eval runner's isolation flags), `ISA_JUDGE=claude`. Two prompts in **two separate
-sessions**:
+`tests/flow/test_isa_flow.py`: stdlib only, opt-in (`ISA_FLOW_LIVE=1`), live Claude Code sessions (Sonnet 5.5) in a sealed sandbox (fresh git project, private `ISA_HOME`, repo skill and runtime, the eval runner's isolation flags). Jev is on when `jev` is installed (the verdict records `"jev": "on"`). The sessions run headless (`claude -p`), so nobody can be asked (§ 12.4). Two prompts in **two separate sessions**:
 
-**Session 1 — YES:** the todo fixture, "Add two things to todo.py: a `done <id>` command … `[x]` …
-`[ ]`". Stages asserted in order, each with evidence:
+**Session 1 — YES:** the todo fixture, "Add two things to todo.py: a `done <id>` command … `[x]` … `[ ]`". Stages asserted in order, each with evidence:
 
-1. The gate verdict is `yes` (judge log), and the user line `ISA: ON` was emitted.
+1. The gate (§ 12.2) said yes, Jev's score ≥ `jev_gate` or the model's `yes`, as named in the debug log, and the user line `ISA gate — … → ON` was emitted.
 2. The ON block was injected (UserPromptSubmit context).
 3. The model read `skill/ISA/SKILL.md`.
-4. `isa new` ran and the session is bound to the path it printed; the ISA has `root`, `asks`, and a
-   `stated_goal` that is a substring of the prompt.
-5. `isa lint` is clean before the first project change; the first project change was not refused
-   for missing ISA/lint.
-6. For each ISC that needs it, a failed red row precedes the green row with the same `tool_sha` and
-   a different fingerprint; or the line is marked `(no red baseline)` (reported). Named files whose
-   hash moved between red and green are reported; a test file listed as changed since red is
-   flagged in `verdict.md`.
-7. The model never wrote a checkbox, a generated Verification line, `progress` or `phase: complete`
-   (no ownership refusal needed, or refusals seen and recovered — reported).
+4. `isa new` ran and the session is bound to the path it printed; the ISA has `root`, a `stated_goal` that is a substring of the prompt, and `asks` that are verbatim spans of it.
+5. `isa lint` is clean before the first project change; the first project change was not refused for missing ISA/lint.
+6. For each ISC that needs it, a failed red row precedes the green row with the same `tool_sha` and a different fingerprint; or the line is marked `(no red baseline)` (reported). Named files whose hash moved between red and green are reported.
+7. The model never wrote a checkbox, a generated Verification line, `progress` or `phase: complete` (refusals, if any, reported).
 8. The acceptance script passes; only allowed files changed.
-9. `isa close` exit 0; `phase: complete`; its re-run passed every mechanical probe and left the tree
-   unchanged; the final answer quotes the close summary.
+9. `isa close` exit 0; `phase: complete`; its re-run passed every mechanical probe and left the tree unchanged; the final answer quotes the close summary.
 
-**Session 2 — NO:** "what does `cmd_list` in todo.py print?". Asserted: the gate verdict is `no`,
-the user line `ISA: OFF`, no ISA file, no context injected, and the Stop hook stays silent.
+**Session 2 — NO:** "what does `cmd_list` in todo.py print?". Asserted: the gate's answer is below `jev_gate` (or the model's `no`/`unsure` when Jev is unavailable), as the debug log names it; nobody can be asked, so the session continues without ISA (`ask: no-ui` in the log); no ISA file; and the Stop hook stays silent.
 
-**Output:** `flow/<timestamp>/` on branch `eval-results`, containing `ISA.articulation.md`
-(snapshot at the first project change), `ISA.final.md`, `timeline.md` (each tool call, hook
-decision, ISA edit and gate verdict), and `verdict.md` (stage table). Also printed in the
-terminal. Cost estimate: $0.30–0.60 per run.
+**Output:** `flow/<timestamp>/` on branch `eval-results`: `ISA.articulation.md` (snapshot at the first project change), `ISA.final.md`, `timeline.md` (each tool call, hook decision, ISA edit and gate decision), `verdict.md` and `verdict.json` (stage tables), the transcripts and the sandbox state. Also printed in the terminal. Cost: about $0.40 per run.
 
 ---
 
 ## 10. Milestones
+
+M1–M7 below record what was built then; later sections take precedence where they differ. M8–M11 are in § 11.7 and § 12.10.
 
 Each milestone is one ISA, ends with the full unit suite green, and changes nothing outside its list.
 
@@ -945,9 +920,9 @@ Taken in the spec review of 2026-10-01:
 
 1. **Gate pre-filter:** obvious YES prompts skip the judge (cheaper, faster); a false YES is accepted.
 2. **Judge model:** Haiku 4.5 via `claude` (or the opt-in `api`).
-   **Still open:** the default pi provider/model (`ISA_JUDGE_PI_MODEL`).
+   **Still open:** the default pi provider/model (`ISA_JUDGE_PI_MODEL`). (closed by § 11: no Haiku or pi judge remains; Jev and the running model judge.)
 3. **Red-then-green scope:** E2+ for `behaviour`/`http`/`schema`, checked at the green tick (§ 4.6).
-4. **`asks:` list:** extracted by the judge at `isa new` (a command, so allowed by § 0.4); the model
+4. **`asks:` list:** (superseded by § 11.2: the model writes them, lint checks them) extracted by the judge at `isa new` (a command, so allowed by § 0.4); the model
    may add asks.
 5. **Judge verdicts at close:** advisory in v2, promoted on eval data.
 6. **`isa attest`:** folded into `isa verify ISC-N --attest "<evidence>"` — one command, one
