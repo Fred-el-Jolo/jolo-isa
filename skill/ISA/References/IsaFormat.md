@@ -62,7 +62,7 @@ asks: ["list each one with its line number", "don't change any files"]   # the p
 ---
 ```
 
-`asks` holds every explicit ask of the user's prompt as a verbatim span — `isa new` fills it through the judge (`asks_extract`), or leaves `[]` for you to write when no judge ran. You may add asks; removing one needs a `refined:` Decisions row. At close, each needs a `- Ask N:` line in Verification (see § Verification).
+`asks` holds every explicit ask of the user's prompt as a verbatim span. You write it — `isa new` leaves `[]` and calls no model. Lint checks each entry is a byte-for-byte span of a prompt of the ISA's sessions (an error under v2). The first `isa verify` snapshots the list; removing an ask after that needs a `refined:` Decisions row. At close, each needs a `- Ask N:` line in Verification (see § Verification).
 
 Optional — continuation:
 
@@ -244,6 +244,7 @@ One entry per leaf ISC, as a YAML list inside a fenced block (key order doesn't 
 | `cwd` | Directory the probe runs in, relative to the ISA's `root` |
 | `root` | Another project (path relative to `$HOME`) the probe runs in — for an ISA spanning projects |
 | `class` | Tags the ISC as one instance of a defect class: close then needs a `class-sweep:` row |
+| `fails-when` | What the probe would see if the claim were false. Required from E2 on a mechanical probe whose ISC can't be seen failing first: an `Anti:` ISC, a `kind:` without the red step (config, doc, file, decision, visual, regression), or `red: exempt`. `isa close` lists it beside each ISC never seen failing |
 
 **Mechanical vs self-attested.** Every type except `manual`, `screenshot` and `eval` is *mechanical*: its `tool` is a shell command that `isa verify <ISA> ISC-N` runs from the ISA's `root`, and it **passes iff it exits 0** — so build any other threshold into the command (`test "$(… | wc -l)" -eq 12`). Write it relative to the project (no `cd /absolute/path`; use `cwd:`). The `tool` must be runnable exactly as written: a placeholder (`<session-id>`, `…`) is a lint error. `isa verify` records each result in an engine-owned evidence ledger (under `~/.isa/_state/`, never written by hand) together with a fingerprint of the project tree, then ticks what passed, unticks what regressed, and writes the Verification line. `isa close` re-runs every mechanical probe and closes only when all pass — that re-run is what makes the close fresh. A probe must only observe: one that changes the tree is reported, recorded, and refused at close.
 
@@ -267,7 +268,7 @@ One entry per leaf ISC, as a YAML list inside a fenced block (key order doesn't 
 
 **`risk: high`** ISCs can't be self-attested: a `manual` / `screenshot` / `eval` probe is a lint error (and `--attest` is refused) unless the user waives the ISC; and close needs a `second-look:` Decisions row. `risk: low — <why>` reasons are listed in the close summary.
 
-**Red-then-green** (behaviour / http / schema ISCs at E2+, except `Anti:`, `kind: regression` and `red: exempt — <why>`): write the test, run `isa verify --red <ISA>` before building (it records the failing baseline and ticks nothing), then build and `isa verify`. A green run ticks plainly only when an earlier *failed* red run of the same probe text saw a different tree; otherwise it is ticked `(no red baseline)` and the close lists it next to the self-attested ones, with the reason. A probe that passes its red run can't fail — `isa lint` warns that it proves nothing. Nothing is ever blocked for lack of a baseline.
+**Red-then-green** (behaviour / http / schema ISCs at E2+, except `Anti:`, `kind: regression` and `red: exempt — <why>`): write the test, run `isa verify --red <ISA>` before building (it records the failing baseline and ticks nothing), then build and `isa verify`. A green run ticks plainly only when an earlier *failed* red run of the same probe text saw a different tree; otherwise it is ticked `(no red baseline)` and the close lists it next to the self-attested ones, with the reason. A probe that passes its red run can't fail — `isa lint` warns that it proves nothing. Nothing is ever blocked for lack of a baseline. ISCs that can never get a red run carry `fails-when:` instead: the claim it would take to fail, written down, so a probe that can't fail shows itself to the writer and to the reader of the close summary.
 
 **Probe downgrades are visible.** Once the first `isa verify` has snapshotted the Test Strategy, turning a runnable probe into a self-attested one, weakening `kind:`, removing a `tool:`, or self-attesting an ISC whose probe failed needs a Decisions row `refined: ISC-N probe downgraded — <why>`; without it, lint fails.
 

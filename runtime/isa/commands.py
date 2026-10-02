@@ -19,7 +19,7 @@ import shlex
 import subprocess
 import time
 
-from . import evidence, fingerprint, isafile, judge, lint, problems, rules, state
+from . import evidence, fingerprint, isafile, lint, logs, problems, rules, state
 
 TAIL = evidence.TAIL_CHARS
 VAGUE = {"make", "this", "that", "good", "better", "thing", "things", "stuff", "please", "just", "with", "from",
@@ -165,16 +165,12 @@ def new(args, cwd=None, out=print):
         lines.append("stated_goal_source: prompt")
     if comment:
         lines.append(comment)
-    asks = judge.extract_asks(source.get("text") or "", source.get("context") or "") if source else None
-    if asks is None:
-        lines += ["asks: []", "# asks: list each explicit ask of the prompt as a verbatim span (no judge ran)"]
-    else:
-        lines.append(f"asks: {isafile._yaml_value(asks)}")
+    # SPEC-v2 § 11.2: no model call — the model lists the asks; lint checks each is a verbatim span
+    lines += ["asks: []", "# asks: list each explicit ask of the prompt as a verbatim span (lint checks them)"]
     lines += ["---", ""]
     os.makedirs(os.path.dirname(path), exist_ok=True)
     isafile.write_atomic(path, "\n".join(lines))
-    if asks:
-        evidence.record(path, [{"v": 2, "t": time.time(), "kind": "asks", "asks": asks}])
+    logs.note(isa=path)
     out(path)
     return 0
 
@@ -216,6 +212,12 @@ def _batch(path, parsed, chosen, root, timeout, out):
     return results, after, changed
 
 
+def probe_env():
+    """The caller's environment minus its ISA_* switches (ISA_HOME stays): a probe sees the same
+    settings whoever runs `isa verify` — a model with ISA_ADVICE=off set, or a hook-free shell."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("ISA_") or k == "ISA_HOME"}
+
+
 def _run_probes(parsed, chosen, root, timeout):
     """{isc: (code, secs, tail, tool, cwd, root)} — identical probes in the same cwd run once."""
     pr, cache, res = evidence.probes(parsed), {}, {}
@@ -226,7 +228,7 @@ def _run_probes(parsed, chosen, root, timeout):
             t0 = time.time()
             try:
                 r = subprocess.run(tool, shell=True, executable="/bin/bash", cwd=cwd, capture_output=True,
-                                   text=True, timeout=timeout)
+                                   text=True, timeout=timeout, env=probe_env())
                 code, output = r.returncode, (r.stdout or "") + (r.stderr or "")
             except subprocess.TimeoutExpired as e:
                 code, output = 124, f"{e.stdout or ''}{e.stderr or ''}\n[timed out after {timeout}s]"
@@ -265,6 +267,15 @@ def _last_pass(path, isc, before):
     return t
 
 
+def _asks_snapshot(path, parsed):
+    """The asks in force at the first `isa verify` (SPEC-v2 § 11.2): removing one later needs a
+    `refined:` row (rules.py)."""
+    if any(r.get("kind") == "asks" for r in evidence.rows(path)):
+        return
+    asks = parsed["fm"].get("asks") if isinstance(parsed["fm"].get("asks"), list) else []
+    evidence.record(path, [{"v": 2, "t": time.time(), "kind": "asks", "asks": [str(a) for a in asks]}])
+
+
 def _strategy_snapshot(path, parsed):
     if any(r.get("kind") == "strategy" for r in evidence.rows(path)):
         return
@@ -275,7 +286,7 @@ def _strategy_snapshot(path, parsed):
 
 # ------------------------------------------------------------------ red-then-green (SPEC-v2 § 4.6)
 
-RED_KINDS = {"behaviour", "behavior", "http", "schema"}
+RED_KINDS = lint.RED_KINDS
 NO_RED = " (no red baseline)"
 
 
@@ -304,22 +315,12 @@ def named_files(tool, cwd, root):
 
 def red_exempt(parsed, isc):
     """None when `isc` needs a red baseline, else why it doesn't."""
-    e = parsed["test_strategy"].get(isc) or {}
-    tier = str(parsed["fm"].get("effort", "E3"))
-    text = parsed["iscs"].get(isc, (False, ""))[1]
-    if tier == "E1":
+    if str(parsed["fm"].get("effort", "E3")) == "E1":
         return "E1"
-    if text.lstrip().startswith("Anti:"):
-        return "Anti"
-    kind = str(e.get("kind") or "").strip().lower()
-    if kind == "regression":
-        return "regression"
-    if kind not in RED_KINDS:
-        return f"kind {kind or 'unset'}"
-    red = str(e.get("red") or "").strip()
-    if red.lower().startswith("exempt"):
-        return red
-    return None
+    e = parsed["test_strategy"].get(isc) or {}
+    if not str(e.get("kind") or "").strip() and not parsed["iscs"].get(isc, (False, ""))[1].lstrip().startswith("Anti:"):
+        return "kind unset"
+    return lint.red_exempt_why(parsed["iscs"].get(isc, (False, ""))[1], e)
 
 
 def red_baseline(path, isc, tool_sha, fp, before):
@@ -411,6 +412,7 @@ def verify(path, select=(), red=False, attest=None, cwd=None, timeout=600, out=p
         out(f"isa verify: not a counted leaf ISC of this ISA: {', '.join(unknown)}")
         return 2
     _strategy_snapshot(path, parsed)
+    _asks_snapshot(path, parsed)
     stamp, run_t = isafile.now_iso(), time.time()
     if attest is not None:
         return _attest(path, text, parsed, pr, list(select), attest, stamp, out)
@@ -431,6 +433,8 @@ def verify(path, select=(), red=False, attest=None, cwd=None, timeout=600, out=p
             for i, (code, secs, tail, tool, c, r) in results.items()]
     marks = {} if red else _marks(path, parsed, results, fps, run_t)
     line_nos = dict(zip(results, _record(path, rows)))
+    logs.note(isa=path, red=bool(red), passed=sorted(i for i, r in results.items() if r[0] == 0),
+              failed=sorted(i for i, r in results.items() if r[0] != 0))
     for i, (code, secs, tail, tool, c, _r) in results.items():
         if red:
             out(f"{i} {'FAIL (red, as expected)' if code else 'PASS — already green before the change: is the probe testing anything?'}"
@@ -532,6 +536,8 @@ def close(path, cwd=None, timeout=600, out=print):
             for i, (code, secs, tail, tool, c, r) in results.items()]
     marks = _marks(path, parsed, results, fps, run_t)
     line_nos = dict(zip(results, _record(path, rows))) if rows else {}
+    logs.note(isa=path, passed=sorted(i for i, r in results.items() if r[0] == 0),
+              failed=sorted(i for i, r in results.items() if r[0] != 0))
     text, _ticked, _unticked, waiting = _apply(path, text, results, line_nos, stamp, run_t, marks)
     text = _finish_text(text, stamp)
     issues = [f"{i}: probe fails now (exit {results[i][0]}) — `{results[i][3]}`" for i in results if results[i][0]]
@@ -554,72 +560,8 @@ def close(path, cwd=None, timeout=600, out=print):
             out(f"  - {m}")
         return 1
     isafile.write_atomic(path, closing)
-    advice = close_advice(path, closing)
-    out(summary(path, closing, results, fps, marks, run_t) + "\n" + advice)
+    out(summary(path, closing, results, fps, marks, run_t))
     return 0
-
-
-# ------------------------------------------------------------------ advisory judge (SPEC-v2 § 7)
-
-def probe_advice(path, parsed, report):
-    """`probe_adequacy`: would each probe fail if its ISC were false? Judged once per (ISC, probe text),
-    every uncached probe of this run in one call, cached in the ledger. Warnings only."""
-    pr = evidence.probes(parsed)
-    mech = [i for i in parsed["counted"] if pr[i]["mechanical"]]
-    if not mech:
-        return
-    cache = {}
-    for row in evidence.rows(path):
-        if row.get("kind") == "advice" and row.get("question") == "probe_adequacy":
-            cache[(row.get("isc"), row.get("tool_sha"))] = row
-    sha = {i: evidence.tool_sha(pr[i]["tool"]) for i in mech}
-    todo = [i for i in mech if (i, sha[i]) not in cache]
-    if todo:
-        items = "\n".join(f"- {i}: {parsed['iscs'][i][1]} | probe: {pr[i]['tool'].strip()}" for i in todo)
-        res, status = judge.structured("judge/probe_adequacy", judge.ADEQ_SCHEMA, "verdicts", advisory=True,
-                                       items=items)
-        if res and isinstance(res.get("verdicts"), list):
-            new = [{"v": 2, "t": time.time(), "kind": "advice", "question": "probe_adequacy", "isc": v.get("isc"),
-                    "tool_sha": sha[v.get("isc")], "verdict": str(v.get("verdict", "")).lower(),
-                    "reason": str(v.get("reason") or "")}
-                   for v in res["verdicts"] if isinstance(v, dict) and v.get("isc") in sha]
-            if new:
-                evidence.record(path, new)
-                cache.update({(r["isc"], r["tool_sha"]): r for r in new})
-        elif status == "error":
-            report.warn("probe adequacy not judged this time (the judge failed) — lint itself is unaffected")
-    for i in mech:
-        row = cache.get((i, sha[i]))
-        if row and row.get("verdict") == "no":
-            report.warn(f"{i}: the judge doubts this probe would fail if the ISC were false — {row.get('reason')} "
-                        "(advisory; tighten the probe or say why in Decisions)")
-
-
-def close_advice(path, text):
-    """`goal_met` / `asks_met` at close: recorded in the ledger and shown, never blocking."""
-    p = lint.parse(text, path)
-    asks = p["fm"].get("asks") if isinstance(p["fm"].get("asks"), list) else []
-    crit = "\n".join(f"- [{'x' if p['iscs'][i][0] else ' '}] {i}: {p['iscs'][i][1]}" for i in p["iscs"])
-    evidence_text = crit + "\n\n" + p["content"].get("Verification", "")
-    lines, rows = [], []
-    questions = [("goal_met", "judge/goal_met", dict(stated_goal=str(p["fm"].get("stated_goal") or "(none)"),
-                                                     goal=p["content"].get("Goal", ""), evidence=evidence_text))]
-    if asks:
-        questions.append(("asks_met", "judge/asks_met",
-                          dict(asks="\n".join(f"{n}. {a}" for n, a in enumerate(asks, 1)),
-                               evidence=p["content"].get("Verification", ""))))
-    for q, template, values in questions:
-        res, status = judge.structured(template, judge.SCHEMA, "verdict", advisory=True, **values)
-        if res:
-            verdict, reason = str(res.get("verdict", "")).lower(), str(res.get("reason") or "")
-            rows.append({"v": 2, "t": time.time(), "kind": "advice", "question": q, "verdict": verdict,
-                         "reason": reason})
-            lines.append(f"  - {q}: {verdict} — {reason}")
-        else:
-            lines.append(f"  - {q}: not judged ({'ISA_ADVICE=off' if status == 'off' else 'no judge available' if status == 'none' else 'the judge failed'})")
-    if rows:
-        evidence.record(path, rows)
-    return "Judge (advisory — never blocks the close):\n" + "\n".join(lines)
 
 
 def _why_no_red(path, parsed, i, tool, before):
@@ -654,10 +596,16 @@ def summary(path, text, results, fps=None, marks=None, run_t=None):
     if proven:
         lines.append("Proven (every probe re-run by this close):")
         lines += [f"  - {i}: exit 0 in {results[i][1]}s — `{results[i][3]}`" for i in proven if i in results]
+    fw = lambda i: str((p["test_strategy"].get(i) or {}).get("fails-when") or "").strip()  # noqa: E731
     no_red = sorted(marks or {})
     if no_red:
         lines.append("No red baseline (never seen failing — weigh them like the self-attested ones):")
-        lines += [f"  - {i}: {_why_no_red(path, p, i, results[i][3], run_t or time.time())}" for i in no_red]
+        lines += [f"  - {i}: {_why_no_red(path, p, i, results[i][3], run_t or time.time())}"
+                  + (f" — fails when: {fw(i)}" if fw(i) else "") for i in no_red]
+    never = [i for i in proven if i not in (marks or {}) and red_exempt(p, i)]
+    if never:
+        lines.append("Never seen failing by design (red-exempt) — what each probe would see if the claim were false:")
+        lines += [f"  - {i} ({red_exempt(p, i)}): {fw(i) or '(no fails-when written)'}" for i in never]
     exempt = [(i, red_exempt(p, i)) for i in proven if str(red_exempt(p, i) or "").lower().startswith("exempt")]
     if exempt:
         lines.append("Red run exempted by the ISA: " + "; ".join(f"{i} ({why})" for i, why in exempt))
@@ -712,8 +660,6 @@ def lint_cmd(args, out=print):
         r = lint.lint(p, moment, text=norm)
         if state.is_master_isa(p):
             parsed = lint.parse(norm, p)
-            if parsed["fm"].get("phase") != "complete" and moment != "close":
-                probe_advice(p, parsed, r)
             errs, warns = rules.check(p, parsed)
             for m in errs:
                 r.err(m)

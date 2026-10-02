@@ -137,7 +137,7 @@ When the user invokes `proceed` after seeing the questions:
 
 ### Step 4 — Write frontmatter
 
-Create the ISA with `isa new <slug> --goal "<verbatim span of the prompt>" --tier <E1..E5>` (omit `--goal` when Step 3a found no literal). It writes the frontmatter below — `slug`, `started`, `root`, `stated_goal` (checked against the logged prompts) and `asks` (the prompt's explicit asks, extracted by the judge) — and binds the ISA to the session. Then fill in `task` and the ambiguity-check outcome with Edit:
+Create the ISA with `isa new <slug> --goal "<verbatim span of the prompt>" --tier <E1..E5>` (omit `--goal` when Step 3a found no literal). It writes the frontmatter below — `slug`, `started`, `root` and `stated_goal` (checked against the logged prompts), with `asks: []` — and binds the ISA to the session. It calls no model. Then fill in `task`, `asks` (each explicit ask of the prompt, copied verbatim — lint checks it) and the ambiguity-check outcome with Edit:
 
 ```yaml
 ---
@@ -152,7 +152,7 @@ updated: <ISO-8601>
 root: /home/me/dev/app                   # isa new — engine-owned, every probe's cwd
 stated_goal: "verbatim quote"            # isa new --goal (null when no literal passed Step 3a)
 stated_goal_source: prompt
-asks: ["<verbatim span>", ...]           # isa new (judge); [] when no judge ran — then write them yourself
+asks: ["<verbatim span>", ...]           # you write them: each explicit ask, verbatim from the prompt
 # outcome of the ambiguity check (Step 3.5) — required from E2
 context_sufficient: true
 interview_invoked: false
@@ -171,7 +171,7 @@ Scaffold writes only the **articulation sections**. Decisions, Changelog, and Ve
 | E4 | All eleven articulation sections (Dependencies/Bridge Criteria only when cross-ISA links exist) |
 | E5 | Same as E4, then run the Interview workflow before BUILD |
 
-Each Test Strategy entry carries `kind:` (what the ISC claims — it sets the minimum probe type: a `behaviour` claim is proven by running the code, never by a grep or a manual look), and `risk: high` or `risk: low — <why>` whenever the ISC or its probe mentions secrets, tokens, credentials, auth, logins, permissions, money, deploys, prod, publish, release or push. Probes run from the ISA's `root`: write them relative to the project (`cwd:` for a sub-directory). See `References/IsaFormat.md` § Test Strategy.
+Each Test Strategy entry carries `kind:` (what the ISC claims — it sets the minimum probe type: a `behaviour` claim is proven by running the code, never by a grep or a manual look), and `risk: high` or `risk: low — <why>` whenever the ISC or its probe mentions secrets, tokens, credentials, auth, logins, permissions, money, deploys, prod, publish, release or push. Probes run from the ISA's `root`: write them relative to the project (`cwd:` for a sub-directory). From E2, a mechanical probe whose ISC can't be seen failing first (`Anti:`, a config/doc/file/decision/visual/regression kind, `red: exempt`) also carries `fails-when: "<what the probe sees when the claim is false>"`. See `References/IsaFormat.md` § Test Strategy.
 
 ### Step 6 — Apply the Splitting Test to every ISC
 

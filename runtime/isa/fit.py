@@ -2,9 +2,10 @@
 
 `prefilter(prompt)` → (verdict, reason) with verdict "yes" | "no" | "unsure". Rules, in order:
 greeting/thanks → no · short prompt (≤ 4 words: "go", "ok do it", "fix these") → unsure, since it
-usually authorises work proposed in the turn before, which only the judge (with that context) sees ·
+usually authorises work proposed in the turn before, which only the model (with that context) sees ·
 question or explanation → unsure · explicit ISA mention → yes · work verb with an object → yes ·
-anything else → unsure. Only `unsure` reaches the judge (judge.py); a false yes is the accepted cost.
+anything else → unsure. `unsure` is left to the running model, which writes an ISA or declares
+`ISA: not needed — <reason>` (engine.py, SPEC-v2 § 11.2); a false yes is the accepted cost.
 
 `score(prompt)` → (level, reasons) is the older heuristic ("strong" | "maybe" | "none"), kept as a
 detail line for `isa fit`. It decides nothing. fit.md states what the gate question protects.

@@ -230,3 +230,36 @@ def prompts(harness, session_id):
 def log_error(msg):
     with open(os.path.join(state_dir(), "errors.log"), "a") as f:
         f.write(time.strftime("%Y-%m-%dT%H:%M:%S ") + msg.replace("\n", "\n    ") + "\n")
+
+
+# ------------------------------------------------------------------ transcript
+
+CONTEXT_CHARS = 2000
+
+
+def last_assistant_text(transcript_path, limit=CONTEXT_CHARS):
+    """The tail of the last assistant text in a Claude Code transcript (JSONL); "" when unreadable."""
+    if not transcript_path:
+        return ""
+    try:
+        size = os.path.getsize(transcript_path)
+        with open(transcript_path, "rb") as f:
+            f.seek(max(0, size - 1_000_000))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        try:
+            m = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(m, dict) or m.get("type") != "assistant":
+            continue
+        content = (m.get("message") or {}).get("content")
+        if isinstance(content, str):
+            text = content
+        else:
+            text = "\n".join(c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text")
+        if text.strip():
+            return text[-limit:]
+    return ""

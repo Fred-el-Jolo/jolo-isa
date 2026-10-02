@@ -3,22 +3,19 @@
 No test calls a real model: the judge runs as `heuristic`, or against a fake `claude` / `pi` on PATH,
 or against a fake Messages API server. Run: python3 -m unittest tests.test_gate
 """
-import http.server
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import unittest
-from unittest import mock
 
 from tests.test_hooks import CLOSED, E1, ROOT, HookCase
 from tests.test_shell_changes import git
 
 sys.path.insert(0, os.path.join(ROOT, "runtime"))
-from isa import fit, judge  # noqa: E402
+from isa import fit, state  # noqa: E402
 
 SCAFFOLD = """---
 task: "Review utils.py"
@@ -39,60 +36,6 @@ Every bug in utils.py is listed with its line number.
 
 - 2026-01-01 00:00: which Python version must the fixes support?
 """
-
-
-def fake_cli(dirpath, name, body):
-    """An executable `name` in `dirpath` running the Python `body` (argv in sys.argv, prompt on stdin)."""
-    os.makedirs(dirpath, exist_ok=True)
-    path = os.path.join(dirpath, name)
-    with open(path, "w") as f:
-        f.write(f"#!{sys.executable}\nimport json, os, sys, time\n{body}\n")
-    os.chmod(path, 0o755)
-    return path
-
-
-RECORD = """
-rec = {"argv": sys.argv[1:], "stdin": sys.stdin.read(), "cwd": os.getcwd(), "files": os.listdir(os.getcwd()),
-       "env": {k: os.environ.get(k) for k in ("ENABLE_CLAUDEAI_MCP_SERVERS", "ISA_JUDGE_CHILD")}}
-with open(os.environ["FAKE_LOG"], "a") as f:
-    f.write(json.dumps(rec) + "\\n")
-"""
-CLAUDE_YES = RECORD + """
-print(json.dumps({"type": "result", "result": "", "structured_output": {"verdict": "yes", "reason": "fake yes"}}))
-"""
-CLAUDE_NO = RECORD + """
-print(json.dumps({"type": "result", "result": '{"verdict": "no", "reason": "a question"}'}))
-"""
-PI_NO = RECORD + """
-print(json.dumps({"type": "agent_start"}))
-msg = {"role": "assistant", "content": [{"type": "text", "text": '{"verdict": "no", "reason": "pi says no"}'}]}
-print(json.dumps({"type": "message_end", "message": msg}))
-"""
-
-
-class JudgeCase(unittest.TestCase):
-    """In-process judge calls with a private PATH and log."""
-
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="isa-judge-")
-        self.bin = os.path.join(self.tmp, "bin")
-        self.log = os.path.join(self.tmp, "calls.jsonl")
-        self.env = mock.patch.dict(os.environ, {"PATH": self.bin + os.pathsep + "/usr/bin:/bin",
-                                                "FAKE_LOG": self.log, "ISA_HOME": os.path.join(self.tmp, "h")})
-        self.env.start()
-        for k in ("ISA_JUDGE", "ISA_JUDGE_PI_MODEL", "ISA_JUDGE_TIMEOUT", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"):
-            os.environ.pop(k, None)
-
-    def tearDown(self):
-        self.env.stop()
-        shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def calls(self):
-        try:
-            with open(self.log) as f:
-                return [json.loads(line) for line in f]
-        except OSError:
-            return []
 
 
 class TestPrefilter(unittest.TestCase):
@@ -117,124 +60,6 @@ class TestPrefilter(unittest.TestCase):
             self.assertTrue(fit.prefilter(prompt)[1], prompt)
 
 
-class TestJudgeBackends(JudgeCase):
-    def test_claude_isolated_call(self):
-        fake_cli(self.bin, "claude", CLAUDE_YES)
-        v = judge.gate("is this worth it", context="I propose to review the module.", backend="claude")
-        self.assertEqual((v["verdict"], v["source"], v["reason"]), ("yes", "judge", "fake yes"))
-        [c] = self.calls()
-        a = c["argv"]
-        self.assertEqual(a[a.index("--model") + 1], judge.DEFAULT_CLAUDE_MODEL)
-        self.assertEqual(a[a.index("--tools") + 1], "")
-        self.assertEqual(a[a.index("--setting-sources") + 1], "project")
-        for flag in ("--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence", "--json-schema"):
-            self.assertIn(flag, a)
-        self.assertEqual(c["env"], {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "ISA_JUDGE_CHILD": "1"})
-        self.assertEqual(c["files"], [])  # an empty temp dir
-        self.assertIn("is this worth it", c["stdin"])
-        self.assertIn("I propose to review the module.", c["stdin"])
-        self.assertIn("checkable end state", c["stdin"])
-
-    def test_claude_model_override_and_result_text(self):
-        fake_cli(self.bin, "claude", CLAUDE_NO)
-        v = judge.gate("what does it do", backend="claude:claude-sonnet-5-5")
-        self.assertEqual((v["verdict"], v["reason"]), ("no", "a question"))
-        a = self.calls()[0]["argv"]
-        self.assertEqual(a[a.index("--model") + 1], "claude-sonnet-5-5")
-
-    def test_pi(self):
-        fake_cli(self.bin, "pi", PI_NO)
-        os.environ["ISA_JUDGE_PI_MODEL"] = "anthropic/claude-haiku-4-5"
-        v = judge.gate("what does it do", backend="pi")
-        self.assertEqual((v["verdict"], v["reason"]), ("no", "pi says no"))
-        a = self.calls()[0]["argv"]
-        for flag in ("-p", "--no-session", "--no-extensions", "--no-skills", "--no-context-files", "--no-tools"):
-            self.assertIn(flag, a)
-        self.assertEqual(a[a.index("--model") + 1], "anthropic/claude-haiku-4-5")
-        self.assertIn("what does it do", a[a.index("--") + 1])
-
-    def test_api(self):
-        seen = []
-
-        class H(http.server.BaseHTTPRequestHandler):
-            def do_POST(self):
-                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                seen.append((self.path, self.headers.get("x-api-key"), body))
-                out = json.dumps({"content": [{"type": "text", "text": '{"verdict": "yes", "reason": "api yes"}'}]})
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(out.encode())
-
-            def log_message(self, *a):
-                pass
-
-        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
-        try:
-            os.environ.update(ANTHROPIC_API_KEY="k-test", ANTHROPIC_BASE_URL=f"http://127.0.0.1:{srv.server_port}")
-            v = judge.gate("is this a task", backend="api")
-        finally:
-            srv.shutdown()
-            srv.server_close()
-        self.assertEqual((v["verdict"], v["reason"]), ("yes", "api yes"))
-        path, key, body = seen[0]
-        self.assertEqual((path, key, body["model"]), ("/v1/messages", "k-test", judge.DEFAULT_CLAUDE_MODEL))
-        self.assertNotIn("tools", body)
-
-    def test_heuristic(self):
-        self.assertEqual(judge.gate("make the report faster", backend="heuristic")["verdict"], "yes")
-        self.assertEqual(judge.gate("hi", backend="heuristic")["verdict"], "no")
-        self.assertEqual(self.calls(), [])
-
-    def test_prefilter_skips_the_judge(self):
-        fake_cli(self.bin, "claude", CLAUDE_NO)
-        v = judge.gate("Fix the bug in dates.py so the tests pass", backend="claude")
-        self.assertEqual((v["verdict"], v["source"]), ("yes", "prefilter"))
-        self.assertEqual(judge.gate("thanks!", backend="claude")["source"], "prefilter")
-        self.assertEqual(self.calls(), [])
-
-
-class TestAutoNeverApi(JudgeCase):
-    def test_auto(self):
-        os.environ["ANTHROPIC_API_KEY"] = "k-test"
-        os.environ["ISA_JUDGE"] = "auto"
-        self.assertEqual(judge.backend_for("claude"), "heuristic")  # no claude CLI on PATH
-        self.assertEqual(judge.backend_for("pi"), "heuristic")
-        fake_cli(self.bin, "claude", CLAUDE_NO)
-        fake_cli(self.bin, "pi", PI_NO)
-        self.assertEqual(judge.backend_for("claude"), "claude")
-        self.assertEqual(judge.backend_for("pi"), "pi")
-        os.environ.pop("ISA_JUDGE")
-        self.assertEqual(judge.backend_for("claude"), "claude")  # unset = auto
-        os.environ["ISA_JUDGE"] = "api"
-        self.assertEqual(judge.backend_for("claude"), "api")  # only when asked for by name
-
-
-class TestJudgeFailsToOn(JudgeCase):
-    def check(self, body, why):
-        fake_cli(self.bin, "claude", body)
-        os.environ["ISA_JUDGE_TIMEOUT"] = "1"
-        v = judge.gate("what does it do", backend="claude")
-        self.assertEqual((v["verdict"], v["source"]), ("yes", "error"), why)
-        self.assertIn("judge unavailable", v["reason"])
-
-    def test_timeout(self):
-        self.check("time.sleep(5)", "timeout")
-
-    def test_exit_code(self):
-        self.check("sys.exit(3)", "non-zero exit")
-
-    def test_garbage(self):
-        self.check("print('certainly! the answer is maybe')", "unparseable")
-
-    def test_missing_cli_falls_back_to_heuristic(self):
-        v = judge.gate("what does it do", backend="claude")  # no claude on PATH
-        self.assertEqual((v["verdict"], v["source"]), ("yes", "heuristic"))
-
-
-# ------------------------------------------------------------------ engine (hooks)
-
 class GateHookCase(HookCase):
     def prompt(self, text, **kw):
         return self.hook("UserPromptSubmit", prompt=text, **kw)
@@ -253,19 +78,6 @@ class GateHookCase(HookCase):
         return self.hook("Stop", stop_hook_active=False)
 
 
-class TestRecursionGuard(GateHookCase):
-    def test_every_event_empty(self):
-        self.env["ISA_JUDGE_CHILD"] = "1"
-        for name, kw in [("SessionStart", {"source": "startup"}), ("UserPromptSubmit", {"prompt": "Fix the bug"}),
-                         ("PreToolUse", {"tool_name": "Write", "tool_input": {"file_path": f"{self.proj}/x.py"}}),
-                         ("PostToolUse", {"tool_name": "Write", "tool_input": {"file_path": f"{self.proj}/x.py"},
-                                          "tool_response": {}}),
-                         ("Stop", {"stop_hook_active": False})]:
-            code, out, err = self.hook(name, **kw)
-            self.assertEqual((code, out, err), (0, {}, ""), name)
-        self.assertFalse(os.path.exists(os.path.join(self.home, "_state", "sessions")))
-
-
 class TestOffStaysSilent(GateHookCase):
     def test_greeting(self):
         self.assertEqual(self.ctx(self.hook("SessionStart", source="startup")[1]), "")
@@ -275,22 +87,6 @@ class TestOffStaysSilent(GateHookCase):
         self.assertEqual(self.session()["mode"], "off")
         self.hook("PreToolUse", tool_name="Read", tool_input={"file_path": "/etc/hosts"})
         self.assertEqual(self.stop()[:3:2], (0, ""))
-
-    def test_judged_no(self):
-        fake_cli(os.path.join(self.tmp, "bin"), "claude", CLAUDE_NO)
-        self.env.update(ISA_JUDGE="claude", PATH=os.path.join(self.tmp, "bin") + os.pathsep + self.env["PATH"],
-                        FAKE_LOG=os.path.join(self.tmp, "calls.jsonl"))
-        _, out, _ = self.prompt("what does `is_leap` do?")
-        self.assertEqual(self.ctx(out), "")
-        self.assertEqual(self.msg(out), "ISA: OFF — a question")
-        st = self.session()
-        self.assertEqual((st["mode"], st["mode_source"]), ("off", "judge"))
-        with open(os.path.join(self.home, "_state", "judge.jsonl")) as f:
-            row = json.loads(f.read().splitlines()[-1])
-        self.assertEqual((row["verdict"], row["source"], row["session"], row["prompt_id"]),
-                         ("no", "judge", self.sid, self.pid))
-        self.assertIsInstance(row["ms"], int)
-
 
 class TestYesSwitchesOn(GateHookCase):
     def test_on_block(self):
@@ -465,8 +261,7 @@ class TestOverride(GateHookCase):
         self.assertEqual(out, {})
         self.assertIsNone(self.decision(self.edit_project()[1]))
         self.assertEqual(self.stop()[:3:2], (0, ""))
-        with open(os.path.join(self.home, "_state", "judge.jsonl")) as f:
-            self.assertEqual(json.loads(f.read().splitlines()[-1])["source"], "override")
+        self.assertEqual(self.log_rows("prompt")[-1]["mode_source"], "ISA_MODE=off")
 
     def test_on(self):
         self.env["ISA_MODE"] = "on"
@@ -498,7 +293,7 @@ class TestPromptContext(GateHookCase):
         self.assertEqual(row["cwd"], self.proj)
         self.assertEqual(row["project"], os.path.basename(os.path.dirname(os.path.dirname(self.isa_path()))))
         self.assertTrue(row["context"].endswith("I propose to review utils.py for bugs."))
-        self.assertEqual(len(row["context"]), judge.CONTEXT_CHARS)
+        self.assertEqual(len(row["context"]), state.CONTEXT_CHARS)
 
     def test_missing_transcript(self):
         self.prompt("hi", transcript_path=os.path.join(self.tmp, "nope.jsonl"))

@@ -9,7 +9,7 @@ import unittest
 
 from tests.test_commands import CommandCase
 from tests.test_evidence import read
-from tests.test_gate import fake_cli
+from tests.test_hooks import fake_cli
 from tests.test_hooks import ROOT
 
 sys.path.insert(0, os.path.join(ROOT, "runtime"))
@@ -55,12 +55,14 @@ Every rule fires where it should.
   check: grep
   threshold: exit 0
   tool: grep -q entry out.txt
+  fails-when: "out.txt has no entry line"
 - isc: ISC-3
   type: bash
   kind: regression
   check: suite
   threshold: exit 0
   tool: python3 -m unittest -q
+  fails-when: "any existing test fails"
 ```
 """
 PRE_V2 = V2.replace("started: 2026-10-02T10:00:00Z", "started: 2026-09-01T10:00:00Z")
@@ -235,27 +237,8 @@ class TestSecondLook(unittest.TestCase):
         self.assertEqual(items(good)[0], [])
 
 
-ASKS_CLAUDE = """
-sys.stdin.read()
-print(json.dumps({"type": "result", "result": "", "structured_output":
-                  {"asks": ["list each one with its line number", "Do not change any files"]}}))
-"""
-
-
 class TestAsks(RulesCase):
     PROMPT = "Review utils.py for bugs and list each one with its line number. Do not change any files."
-
-    def test_extracted_at_new(self):
-        bin_ = os.path.join(self.tmp, "fakebin")
-        fake_cli(bin_, "claude", ASKS_CLAUDE)
-        self.env.update(ISA_JUDGE="claude", PATH=bin_ + os.pathsep + self.env["PATH"])
-        self.hook("UserPromptSubmit", prompt=self.PROMPT)
-        rc, out = self.isa("new", "review-utils")
-        self.assertEqual(rc, 0, out)
-        path = out.strip().splitlines()[-1]
-        self.assertEqual(self.fm(path)["asks"], ["list each one with its line number", "Do not change any files"])
-        self.assertEqual([r["asks"] for r in evidence.rows(path) if r.get("kind") == "asks"],
-                         [["list each one with its line number", "Do not change any files"]])
 
     def test_ask_lines_at_close(self):
         asked = V2.replace("updated: 2026-10-02T10:00:00Z", 'updated: 2026-10-02T10:00:00Z\nasks: ["list each bug", '
@@ -277,6 +260,35 @@ class TestAsks(RulesCase):
                                                   "the user withdrew it\n", path)
         rc, out = self.lint_out(path)
         self.assertNotIn("ask removed", out)
+
+
+class TestFailsWhen(unittest.TestCase):
+    """SPEC-v2 § 11.2: from E2, a mechanical probe whose ISC can't get a red baseline (Anti, a kind without
+    the red step, `red: exempt`) says what it sees when the claim is false."""
+
+    def test_required_on_red_exempt_entries(self):
+        bare = V2.replace('  fails-when: "out.txt has no entry line"\n', "").replace(
+            '  fails-when: "any existing test fails"\n', "")
+        errs, _ = items(bare)
+        self.assertTrue(any("ISC-2 can't get a red baseline (kind file)" in e for e in errs), errs)
+        self.assertTrue(any("ISC-3 can't get a red baseline (Anti)" in e for e in errs), errs)
+        self.assertFalse(any("ISC-1 can't get a red baseline" in e for e in errs), errs)  # behaviour: red-then-green
+        self.assertEqual(items(V2)[0], [])
+
+    def test_red_exempt_and_not_for_self_attested_or_e1(self):
+        exempt = V2.replace("  kind: behaviour\n", "  kind: behaviour\n  red: exempt — pure refactor\n")
+        self.assertTrue(any("ISC-1 can't get a red baseline (exempt — pure refactor)" in e for e in items(exempt)[0]))
+        manual = V2.replace('  tool: grep -q entry out.txt\n  fails-when: "out.txt has no entry line"\n',
+                            "  tool: open out.txt and read it\n").replace("  type: bash\n  kind: file", "  type: manual\n  kind: file")
+        self.assertFalse(any("ISC-2 can't get a red baseline" in e for e in items(manual)[0]))
+        e1 = V2.replace("effort: E2", "effort: E1").replace('  fails-when: "any existing test fails"\n', "")
+        self.assertFalse(any("can't get a red baseline" in e for e in items(e1)[0]))
+
+    def test_older_isas_get_a_warning(self):
+        bare = PRE_V2.replace('  fails-when: "out.txt has no entry line"\n', "")
+        errs, warns = items(bare)
+        self.assertFalse(any("red baseline" in e for e in errs), errs)
+        self.assertTrue(any("ISC-2 can't get a red baseline" in w for w in warns), warns)
 
 
 class TestShapeRows(unittest.TestCase):

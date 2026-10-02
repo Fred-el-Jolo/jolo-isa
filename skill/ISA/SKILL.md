@@ -27,14 +27,14 @@ The ISA is a single markdown file with YAML frontmatter and a locked fourteen-se
 
 Every ISA is a **task ISA**: `~/.isa/<project>/{slug}/ISA.md`, with `slug = YYYYMMDD-HHMMSS_kebab-description`. It is created at the start of a piece of work and closed at `phase: complete`. Ephemeral feature slices live beside it at `~/.isa/<project>/{slug}/_ephemeral/<feature>.md`. `<project>` is the project key — the git work-tree root (or the directory) as a path relative to `$HOME` with `/` → `-` (`~/dev/app` → `dev-app`); `isa where` prints it, `isa ls` lists that project's ISAs, `isa new <slug>` creates a fresh one and prints its path.
 
-When the ISA hooks are installed (see the repo's `install.py`), the harness enforces this loop. Every prompt is judged once: work with a checkable end state turns the session **ON** (a review counts — nothing has to change on disk), a question or a conversation leaves it **OFF**, and a misjudged OFF turns ON the moment a change is attempted. While ON, changes are refused until an ISA is bound and passes the articulation gate, every ISA edit is linted, and a turn can't end without a bound ISA or with an unproven claim. `isa new` (or writing/editing an `ISA.md` under `~/.isa/`) binds an ISA to the session.
+When the ISA hooks are installed (see the repo's `install.py`), the harness enforces this loop. Every prompt is looked at once, with no model call: a clear request for work with a checkable end state turns the session **ON** (a review counts — nothing has to change on disk), a greeting or thanks leaves it **OFF**, and anything in between is **yours to decide** — write the ISA, or start your answer with `ISA: not needed — <one-line reason>` (a question, an explanation, a conversation); the turn can't end with neither. Before going on without an ISA you ask the user — *"ISA is not enabled for this prompt (<reason>). Continue?"* with **Continue without ISA (Recommended)** and **Enable ISA** (Claude Code: with AskUserQuestion; pi asks by itself) — and follow their pick. Nobody to ask (a headless run) or `{"ask_without_isa": false}` in `~/.isa/config.json`: the declaration alone is enough. A session that is OFF turns ON the moment a change is attempted. While ON, changes are refused until an ISA is bound and passes the articulation gate, every ISA edit is linted, and a turn can't end without a bound ISA or with an unproven claim. `isa new` (or writing/editing an `ISA.md` under `~/.isa/`) binds an ISA to the session.
 
 **You write the content; the `isa` commands write the state.**
 
 | Step | Command | What it does |
 |------|---------|--------------|
-| Start | `isa new <slug> --goal "<verbatim span of the prompt>"` | Creates the ISA with frontmatter, `stated_goal`, `asks` and `root` filled, and binds it |
-| Write | Write/Edit | Goal, Criteria, Test Strategy, Decisions… — never a shell command on an ISA.md |
+| Start | `isa new <slug> --goal "<verbatim span of the prompt>"` | Creates the ISA with frontmatter, `stated_goal` and `root` filled, and binds it |
+| Write | Write/Edit | `asks` (each explicit ask, copied verbatim from the prompt), Goal, Criteria, Test Strategy (with `fails-when:` where no red run is possible), Decisions… — never a shell command on an ISA.md |
 | Check | `isa lint <ISA>` | Recomputes `progress`, then the gate; changes are refused until it is clean |
 | Red | `isa verify --red <ISA>` | Before building: records each behaviour/http/schema probe failing (the baseline) |
 | Prove | `isa verify <ISA> [ISC-N…]` | Runs the probes from `root`, ticks what passed, unticks what regressed, writes the Verification lines |
@@ -42,6 +42,10 @@ When the ISA hooks are installed (see the repo's `install.py`), the harness enfo
 | Close | `isa close <ISA>` | Re-runs every probe; sets `phase: complete` only when all pass and the close gate holds; prints the summary your final answer quotes |
 
 You never tick a box or write a generated Verification line, `progress`, or `phase: complete` yourself — the hooks refuse it and name the command.
+
+Run `isa verify` and `isa close` with a **600000 ms Bash timeout** (or in the background when the suite is slow): the default 120 s can stop a long run halfway, which corrupts nothing but leaves the ISA open.
+
+**`fails-when`.** From E2, a mechanical probe whose ISC can't be seen failing first — an `Anti:` ISC, a `kind:` without the red step (config, doc, file, decision, visual, regression), or `red: exempt …` — says what it would see if the claim were false: `fails-when: "<observation>"`. Writing it is where a probe that can't fail (`true`, a grep standing in for running the code) shows itself; `isa close` lists it beside each ISC never seen failing.
 
 (A long-lived per-repo "project ISA" is not supported — it is a possible future feature, not part of this skill.)
 
@@ -60,7 +64,7 @@ progress: 0/12                           # engine-owned: checked / total leaf IS
 started: <ISO-8601>                      # set once
 updated: <ISO-8601>                      # every edit
 root: /home/me/dev/app                   # engine-owned: the project every probe runs in
-asks: ["<verbatim span>", ...]           # the prompt's explicit asks; each needs a `- Ask N:` line at close
+asks: ["<verbatim span>", ...]           # you copy each explicit ask from the prompt (lint checks it is verbatim); each needs a `- Ask N:` line at close
 # optional
 iteration: 2                             # set when a completed ISA is reopened
 resumed_at: <ISO-8601>                   # when the last reopen happened

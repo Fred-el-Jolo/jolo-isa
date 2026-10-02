@@ -51,12 +51,14 @@ Probes decide which ISCs may be ticked.
   check: flag file one
   threshold: exit 0
   tool: echo run >> {d}/runs && test -f {d}/ok1
+  fails-when: "{d}/ok1 is missing"
 - isc: ISC-2
   type: bash
   kind: file
   check: flag file two
   threshold: exit 0
   tool: test -f {d}/ok2
+  fails-when: "{d}/ok2 is missing"
 - isc: ISC-3
   type: manual
   kind: doc
@@ -69,6 +71,7 @@ Probes decide which ISCs may be ticked.
   check: same probe as ISC-1
   threshold: exit 0
   tool: echo run >> {d}/runs && test -f {d}/ok1
+  fails-when: "{d}/ok1 is missing"
 ```
 """
 

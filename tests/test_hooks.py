@@ -22,11 +22,11 @@ class HookCase(unittest.TestCase):
         self.home = os.path.join(self.tmp, "isa-home")
         self.proj = os.path.join(os.path.expanduser("~"), ".cache", "isa-test-proj-" + os.path.basename(self.tmp))
         os.makedirs(os.path.join(self.proj, ".git"))
-        # ISA_JUDGE=heuristic: no test ever calls a model (the gate's unsure prompts count as yes)
-        self.env = dict(os.environ, ISA_HOME=self.home, ISA_SKILL_DIR=os.path.join(ROOT, "skill/ISA"),
-                        ISA_JUDGE="heuristic")
-        for k in ("ISA_MODE", "ISA_JUDGE_CHILD"):
-            self.env.pop(k, None)
+        # no inherited ISA_* switch (e.g. from an `isa verify` run) reaches the hooks under test
+        # nor the harness's "headless" markers: tests see an attended session unless they set them
+        self.env = {k: v for k, v in os.environ.items()
+                    if not k.startswith("ISA_") and k not in ("CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_ENTRYPOINT")}
+        self.env.update(ISA_HOME=self.home, ISA_SKILL_DIR=os.path.join(ROOT, "skill/ISA"))
         self.sid = "s-" + os.path.basename(self.tmp)
         self.pid = "p1"
 
@@ -43,6 +43,21 @@ class HookCase(unittest.TestCase):
                            capture_output=True, env=self.env, timeout=20)
         out = json.loads(p.stdout) if p.stdout.strip() else {}
         return p.returncode, out, p.stderr
+
+    def config(self, **settings):
+        """Write ~/.isa/config.json for this test's ISA_HOME."""
+        os.makedirs(self.home, exist_ok=True)
+        with open(os.path.join(self.home, "config.json"), "w") as f:
+            json.dump(settings, f)
+
+    def log_rows(self, step=None):
+        """Debug log rows (SPEC-v2 § 11.6) under this test's ISA_HOME, oldest first."""
+        d = os.path.join(self.home, "_state", "logs")
+        rows = []
+        for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            with open(os.path.join(d, name)) as f:
+                rows += [json.loads(line) for line in f if line.strip()]
+        return [r for r in rows if step is None or r.get("step") == step]
 
     def isa_path(self, slug="20260101-000000_t"):
         key = subprocess.run([sys.executable, ISA, "where"], cwd=self.proj, env=self.env, text=True,
@@ -363,3 +378,13 @@ class TestFailOpen(HookCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def fake_cli(dirpath, name, body):
+    """An executable `name` in `dirpath` running the Python `body` (argv in sys.argv, prompt on stdin)."""
+    os.makedirs(dirpath, exist_ok=True)
+    path = os.path.join(dirpath, name)
+    with open(path, "w") as f:
+        f.write(f"#!{sys.executable}\nimport json, os, sys, time\n{body}\n")
+    os.chmod(path, 0o755)
+    return path

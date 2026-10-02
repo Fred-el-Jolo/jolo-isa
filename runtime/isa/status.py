@@ -10,7 +10,7 @@ waived ISCs), in file order — the same set `lint` computes `progress` over.
 import json
 import os
 
-from . import lint, problems, state
+from . import lint, logs, problems, state
 
 
 def view(harness, session):
@@ -25,19 +25,16 @@ def view(harness, session):
 
 
 def _last_gate(harness, session):
-    """The session's latest gate verdict from ~/.isa/_state/judge.jsonl, or None."""
+    """The session's latest gate verdict from the debug log (logs.py, SPEC-v2 § 11.6), or None."""
     last = None
-    try:
-        with open(os.path.join(state.home(), "_state", "judge.jsonl")) as f:  # never created by a read
-            for line in f:
-                try:
-                    row = json.loads(line)
-                except ValueError:
-                    continue
-                if row.get("harness") == harness and row.get("session") == session:
-                    last = {k: row.get(k) for k in ("verdict", "source", "reason", "ms")}
-    except OSError:
-        pass
+    for row in logs.recent():  # reads only: never creates the log folder
+        if row.get("step") == "prompt" and row.get("harness") == harness and row.get("session") == session:
+            if row.get("prefilter"):
+                last = {"verdict": row["prefilter"], "source": "prefilter", "reason": row.get("reason"),
+                        "ms": row.get("ms")}
+            elif row.get("mode_source"):
+                last = {"verdict": row.get("mode"), "source": "override", "reason": row["mode_source"],
+                        "ms": row.get("ms")}
     return last
 
 

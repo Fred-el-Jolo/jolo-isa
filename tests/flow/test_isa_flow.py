@@ -7,7 +7,8 @@ Opt-in and paid (Sonnet 5.5, roughly $0.30–1 a run):
 
 Each session gets a sealed sandbox: a fresh git project copied from `fixture/`, a private ISA_HOME, the
 repo's `isa` first on PATH, a generated `--settings` with the repo's hooks only (the user's
-~/.claude/settings.json, skills, plugins and MCP servers are not loaded), `ISA_JUDGE=claude`.
+~/.claude/settings.json, skills, plugins and MCP servers are not loaded). No judge (SPEC-v2 § 11): the
+free pre-filter, and for an unsure prompt the model's own `ISA: not needed — <reason>` declaration.
 
 Output: `tests/evals/results/flow/<stamp>/` (or `$ISA_FLOW_OUT/<stamp>/`) with `ISA.articulation.md`
 (the ISA at the first project change), `ISA.final.md`, `timeline.md`, `verdict.md`, `verdict.json` and
@@ -16,6 +17,7 @@ both transcripts. When that folder sits in the `eval-results` worktree the run i
 """
 import glob
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -107,7 +109,7 @@ class Sandbox:
 
     def env(self):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("ISA_", "CLAUDE_CODE_", "CLAUDECODE"))}
-        env.update(ISA_HOME=self.isa_home, ISA_SKILL_DIR=SKILL_DIR, ISA_JUDGE="claude",
+        env.update(ISA_HOME=self.isa_home, ISA_SKILL_DIR=SKILL_DIR,
                    ISA_FLOW_PROJECT=self.proj, ISA_FLOW_SNAPSHOT=os.path.join(self.out, "ISA.articulation.md"),
                    PATH=self.bin + os.pathsep + os.environ.get("PATH", ""), ENABLE_CLAUDEAI_MCP_SERVERS="false")
         return env
@@ -178,14 +180,19 @@ class Run:
     def bash(self, needle):
         return [c for c in self.calls if c["name"] == "Bash" and needle in (c["input"].get("command") or "")]
 
-    def gate_rows(self):
+    def log_rows(self, step=None):
         rows = []
-        try:
-            with open(os.path.join(self.sb.isa_home, "_state", "judge.jsonl")) as f:
-                rows = [json.loads(line) for line in f if line.strip()]
-        except OSError:
-            pass
-        return [r for r in rows if r.get("session") == self.session] or rows
+        for p in sorted(glob.glob(os.path.join(self.sb.isa_home, "_state", "logs", "*.jsonl"))):
+            with open(p) as f:
+                rows += [json.loads(line) for line in f if line.strip()]
+        return [r for r in rows if step is None or r.get("step") == step]
+
+    def gate_rows(self):
+        """The pre-filter verdict of each prompt, from the debug log (SPEC-v2 § 11.6)."""
+        rows = [r for r in self.log_rows("prompt") if r.get("prefilter")]
+        mine = [r for r in rows if r.get("session") == self.session] or rows
+        return [{"verdict": r["prefilter"], "source": "prefilter", "ms": r.get("ms"), "reason": r.get("reason")}
+                for r in mine]
 
     def session_state(self):
         for p in glob.glob(os.path.join(self.sb.isa_home, "_state", "sessions", "*.json")):
@@ -226,9 +233,9 @@ def judge_yes(run):
     st, s = run.session_state(), []
     gates = run.gate_rows()
     first = gates[0] if gates else {}
-    s.append(_stage(1, "gate verdict yes, user line `ISA: ON`",
+    s.append(_stage(1, "pre-filter yes, user line `ISA: ON`",
                     first.get("verdict") == "yes" and "ISA: ON" in run.hook_text("UserPromptSubmit"),
-                    f"judge row: {first.get('verdict')} via {first.get('source')} in {first.get('ms')} ms — "
+                    f"debug log: {first.get('verdict')} via {first.get('source')} in {first.get('ms')} ms — "
                     f"{first.get('reason')}"))
     with open(os.path.join(REPO, "runtime", "isa", "protocol.md")) as f:
         marker = f.readline().strip()
@@ -244,9 +251,10 @@ def judge_yes(run):
     fm = p["fm"]
     news = run.bash("isa new")
     goal = str(fm.get("stated_goal") or "")
-    ok4 = bool(news) and path and st.get("bound") == path and fm.get("root") and isinstance(fm.get("asks"), list) \
-        and goal and goal in YES_PROMPT
-    s.append(_stage(4, "`isa new` ran, session bound, root/asks/stated_goal set", ok4,
+    asks = fm.get("asks") if isinstance(fm.get("asks"), list) else None
+    ok4 = bool(news) and path and st.get("bound") == path and fm.get("root") and asks is not None \
+        and all(str(a) in YES_PROMPT for a in asks) and goal and goal in YES_PROMPT
+    s.append(_stage(4, "`isa new` ran, session bound, root and stated_goal set, asks verbatim", ok4,
                     f"{len(news)} `isa new` call(s); bound={st.get('bound') == path}; root={fm.get('root')!r}; "
                     f"asks={fm.get('asks')!r}; stated_goal={goal!r}"))
 
@@ -264,8 +272,9 @@ def judge_yes(run):
 
     ledger = run.ledger()
     notes, ok6 = [], True
-    for isc in sorted({r["isc"] for r in ledger if r.get("kind") == "verify" and r.get("ok") and r.get("isc")}):
-        green = next(r for r in ledger if r.get("isc") == isc and r.get("kind") == "verify" and r.get("ok"))
+    greens = [r for r in ledger if r.get("kind") == "verify" and r.get("run") == "green" and r.get("ok") and r.get("isc")]
+    for isc in sorted({r["isc"] for r in greens}):
+        green = next(r for r in greens if r["isc"] == isc)  # a red run that passed (a probe that can't fail) isn't one
         red = [r for r in ledger if r.get("isc") == isc and r.get("run") == "red" and not r.get("ok")
                and r.get("tool_sha") == green.get("tool_sha") and r.get("t", 0) < green["t"]
                and r.get("fingerprint") != green.get("fingerprint")]
@@ -312,19 +321,23 @@ def judge_yes(run):
     return s, path
 
 
+DECLARED = re.compile(r"ISA: not needed\s*[—–-]+\s*\S")
+
+
 def judge_no(run):
     gates = run.gate_rows()
     first = gates[0] if gates else {}
-    ctx = [h for h in run.hooks if "UserPromptSubmit" in h["event"] + h["name"] and "additionalContext" in h["text"]]
     stops = [h for h in run.hooks if "Stop" in h["event"] + h["name"]]
     loud = [h for h in stops if h["exit"] not in (0, None) or "block" in h["text"] or "ISA" in h["text"]]
+    ups = run.hook_text("UserPromptSubmit")
+    line = next((ln for ln in run.final.splitlines() if DECLARED.search(ln)), "")
     return [
-        _stage(1, "gate verdict no", first.get("verdict") == "no",
-               f"judge row: {first.get('verdict')} via {first.get('source')} in {first.get('ms')} ms — "
+        _stage(1, "pre-filter unsure, declaration line injected", first.get("verdict") == "unsure" and "[ISA: unsure" in ups,
+               f"debug log: {first.get('verdict')} via {first.get('source')} in {first.get('ms')} ms — "
                f"{first.get('reason')}"),
-        _stage(2, "user line `ISA: OFF`", "ISA: OFF" in run.hook_text("UserPromptSubmit"), "UserPromptSubmit output"),
+        _stage(2, "user line `ISA: unsure`", "ISA: unsure" in ups, "UserPromptSubmit output"),
         _stage(3, "no ISA file", not run.isas(), f"{len(run.isas())} ISA file(s)"),
-        _stage(4, "no context injected", not ctx, f"{len(ctx)} UserPromptSubmit context block(s)"),
+        _stage(4, "the answer declares `ISA: not needed — <reason>`", bool(line), repr(line[:160])),
         _stage(5, "Stop hook silent", not loud, f"{len(stops)} Stop hook event(s), {len(loud)} not silent"),
     ]
 
@@ -390,7 +403,7 @@ class TestIsaFlow(unittest.TestCase):
                 f.write(report)
             gates = [g.get("ms") for r in (yes_run, no_run) for g in r.gate_rows()]
             with open(os.path.join(cls.out, "verdict.json"), "w") as f:
-                json.dump({"stamp": stamp, "model": MODEL, "gate_ms": gates, "cost_usd": [yes_run.cost, no_run.cost],
+                json.dump({"stamp": stamp, "model": MODEL, "judge": "none", "gate_ms": gates, "cost_usd": [yes_run.cost, no_run.cost],
                            "secs": [round(yes_run.secs), round(no_run.secs)], "yes": cls.yes, "no": cls.no}, f, indent=1)
             print("\n" + report, file=sys.stderr)
             for name, sb in (("yes", yes_sb), ("no", no_sb)):  # ledger, judge log, sessions: re-gradable later

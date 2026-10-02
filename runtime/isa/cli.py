@@ -7,7 +7,7 @@
     isa where                    project key and ISA folder for the current directory
     isa lint [--close] FILE…     recompute progress / nested parents / orphaned generated lines, then
                                  the mechanical gate check (same engine the hooks use)
-    isa fit "<prompt>"           the gate's free pre-filter verdict (yes | no | unsure → judge) + fit score
+    isa fit "<prompt>"           the gate's free pre-filter verdict (yes | no | unsure → the model decides) + fit score
     isa verify [--red] ISA [ISC-N…] [--attest "<evidence>"]
                                  run the probes (cwd = the ISA's root), record them, tick what passed and
                                  untick what regressed; --attest ticks a self-attested ISC; --red records
@@ -23,6 +23,7 @@
 import json
 import os
 import sys
+import time
 import traceback
 
 from . import commands, engine, fit, logs, state, status
@@ -34,6 +35,28 @@ def main(argv=None):
         print(__doc__.strip())
         return 0
     cmd, args = argv[0], argv[1:]
+    if cmd in LOGGED:
+        t0 = time.time()
+        logs.take_note()
+        rc = 2
+        try:
+            rc = _dispatch(cmd, args)
+            return rc
+        finally:
+            row = {"step": "cmd", "cmd": cmd, "exit": rc, "ms": int((time.time() - t0) * 1000), "cwd": os.getcwd()}
+            isa = next((os.path.expanduser(a) for a in args if a.endswith("ISA.md")), None)
+            if isa:
+                row["isa"] = isa
+            row.update(logs.take_note())
+            if cmd != "purge-logs" or os.path.isdir(logs.log_dir()):  # a purge never creates the folder
+                logs.write(row)
+    return _dispatch(cmd, args)
+
+
+LOGGED = {"new", "lint", "verify", "close", "purge-logs"}
+
+
+def _dispatch(cmd, args):
     if cmd == "hook":
         return hook(args[0] if args else "claude")
     if cmd == "lint":
@@ -51,7 +74,7 @@ def main(argv=None):
         text = " ".join(args) if args else sys.stdin.read()
         verdict, why = fit.prefilter(text)
         level, reasons = fit.score(text)
-        print(f"{verdict} — {why}" + (" (goes to the judge)" if verdict == "unsure" else "")
+        print(f"{verdict} — {why}" + (" (the model decides: an ISA, or `ISA: not needed — <reason>`)" if verdict == "unsure" else "")
               + f"\n  fit score: {level}" + "".join(f"\n  - {r}" for r in reasons))
         return 0
     if cmd == "verify":
@@ -170,7 +193,9 @@ def _claude_in(d):
         "tool": d.get("tool_name"), "tool_input": d.get("tool_input"), "tool_use_id": d.get("tool_use_id"),
         "temp_dirs": [d["scratchpad_dir"]] if d.get("scratchpad_dir") else [],
         "retried": bool(d.get("stop_hook_active")), "transcript_path": d.get("transcript_path"),
-        "tool_output": _tool_output(d.get("tool_response")), "_name": name,
+        "tool_output": _tool_output(d.get("tool_response")), "tool_response": d.get("tool_response"), "_name": name,
+        # Stop: the final answer, when the harness passes it (the transcript is read otherwise)
+        "context": d.get("last_assistant_message") if name == "Stop" else None,
     }
 
 

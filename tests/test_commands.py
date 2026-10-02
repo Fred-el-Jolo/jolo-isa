@@ -8,7 +8,7 @@ import sys
 import unittest
 
 from tests.test_evidence import FIXTURE, EvidenceCase, read
-from tests.test_hooks import ISA, ROOT
+from tests.test_hooks import ISA, ROOT, fake_cli
 
 sys.path.insert(0, os.path.join(ROOT, "runtime"))
 from isa import classify, evidence, isafile, lint  # noqa: E402
@@ -454,6 +454,109 @@ class TestStrategySnapshot(CommandCase):
         self.assertEqual(sorted(e), ["ISC-1", "ISC-2", "ISC-3", "ISC-4"])
         self.assertEqual((e["ISC-3"]["type"], e["ISC-2"]["tool_sha"]),
                          ("manual", evidence.tool_sha(f"test -f {self.d}/ok2")))
+
+
+# ------------------------------------------------------------------ M8 (SPEC-v2 § 11.2): no model call
+
+TRIPWIRE = """
+with open(os.environ["TRIP_LOG"], "a") as f:
+    f.write("called " + " ".join(sys.argv[1:]) + "\\n")
+sys.exit(3)
+"""
+
+
+class TestNewNoModel(CommandCase):
+    def test_no_model_and_asks_left_to_the_model(self):
+        bin_ = os.path.join(self.tmp, "fakebin")
+        for name in ("claude", "pi", "jev"):
+            fake_cli(bin_, name, TRIPWIRE)
+        trip = os.path.join(self.tmp, "trip.log")
+        self.env.update(PATH=bin_ + os.pathsep + self.env["PATH"], TRIP_LOG=trip)
+        self.hook("UserPromptSubmit", prompt=LONG_PROMPT)
+        rc, out = self.isa("new", "shout-flag")
+        self.assertEqual(rc, 0, out)
+        path = out.strip().splitlines()[-1]
+        self.assertEqual(self.fm(path)["asks"], [])
+        self.assertIn("# asks: list each explicit ask of the prompt as a verbatim span", read(path))
+        self.assertFalse(os.path.exists(trip), read(trip) if os.path.exists(trip) else "")
+        self.assertEqual([r for r in evidence.rows(path) if r.get("kind") == "asks"], [])
+
+
+V2_STARTED = ("started: 2026-01-01T00:00:00Z", "started: 2026-10-02T15:00:00Z")
+
+
+class TestAsksSnapshot(CommandCase):
+    def test_first_verify_snapshots_then_removal_needs_refined(self):
+        self.hook("UserPromptSubmit", prompt=LONG_PROMPT)
+        text = self.text.replace(*V2_STARTED).replace(
+            "updated: 2026-01-01T00:00:00Z", 'updated: 2026-01-01T00:00:00Z\nasks: ["Add a --shout flag to greet.py", '
+                                             '"with a test"]')
+        path = self.write_isa(text)
+        self.hook("PostToolUse", tool_name="Write", tool_input={"file_path": path}, tool_response={})
+        self.flag("ok2")
+        self.verify(path, "ISC-2")
+        self.verify(path, "ISC-2")
+        snaps = [r["asks"] for r in evidence.rows(path) if r.get("kind") == "asks"]
+        self.assertEqual(snaps, [["Add a --shout flag to greet.py", "with a test"]])  # once, at the first verify
+        self.write_isa(read(path).replace(', "with a test"]', "]"), path)
+        rc, out = self.isa("lint", path)
+        self.assertIn("ask removed from `asks:` without a `refined:`", out)
+        self.write_isa(read(path).rstrip("\n") + "\n\n## Decisions\n\n- 2026-10-02 15:00: refined: ask \"with a "
+                                                    "test\" dropped — the user said the test can wait\n", path)
+        rc, out = self.isa("lint", path)
+        self.assertNotIn("ask removed", out)
+
+
+class TestAsksVerbatim(CommandCase):
+    def test_paraphrase_refused(self):
+        self.hook("UserPromptSubmit", prompt=LONG_PROMPT)
+        good = self.text.replace(*V2_STARTED).replace(
+            "updated: 2026-01-01T00:00:00Z", 'updated: 2026-01-01T00:00:00Z\nasks: ["prints the greeting in uppercase"]')
+        path = self.write_isa(good)
+        self.hook("PostToolUse", tool_name="Write", tool_input={"file_path": path}, tool_response={})
+        rc, out = self.isa("lint", path)
+        self.assertNotIn("not a verbatim span", out)
+        self.write_isa(good.replace("prints the greeting in uppercase", "shouts the greeting"), path)
+        rc, out = self.isa("lint", path)
+        self.assertEqual(rc, 1, out)
+        self.assertIn('ask "shouts the greeting" is not a verbatim span of a prompt', out)
+
+    def test_older_isa_warns(self):
+        self.hook("UserPromptSubmit", prompt=LONG_PROMPT)
+        path = self.write_isa(self.text.replace(
+            "updated: 2026-01-01T00:00:00Z", 'updated: 2026-01-01T00:00:00Z\nasks: ["shouts the greeting"]'))
+        self.hook("PostToolUse", tool_name="Write", tool_input={"file_path": path}, tool_response={})
+        rc, out = self.isa("lint", path)
+        self.assertIn("WARN: frontmatter: ask \"shouts the greeting\" is not a verbatim span", out)
+
+
+class TestCloseFailsWhen(CommandCase):
+    def test_listed_beside_never_seen_failing(self):
+        path = self.write_isa(self.text)
+        self.flag("ok1")
+        self.flag("ok2")
+        self.verify(path)
+        self.isa("verify", path, "ISC-3", "--attest", "the output reads right")
+        self.write_isa(read(path).rstrip("\n") + "\n- Goal: yes — the probes cover the goal\n", path)
+        rc, out = self.isa("close", path)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Never seen failing by design (red-exempt) — what each probe would see if the claim were false:",
+                      out)
+        self.assertIn(f"  - ISC-4 (Anti): {self.d}/ok1 is missing", out)
+        self.assertIn(f"  - ISC-2 (kind file): {self.d}/ok2 is missing", out)
+
+
+class TestProbeEnv(CommandCase):
+    def test_isa_switches_stripped_home_kept(self):
+        text = self.text.replace("  tool: test -f {d}/ok2".replace("{d}", self.d),
+                                 f"  tool: env | grep '^ISA_' | sort > {self.d}/env.txt && test -f {self.d}/ok2")
+        path = self.write_isa(text)
+        self.flag("ok2")
+        self.env.update(ISA_ADVICE="off", ISA_MODE="off", ISA_JUDGE="claude")
+        rc, out = self.verify(path, "ISC-2")
+        self.assertEqual(rc, 0, out)
+        seen = read(os.path.join(self.d, "env.txt")).split()
+        self.assertEqual([v.split("=", 1)[0] for v in seen], ["ISA_HOME"])
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ TIER_ARTICULATION = {
 CORE = ["task", "slug", "effort", "phase", "progress", "started", "updated"]
 PHASES = {"observe", "think", "plan", "build", "execute", "verify", "learn", "complete"}
 TS_KEYS = {"isc", "anchors_to", "type", "check", "threshold", "tool",
-           "property", "generator", "runs", "cwd", "risk", "root", "kind", "red", "class"}
+           "property", "generator", "runs", "cwd", "risk", "root", "kind", "red", "class", "fails-when"}
 FEATURE_KEYS = {"name", "description", "satisfies", "depends_on", "parallelizable"}
 # Test Strategy types a machine can't run: their ticks are self-attested (evidence.py)
 SELF_ATTESTED = {"manual", "screenshot", "eval"}
@@ -439,6 +439,26 @@ def _sev(r, fm, strict=True):
     return r.err if strict and is_v2(fm) else r.warn
 
 
+RED_KINDS = {"behaviour", "behavior", "http", "schema"}
+
+
+def red_exempt_why(isc_text, entry):
+    """Why an ISC can't get a red baseline from its Test Strategy entry alone (None when it can):
+    an Anti ISC, a kind without the red step, or `red: exempt …`. (commands.red_exempt adds E1.)"""
+    entry = entry or {}
+    if str(isc_text).lstrip().startswith("Anti:"):
+        return "Anti"
+    kind = str(entry.get("kind") or "").strip().lower()
+    if kind == "regression":
+        return "regression"
+    if kind and kind not in RED_KINDS:
+        return f"kind {kind}"
+    red = str(entry.get("red") or "").strip()
+    if red.lower().startswith("exempt"):
+        return red
+    return None
+
+
 def _v2_entry_rules(r, e, fm, tier, iscs, content):
     i = e["isc"]
     kind = str(e.get("kind") or "").strip().lower()
@@ -456,6 +476,10 @@ def _v2_entry_rules(r, e, fm, tier, iscs, content):
         elif no_grep and typ not in SELF_ATTESTED and grep_only(e.get("tool")):
             say(f"Test Strategy: {i} `kind: {kind}` can't be proven by a grep-only probe (it reads text, it doesn't "
                 "run the code) — run it")
+    if tier != "E1" and str(e.get("tool") or "").strip() and typ not in SELF_ATTESTED \
+            and not str(e.get("fails-when") or "").strip() and red_exempt_why(iscs.get(i, (False, ""))[1], e):
+        say(f"Test Strategy: {i} can't get a red baseline ({red_exempt_why(iscs.get(i, (False, ''))[1], e)}) — "
+            "add `fails-when: \"<what the probe sees when the claim is false>\"`")
     risk = str(e.get("risk") or "").strip()
     text = iscs.get(i, (False, ""))[1] + " " + str(e.get("tool") or "")
     if not risk and RISK_WORDS.search(text):

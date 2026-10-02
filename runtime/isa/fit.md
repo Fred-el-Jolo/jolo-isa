@@ -12,4 +12,5 @@ neighbour of what was asked, leaving parts silently uncovered, and claiming a re
 behind it.
 
 fit.py's `prefilter` answers the obvious cases for free (greetings → no, work requests → yes); every
-other prompt goes to the judge (judge.py, template gate.md).
+other prompt is left to the running model: it writes an ISA, or answers with `ISA: not needed — <reason>`,
+which Stop checks (engine.py, SPEC-v2 § 11.2).

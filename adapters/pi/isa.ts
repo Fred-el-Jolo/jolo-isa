@@ -4,13 +4,17 @@
 // pi events to engine events and engine results back to pi. It fails OPEN: pi blocks a tool
 // when a tool_call handler throws, so every handler catches its own errors and warns instead.
 //
-//   before_agent_start  → engine "session_start" (first run / after compaction) + "prompt" (the gate:
-//                          may wait for the judge, so it gets ISA_PROMPT_TIMEOUT_MS, and it carries the
-//                          tail of the previous assistant message — a "go" means what it approves)
+//   before_agent_start  → engine "session_start" (first run / after compaction) + "prompt" (the gate's
+//                          free pre-filter; it carries the tail of the previous assistant message)
 //   tool_call           → engine "pre_tool"      → { block, reason }
 //   tool_result         → engine "post_tool" / "tool_failed" → lint feedback appended to the result
 //   session_compact     → engine "compacted"     → protocol + Goal re-injected on the next run
-//   agent_before_settle → engine "stop"          → one continuation per prompt, then a warning
+//   agent_before_settle → engine "stop" (with the last assistant text: an unsure prompt needs an ISA
+//                          or an `ISA: not needed — <reason>` line). When the agent went on without an ISA,
+//                          the engine answers `ask`: this extension asks the user with its own dialog
+//                          ("Continue without ISA" / "Enable ISA") and reports the pick (engine "ask_answer");
+//                          Enable ISA continues the run with the ON block. No UI → nobody is asked.
+//                          One continuation per prompt, then a warning
 //                          (completed runs only — never after an abort or an error)
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { spawnSync } from "node:child_process"
@@ -18,13 +22,11 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 const ISA_BIN = process.env.ISA_BIN || join(homedir(), ".local", "share", "isa", "runtime", "bin", "isa")
-const TIMEOUT_MS = Number(process.env.ISA_HOOK_TIMEOUT_MS || 5000)
-// the prompt event may wait for the gate's judge (ISA_JUDGE_TIMEOUT, 12 s): its limit must exceed it,
-// or the engine is killed and the session silently stays OFF
-const PROMPT_TIMEOUT_MS = Number(process.env.ISA_PROMPT_TIMEOUT_MS || 20000)
+// every engine call: no model, no network; the slowest step is a 5 s-capped `git status` on large repos
+const TIMEOUT_MS = Number(process.env.ISA_HOOK_TIMEOUT_MS || 15000)
 const CONTEXT_CHARS = 2000
 
-type EngineResult = { context?: string; deny?: string; block?: string; warn?: string }
+type EngineResult = { context?: string; deny?: string; block?: string; warn?: string; ask?: string; options?: string[] }
 
 export function callEngine(payload: Record<string, unknown>, timeoutMs: number = TIMEOUT_MS): EngineResult {
   const r = spawnSync("python3", [ISA_BIN, "hook", "pi"], {
@@ -73,14 +75,14 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
         if (content.trim()) return content.slice(-CONTEXT_CHARS)
       }
     } catch {
-      // no context is fine: the judge then sees the prompt alone
+      // no context is fine: the engine then sees the prompt alone
     }
     return ""
   }
   const run = (ctx: ExtensionContext, event: string, extra: Record<string, unknown> = {}): EngineResult => {
     try {
       const payload = { event, session: sessionId(ctx), cwd: ctx.cwd, prompt_id: `pi-${runId}-${promptSeq}`, ...extra }
-      const res = event === "prompt" ? engine(payload, PROMPT_TIMEOUT_MS) : engine(payload)
+      const res = engine(payload)
       if (res.warn) warn(ctx, res.warn)
       return res
     } catch (e) {
@@ -104,7 +106,7 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
       startedFor = sid
       compacted = false
     }
-    const p = run(ctx, "prompt", { prompt: event.prompt, context: lastAssistantText(ctx) })
+    const p = run(ctx, "prompt", { prompt: event.prompt, context: lastAssistantText(ctx), has_ui: Boolean(ctx.hasUI) })
     if (p.context) parts.push(p.context)
     if (!parts.length) return
     return { message: { customType: "isa", content: parts.join("\n\n"), display: false } }
@@ -126,10 +128,19 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
     return { content: [...event.content, { type: "text" as const, text: `\n[ISA] ${res.context}` }] }
   })
 
-  pi.on("agent_before_settle", (event, ctx) => {
+  pi.on("agent_before_settle", async (event, ctx) => {
     // only a run that finished normally is checked: never restart one the user aborted or that errored
     if (event.outcome !== "completed" || event.context?.canContinue === false) return
-    const res = run(ctx, "stop")
+    let res = run(ctx, "stop", { context: lastAssistantText(ctx), has_ui: Boolean(ctx.hasUI) })
+    if (res.ask && ctx.hasUI) {
+      let choice: string | undefined
+      try {
+        choice = await ctx.ui.select(res.ask, res.options ?? ["Continue without ISA", "Enable ISA"])
+      } catch (e) {
+        warn(ctx, `ISA: could not ask (${(e as Error).message}) — continuing without an ISA`)
+      }
+      res = run(ctx, "ask_answer", { choice: choice ?? "Continue without ISA" })
+    }
     if (!res.block) return
     return {
       continue: true,

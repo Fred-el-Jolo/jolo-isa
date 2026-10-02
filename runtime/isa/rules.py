@@ -9,7 +9,8 @@ log. `lint.lint` stays a pure file check (examples, tools/lint_isa.py); these ru
   self-attested entry whose ISC has a failing probe run, needs `refined: ISC-N probe downgraded — <why>`;
 - waiver (§ 6.5): `waived: ISC-N — "<verbatim user words>"`, the quote found in a prompt of a session
   the ISA was bound to;
-- asks (§ 3.1): an ask `isa new` extracted may be removed from `asks:` only with a `refined:` row.
+- asks (§ 3.1, § 11.2): each ask is a verbatim span of a prompt of the ISA's sessions (the model writes
+  them); an ask in the snapshot taken by the first `isa verify` may be removed only with a `refined:` row.
 
 Errors for ISAs started under v2, warnings for older ones (spec § 8).
 """
@@ -104,12 +105,20 @@ def _waivers(isa_path, parsed):
 
 
 def _asks(isa_path, parsed):
-    extracted = next((r.get("asks") or [] for r in evidence.rows(isa_path) if r.get("kind") == "asks"), [])
+    out = []
+    snapshot = next((r.get("asks") or [] for r in evidence.rows(isa_path) if r.get("kind") == "asks"), [])
     now = parsed["fm"].get("asks") if isinstance(parsed["fm"].get("asks"), list) else []
-    gone = [a for a in extracted if a not in now]
+    gone = [a for a in snapshot if a not in now]
     if gone and not re.search(r"refined:.*\bask", parsed["content"].get("Decisions", ""), re.I):
-        return [f"frontmatter: ask removed from `asks:` without a `refined:` Decisions row: \"{gone[0][:60]}\""]
-    return []
+        out.append(f"frontmatter: ask removed from `asks:` without a `refined:` Decisions row: \"{gone[0][:60]}\"")
+    if now:
+        prompts = [p for stem in sessions_of(isa_path) for p in _session_prompts(stem)]
+        if prompts:  # no logged prompt (an ISA written outside a session): nothing to check against
+            for a in now:
+                if not any(str(a) in p for p in prompts):
+                    out.append(f"frontmatter: ask \"{str(a)[:60]}\" is not a verbatim span of a prompt of this ISA's "
+                               "sessions — copy the user's words byte-for-byte")
+    return out
 
 
 def check(isa_path, parsed):
