@@ -43,10 +43,6 @@ class TestFit(unittest.TestCase):
         for p in NONE:
             self.assertEqual(fit.score(p)[0], "none", p)
 
-    def test_advice(self):
-        self.assertEqual(fit.advice("none", []), "")
-        self.assertIn("ISA fit: strong", fit.advice(*fit.score(STRONG[0])))
-
 
 if __name__ == "__main__":
     unittest.main()

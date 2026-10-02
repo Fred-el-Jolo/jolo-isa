@@ -22,7 +22,11 @@ class HookCase(unittest.TestCase):
         self.home = os.path.join(self.tmp, "isa-home")
         self.proj = os.path.join(os.path.expanduser("~"), ".cache", "isa-test-proj-" + os.path.basename(self.tmp))
         os.makedirs(os.path.join(self.proj, ".git"))
-        self.env = dict(os.environ, ISA_HOME=self.home, ISA_SKILL_DIR=os.path.join(ROOT, "skill/ISA"))
+        # ISA_JUDGE=heuristic: no test ever calls a model (the gate's unsure prompts count as yes)
+        self.env = dict(os.environ, ISA_HOME=self.home, ISA_SKILL_DIR=os.path.join(ROOT, "skill/ISA"),
+                        ISA_JUDGE="heuristic")
+        for k in ("ISA_MODE", "ISA_JUDGE_CHILD"):
+            self.env.pop(k, None)
         self.sid = "s-" + os.path.basename(self.tmp)
         self.pid = "p1"
 
@@ -72,10 +76,14 @@ class HookCase(unittest.TestCase):
 
 class TestSessionStart(HookCase):
     def test_session_start_all_sources(self):
-        for src in ("startup", "resume", "clear", "compact"):
+        for src in ("startup", "resume", "clear", "compact"):  # OFF / undecided: nothing is injected
+            code, out, _ = self.hook("SessionStart", source=src)
+            self.assertEqual((code, self.ctx(out)), (0, ""), src)
+        self.hook("UserPromptSubmit", prompt="Fix the bug in x.py so the tests pass")
+        for src in ("startup", "resume", "clear", "compact"):  # ON: the ON block comes back on every start
             code, out, _ = self.hook("SessionStart", source=src)
             self.assertEqual(code, 0)
-            self.assertIn("[ISA protocol", self.ctx(out), src)
+            self.assertIn("[ISA: ON", self.ctx(out), src)
 
     def test_compact_reinjects_goal_and_open_iscs(self):
         self.write_isa(E1)
@@ -108,23 +116,27 @@ class TestPrompt(HookCase):
         self.assertIn("lint ok", self.ctx(out))
 
 
-class TestFitNote(HookCase):
+class TestReviewPromptOn(HookCase):
+    """SPEC-v2: a review is work with a checkable end state — the gate turns the session ON (no more
+    advice the model may ignore), reads stay free, and the turn can't end without an ISA."""
     REVIEW = "Review the whole auth module for security issues and make sure every endpoint checks the session."
 
-    def test_fit(self):
+    def test_review_turns_on(self):
         _, out, _ = self.hook("UserPromptSubmit", prompt=self.REVIEW)
-        self.assertIn("ISA fit: strong", self.ctx(out))
-        _, out, _ = self.hook("UserPromptSubmit", prompt="what time is it?")
+        self.assertIn("[ISA: ON", self.ctx(out))
         self.assertNotIn("ISA fit", self.ctx(out))
+        _, out, _ = self.hook("UserPromptSubmit", prompt="what time is it?")
+        self.assertNotIn("[ISA: ON", self.ctx(out))  # an ON session gets no second ON block
 
-    def test_fit_never_blocks(self):
+    def test_reads_free_but_stop_needs_isa(self):
         self.hook("UserPromptSubmit", prompt=self.REVIEW)
         for tool, ti in [("Read", {"file_path": "/etc/hosts"}), ("Grep", {"pattern": "session"}),
                          ("Bash", {"command": "rg -n session src/"})]:
             _, out, _ = self.hook("PreToolUse", tool_name=tool, tool_input=ti)
             self.assertIsNone(self.decision(out), tool)
         code, _, err = self.hook("Stop", stop_hook_active=False)
-        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(code, 2)
+        self.assertIn("No ISA yet", err)
 
 
 class TestGate(HookCase):
@@ -132,7 +144,7 @@ class TestGate(HookCase):
         code, out, _ = self.edit_project()
         self.assertEqual(code, 0)
         self.assertEqual(self.decision(out), "deny")
-        self.assertIn("no ISA is bound", out["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertIn("this change needs an ISA first", out["hookSpecificOutput"]["permissionDecisionReason"])
 
     def test_deny_unbound_bash_and_mcp(self):
         _, out, _ = self.hook("PreToolUse", tool_name="Bash", tool_input={"command": "npm install left-pad"})
@@ -168,9 +180,15 @@ class TestGate(HookCase):
         self.assertIsNone(self.decision(out))
 
     def test_post_lint(self):
+        path = self.write_isa(E1.replace("ISC-4: Anti:", "ISC-4:"))
+        _, out, _ = self.hook("PostToolUse", tool_name="Edit", tool_input={"file_path": path}, tool_response={})
+        self.assertIn("no `Anti:` ISC", self.ctx(out))
+
+    def test_stale_progress_is_not_a_model_error(self):
+        """SPEC-v2 § 3.1: `progress` is engine-owned — the hooks lint what `isa lint` would leave."""
         path = self.write_isa(E1.replace("progress: 0/4", "progress: 3/4"))
         _, out, _ = self.hook("PostToolUse", tool_name="Edit", tool_input={"file_path": path}, tool_response={})
-        self.assertIn("progress `3/4` but criteria say 0/4", self.ctx(out))
+        self.assertIn("progress 0/4 — lint ok", self.ctx(out))
 
 
 class TestProjectInTmp(HookCase):
@@ -235,13 +253,13 @@ class TestStop(HookCase):
         self.write_isa(E1)
         self.post_edit_project()
         self.assertEqual(self.hook("Stop", stop_hook_active=False)[:3:2], (0, ""))
-        # … a real problem (here: progress that lies) blocks once, then ends with a visible warning
-        self.pid = "p-lie"
-        self.write_isa(E1.replace("progress: 0/4", "progress: 4/4"))
+        # … a real problem (here: a lint error) blocks once, then ends with a visible warning
+        self.pid = "p-lint"
+        self.write_isa(E1.replace("ISC-4: Anti:", "ISC-4:"))
         self.post_edit_project()
         code, _, err = self.hook("Stop", stop_hook_active=False)
         self.assertEqual(code, 2)
-        self.assertIn("progress `4/4` but criteria say 0/4", err)
+        self.assertIn("no `Anti:` ISC", err)
         code, out, _ = self.hook("Stop", stop_hook_active=True)
         self.assertEqual(code, 0)
         self.assertIn("ending the turn anyway", out.get("systemMessage", ""))
@@ -261,7 +279,7 @@ class TestStop(HookCase):
         self.assertIn("Goal: yes|no", err)
 
     def test_stop_once(self):
-        self.write_isa(E1.replace("progress: 0/4", "progress: 4/4"))  # a real problem: progress lies
+        self.write_isa(E1.replace("ISC-4: Anti:", "ISC-4:"))  # a real problem: a lint error
         self.post_edit_project()
         codes = [self.hook("Stop", stop_hook_active=False)[0] for _ in range(3)]
         self.assertEqual(codes, [2, 0, 0])
@@ -300,9 +318,9 @@ class TestShellIsaEdit(HookCase):
 
     def test_shell_edit_is_linted(self):
         path = self.write_isa(E1)
-        _, out, _ = self.shell_edit(path, E1.replace("progress: 0/4", "progress: 9/9"), f"sed -i s/x/y/ {path}")
+        _, out, _ = self.shell_edit(path, E1.replace("ISC-4: Anti:", "ISC-4:"), "python3 - <<'EOF'\nx\nEOF")
         self.assertIn("ISA lint — ", self.ctx(out))
-        self.assertIn("progress", self.ctx(out))
+        self.assertIn("no `Anti:` ISC", self.ctx(out))
 
     def test_shell_edit_resets_stale_counter(self):
         path = self.write_isa(E1)

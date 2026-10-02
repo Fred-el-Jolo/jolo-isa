@@ -11,12 +11,18 @@ Event (dict):
     tool, tool_input      pre_tool / post_tool / tool_failed
     temp_dirs   extra directories treated as scratch (e.g. Claude's scratchpad_dir)
     retried     stop only: the harness says a stop hook already forced this continuation
+    transcript_path  prompt only (Claude Code): where the previous assistant message is read from
+    context     prompt only (pi): the tail of the previous assistant message
 
 Result (dict, all keys optional):
     context     text for the model
     deny        pre_tool: reason the call is refused
     block       stop: reason the turn must continue
     warn        text for the user (not the model)
+
+ISA mode (SPEC-v2 § 1): every session is OFF until the gate (judge.py) answers yes for a prompt, a
+write is attempted, an unknown command changes project files, or an ISA is bound; then it is ON for
+good. OFF sessions get nothing from this engine. `ISA_MODE=on|off` (the user's override) wins.
 """
 import hashlib
 import json
@@ -24,7 +30,7 @@ import os
 import re
 import time
 
-from . import changes, classify, evidence, fit, lint, state
+from . import changes, classify, evidence, isafile, judge, lint, problems, rules, state
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STALE_NUDGE_EVERY = 5
@@ -68,14 +74,25 @@ def _lint(isa_path, moment, harness, session):
                 with open(_goal_ok_file(isa_path), "w") as f:
                     f.write(digest + "\n")
                 prompts = None
-    r = lint.lint(isa_path, moment, prompts=prompts)
-    return [m for lvl, m in r.items if lvl == "ERROR"], [m for lvl, m in r.items if lvl == "WARN"]
+    try:
+        text = isafile.normalize(open(isa_path, encoding="utf-8").read())
+    except OSError:
+        return ["cannot read the ISA"], []
+    # hook-side: lint what the commands would leave (progress, nested parents, orphaned generated lines
+    # recomputed) without writing it — hooks never write the ISA (SPEC-v2 § 0.3, § 3.1)
+    r = lint.lint(isa_path, moment, text=text, prompts=prompts)
+    errs, warns = rules.check(isa_path, lint.parse(text, isa_path))  # ledger- and prompt-aware rules
+    return [m for lvl, m in r.items if lvl == "ERROR"] + errs, [m for lvl, m in r.items if lvl == "WARN"] + warns
 
 
 def _status_line(isa_path):
     fm = state.frontmatter(isa_path)
+    try:  # computed from the criteria: the frontmatter value may lag until the next `isa` command
+        progress = isafile.progress_of(open(isa_path, encoding="utf-8").read())
+    except OSError:
+        progress = fm.get("progress", "?")
     return (f"ISA bound: {_tilde(isa_path)} — {fm.get('effort', '?')}, phase {fm.get('phase', '?')}, "
-            f"progress {fm.get('progress', '?')}")
+            f"progress {progress}")
 
 
 def _open_iscs(isa_path, limit=40):
@@ -132,11 +149,92 @@ def _fmt(errors, limit=12):
 # ------------------------------------------------------------------ events
 
 def handle(ev):
+    if os.environ.get("ISA_JUDGE_CHILD"):
+        return {}  # the judge's own session: no ISA hook at all (judge.py)
+    if _mode_env() == "off":
+        if ev.get("event") == "prompt":
+            _log_judge(ev, {"verdict": "no", "reason": "ISA_MODE=off", "source": "override", "ms": 0,
+                            "backend": "override"})
+        return {}
     fn = {
         "session_start": _session_start, "prompt": _prompt, "pre_tool": _pre_tool,
         "post_tool": _post_tool, "tool_failed": _tool_failed, "stop": _stop, "compacted": _compacted,
     }.get(ev.get("event"))
     return fn(ev) if fn else {}
+
+
+# ------------------------------------------------------------------ mode
+
+NO_ISA = ("No ISA yet. Write it now (`isa new <slug> --goal \"<span>\"`, then Goal, Criteria, Test Strategy). "
+          "If you are asking the user to clarify before you can define done, run `isa new`, write the Goal and "
+          "your questions under Decisions, and set `context_sufficient: false` — that is enough to end the turn.")
+
+
+def _mode_env():
+    m = (os.environ.get("ISA_MODE") or "auto").strip().lower()
+    return m if m in ("on", "off") else "auto"
+
+
+def _mode(st):
+    """on | off. A session file without `mode` (v1, or nothing decided yet) is ON exactly when an open
+    ISA is bound to it."""
+    if _mode_env() != "auto":
+        return _mode_env()
+    if st.get("mode") in ("on", "off"):
+        return st["mode"]
+    b = _bound(st)
+    return "on" if b and state.frontmatter(b).get("phase") != "complete" else "off"
+
+
+def _switch_on(st, source, reason):
+    """Record the OFF → ON transition (ON is sticky). → True when this call switched it."""
+    if st.get("mode") == "on":
+        return False
+    st.update(mode="on", mode_source=source, mode_reason=reason, mode_since=time.time())
+    return True
+
+
+def _log_judge(ev, v):
+    row = {"t": time.time(), "harness": ev.get("harness"), "session": ev.get("session"),
+           "prompt_id": ev.get("prompt_id"), "source": v["source"], "verdict": v["verdict"],
+           "reason": v["reason"], "ms": v["ms"], "backend": v.get("backend")}
+    with open(os.path.join(state.state_dir(), "judge.jsonl"), "a") as f:
+        f.write(json.dumps(row) + "\n")
+
+
+def _on_block(cwd):
+    listing = _project_listing(cwd)
+    return protocol(cwd) + ("\n" + listing if listing else "")
+
+
+def _assistant_context(ev):
+    if ev.get("context"):
+        return str(ev["context"])[-judge.CONTEXT_CHARS:]
+    return judge.last_assistant_text(ev.get("transcript_path"))
+
+
+def _scaffold(path):
+    """The clarify-first shape: observe, context_sufficient: false, a Goal, a question in Decisions,
+    no Criteria yet."""
+    p = _parsed(path)
+    if not p:
+        return False
+    fm, c = p["fm"], p["content"]
+    return (fm.get("phase") == "observe" and fm.get("context_sufficient") is False and bool(c.get("Goal", "").strip())
+            and not p["iscs"] and any(line.rstrip().endswith("?") for line in c.get("Decisions", "").splitlines()))
+
+
+def _needs_isa(st, bound, pid):
+    """True when an ON turn may not end yet for lack of an ISA; "scaffold" when the clarify-first
+    scaffold may end it (only on the prompt that created it); False otherwise."""
+    if not bound:
+        return True
+    phase = state.frontmatter(bound).get("phase")
+    if st.get("needs_isa_since") and phase == "complete":
+        return True
+    if _scaffold(bound):
+        return "scaffold" if st.get("bound_prompt") == pid else True
+    return False
 
 
 def _session_start(ev):
@@ -145,9 +243,19 @@ def _session_start(ev):
         bound = _bound(st)
         compact = ev.get("source") == "compact" or st.get("compacted")
         st["compacted"] = False
+        mode = _mode(st)
+        no_isa_blocked = st.get("blocked_no_isa")
+    if mode != "on":
+        return {}  # OFF or undecided: nothing from the ISA system reaches the model
     parts = [protocol(cwd)]
+    if no_isa_blocked:
+        parts.append("Blocked from an earlier turn: it ended without an ISA — write it now (`isa new …`).")
     if bound:
         parts.append(_status_line(bound))
+        still = problems.open_items(bound)
+        if still:
+            parts.append("Still blocked from an earlier turn (fix them; `isa verify` / `isa lint` clear what holds "
+                         "no more, and `isa close` refuses until then):\n" + problems.describe(still))
         if compact:
             parts.append("Goal (re-injected after compaction):\n" + _goal_section(bound))
             iscs = _open_iscs(bound)
@@ -166,20 +274,44 @@ def _compacted(ev):
 
 
 def _prompt(ev):
-    state.log_prompt(ev["harness"], ev["session"], ev.get("prompt", ""), ev.get("prompt_id"))
+    cwd, pid, prompt = ev.get("cwd"), ev.get("prompt_id"), ev.get("prompt", "")
+    context = _assistant_context(ev)
+    state.log_prompt(ev["harness"], ev["session"], prompt, pid, cwd=cwd, project=state.project_key(cwd),
+                     context=context)
     with state.session(ev["harness"], ev["session"]) as st:
         st["prompt_started"] = time.time()  # Stop only checks turns where something happened after this
-    bound = _bound(st)
-    level, reasons = fit.score(ev.get("prompt", ""))
-    # an open bound ISA means the prompt most likely continues it: no fit advice then
-    open_bound = bound and state.frontmatter(bound).get("phase") != "complete"
-    note = "" if open_bound else fit.advice(level, reasons, bound=bound)
-    if bound:
-        text = _status_line(bound) + ". A new task gets a new ISA; continuing work keeps this one."
-    else:
-        text = ("No ISA bound in this session yet: the first file change or other mutation will be "
-                f"refused until one exists under {_tilde(state.project_dir(ev.get('cwd')))}/.")
-    return {"context": text + ("\n" + note if note else "")}
+        mode = _mode(st)
+        forced = mode == "on" and _switch_on(st, "override" if _mode_env() == "on" else "binding",
+                                             "ISA_MODE=on" if _mode_env() == "on" else "open ISA bound (v1 session)")
+        bound = _bound(st)
+    complete = bool(bound) and state.frontmatter(bound).get("phase") == "complete"
+    if mode == "on":
+        if forced and _mode_env() == "on":
+            return {"context": _on_block(cwd)}
+        if not complete:
+            if bound:
+                return {"context": _status_line(bound) + ". A new task gets a new ISA; continuing work keeps this one."}
+            return {"context": "ISA: ON — no ISA bound yet: write it before the work (`isa new <slug> --goal \"…\"`)."}
+    # OFF, or ON with only a finished ISA bound: judge this prompt
+    v = judge.gate(prompt, context=context, harness=ev.get("harness"))
+    _log_judge(ev, v)
+    with state.session(ev["harness"], ev["session"]) as st:
+        note = ""
+        if v.get("note") and not st.get("judge_note_shown"):
+            st["judge_note_shown"] = True
+            note = "\n" + v["note"]
+        if mode == "on":  # a finished ISA is bound
+            if v["verdict"] == "yes":
+                st["needs_isa_since"] = pid
+                return {"context": f"{_status_line(bound)}. This prompt is a new task: new ISA, or reopen the "
+                                   "finished one (`phase: learn`, `iteration`, `resumed_at`, a `refined:` Decision)."}
+            st.pop("needs_isa_since", None)
+            return {"context": _status_line(bound) + "."}
+        if v["verdict"] == "no":
+            st.update(mode="off", mode_source=v["source"], mode_reason=v["reason"])
+            return {"warn": f"ISA: OFF — {v['reason']}{note}"}
+        _switch_on(st, v["source"], v["reason"])
+    return {"warn": f"ISA: ON — {v['reason']}{note}", "context": _on_block(cwd)}
 
 
 def _pre_tool(ev):
@@ -187,14 +319,29 @@ def _pre_tool(ev):
     if _targets_ledger(ev, kind):
         return {"deny": "ISA evidence gate: the evidence ledger (~/.isa/_state/evidence/) is written only by "
                         "`isa verify`. Run the probe through `isa verify <ISA> ISC-N` instead."}
+    if kind == "isa-cmd":
+        return {}  # `isa new|lint|verify|close`: how the model writes the engine-owned state — never gated
+    if kind == "isa-shell-edit":
+        return {"deny": "ISA ownership: edit an ISA.md with Write/Edit, not a shell command — the hooks check "
+                        "Write/Edit against the engine-owned fields (ticks, generated Verification lines, "
+                        "progress, root, phase: complete); `isa verify` / `isa close` write those."}
     st = state.read_session(ev["harness"], ev["session"])
-    refused = _tick_gate(ev, st)
+    refused = _ownership_refusal(ev)
     if refused:
         return {"deny": refused}
     if kind == "read":
         return {}
-    bound = _bound(st)
     cwd = ev.get("cwd")
+    if _mode(st) == "off":
+        if kind == "write":  # the gate said no, but a change is evidence: ON, and this change waits for its ISA
+            with state.session(ev["harness"], ev["session"]) as s:
+                _switch_on(s, "write", "a change was attempted")
+            return {"deny": "ISA: ON — this change needs an ISA first.\n\n" + _on_block(_target_base(ev) or cwd),
+                    "warn": "ISA: ON — a change was attempted"}
+        # unknown: it runs; only a change it actually makes switches the session ON (post_tool)
+        _snapshot_unknown(ev, kind, cwd)
+        return {}
+    bound = _bound(st)
     if not bound:
         base = _target_base(ev) or cwd  # file the ISA where the change lands, not where the session started
         listing = _project_listing(base)
@@ -215,13 +362,12 @@ def _pre_tool(ev):
     if errors:
         return {"deny": f"ISA gate: {_tilde(bound)} does not pass the articulation gate yet, so building is refused. "
                         f"Fix the ISA, then retry:\n{_fmt(errors)}"}
-    parsed = _parsed(bound)
-    pending = evidence.pending_ticks(bound, parsed, st.get("last_mutation", 0.0)) if parsed else []
-    if pending:
-        return {"deny": f"ISA evidence gate: {', '.join(pending)} passed `isa verify` but "
-                        f"{'is' if len(pending) == 1 else 'are'} not ticked in {_tilde(bound)}. Tick "
-                        f"{'it' if len(pending) == 1 else 'them'} (with the Verification line `isa verify` printed) "
-                        "before moving on to the next change."}
+    _snapshot_unknown(ev, kind, cwd)
+    return {}
+
+
+def _snapshot_unknown(ev, kind, cwd):
+    """Before an `unknown` shell command: snapshot the project so post_tool can tell whether it changed files."""
     if ev.get("tool") in classify.SHELL_TOOLS and kind == "unknown" and not state.is_scratch_dir(cwd):
         snap = changes.snapshot(state.project_root(cwd))
         if snap:
@@ -230,7 +376,6 @@ def _pre_tool(ev):
                 snaps[_call_key(ev)] = snap
                 for k in list(snaps)[:-20]:
                     snaps.pop(k, None)
-    return {}
 
 
 # ------------------------------------------------------------------ evidence
@@ -283,9 +428,10 @@ def _proposed(tool, ti, current):
     return text
 
 
-def _tick_gate(ev, st):
-    """Refusal text when a file-tool call would tick a mechanical ISC that has no passing `isa verify`
-    run newer than the session's last project change; None otherwise."""
+def _ownership_refusal(ev):
+    """Refusal text when a model Write/Edit of an ISA.md would touch an engine-owned field (SPEC-v2 § 3.1):
+    tick a box, add or change a generated Verification line, set `phase: complete`, change `root`, or
+    write a `progress` that is neither the old value nor the right one. None otherwise."""
     tool, ti, cwd = ev.get("tool", ""), ev.get("tool_input") or {}, ev.get("cwd") or ""
     if tool not in classify.FILE_TOOLS:
         return None
@@ -299,20 +445,40 @@ def _tick_gate(ev, st):
             current = ""
         new = _proposed(tool, ti, current)
         if new is None:
-            continue  # can't tell beforehand; the post-edit check and Stop still catch it
-        before = evidence.ticked(lint.parse(current, path)) if current else set()
-        after = lint.parse(new, path)
-        newly = [i for i in after["counted"] if i in evidence.ticked(after) and i not in before]
-        order = evidence.blocked(after, newly, treat_open=newly)
-        if order:
-            return ("ISA order gate: this edit ticks ISCs whose Feature depends on unfinished Features — "
-                    f"finish (verify and tick) the dependency first, in an earlier edit:\n{evidence.describe_blocked(order)}")
-        bad = evidence.unproven(path, after, newly, since=st.get("last_mutation", 0.0))
-        if bad:
-            ids = " ".join(i for i, _ in bad)
-            return (f"ISA evidence gate: this edit ticks ISCs that are not proven — an ISC is ticked only after "
-                    f"its probe passes through `isa verify`, after the last project change:\n{evidence.describe(bad)}\n"
-                    f"Run `isa verify {_tilde(path)} {ids}`, then tick what passed.")
+            continue  # can't tell beforehand; the post-edit lint and Stop still catch it
+        why = _ownership_diff(path, current, new)
+        if why:
+            return f"ISA ownership: {why}"
+    return None
+
+
+def _ownership_diff(path, old, new):
+    po = lint.parse(old, path) if old else None
+    pn = lint.parse(new, path)
+    before = {i for i, (c, _, _) in po["iscs"].items() if c} if po else set()
+    newly = [i for i, (c, _, _) in pn["iscs"].items() if c and i not in before]
+    if newly:
+        ids = " ".join(newly)
+        return (f"this edit ticks {', '.join(newly)} — ticks are written by `isa verify`, which runs the probe "
+                f"and ticks what passes: `isa verify {_tilde(path)} {ids}` (self-attested criteria: "
+                f"`isa verify {_tilde(path)} ISC-N --attest \"<evidence>\"`). Unticking is allowed.")
+    go, gn = isafile.generated_lines(old) if old else {}, isafile.generated_lines(new)
+    changed = sorted(i for i in gn if go.get(i) != gn[i])
+    if changed:
+        return (f"this edit adds or changes the generated Verification line of {', '.join(changed)} — those "
+                "lines (`verified` / `attested` / `regressed`) are written by `isa verify` from the ledger. "
+                "`[DEFERRED-VERIFY]`, `- Goal:` and `- Ask N:` lines are yours.")
+    fo, fn = (po["fm"] if po else {}), pn["fm"]
+    if fn.get("phase") == "complete" and fo.get("phase") != "complete":
+        return f"`phase: complete` is written by `isa close {_tilde(path)}`, which re-runs every probe first."
+    if po and str(fo.get("root")) != str(fn.get("root")):
+        keep = f"keep the line `root: {fo.get('root')}`" if fo.get("root") else "leave `root:` out"
+        return (f"`root:` is engine-owned (written by `isa new`, used as every probe's cwd) — {keep} "
+                "in your edit.")
+    if "progress" in fn and str(fn["progress"]) != str(fo.get("progress")) \
+            and str(fn["progress"]) != isafile.progress_of(new):
+        return (f"`progress: {fn['progress']}` is not what the criteria say ({isafile.progress_of(new)}) — "
+                "leave `progress` to the engine: `isa lint`, `isa verify` and `isa close` recompute it.")
     return None
 
 
@@ -362,22 +528,71 @@ def _is_verify(ev):
         bool(re.search(r"(^|[\s;&|(/])isa\s+verify\b", str((ev.get("tool_input") or {}).get("command", ""))))
 
 
+def _bind(st, path, ev, out):
+    """Bind `path` to the session (a Write/Edit of it, or `isa new` printing it). → the user line, or ""."""
+    if st.get("bound") != path:
+        if st.get("bound"):
+            out.append(f"ISA binding switched to {_tilde(path)} (was {_tilde(st['bound'])}).")
+        st["bound"] = path
+        st["bound_prompt"] = ev.get("prompt_id")  # the scaffold exit holds on this prompt only
+        hist = st.setdefault("bound_history", [])  # waivers quote prompts of every session an ISA was bound to
+        if path not in hist:
+            hist.append(path)
+    if state.frontmatter(path).get("phase") != "complete":
+        st.pop("needs_isa_since", None)
+        st.pop("blocked_no_isa", None)
+    return "ISA: ON — an ISA was bound" if _switch_on(st, "binding", "an ISA was bound") else ""
+
+
+def _printed_isa(output):
+    """The ISA.md path `isa new` printed (the last one in the output), or None."""
+    for m in reversed(re.findall(r"(?<!\S)(/\S+/ISA\.md)\b", str(output or ""))):
+        if state.is_master_isa(m) and os.path.isfile(m):
+            return os.path.realpath(m)
+    return None
+
+
+def _post_isa_cmd(ev):
+    """After `isa new|lint|verify|close`: the engine may have written the bound ISA — refresh its mtime
+    baseline so that is never taken for a model shell edit; `isa new` binds the path it printed."""
+    command = str((ev.get("tool_input") or {}).get("command", ""))
+    out, warn, bound = [], "", None
+    with state.session(ev["harness"], ev["session"]) as st:
+        if re.search(r"(^|[\s;&|(/])isa\s+new\b", command) and "--path-only" not in command:
+            path = _printed_isa(ev.get("tool_output"))
+            if path:
+                warn = _bind(st, path, ev, out)
+                st["last_isa_edit"] = time.time()
+                st["since_isa"] = 0
+                bound = path
+        _isa_touched(st)
+    if bound:
+        errors, _ = _lint(bound, "auto", ev["harness"], ev["session"])
+        goal = [e for e in errors if "stated_goal" in e]
+        out.append(f"ISA bound: {_tilde(bound)} — now write Problem/Goal/Criteria/Test Strategy with Write/Edit, "
+                   "then `isa lint` it." + (f"\n{_fmt(goal)}" if goal else ""))
+    res = {"context": "\n".join(out)} if out else {}
+    if warn:
+        res["warn"] = warn
+    return res
+
+
 def _post_tool(ev):
     tool, ti, cwd = ev.get("tool", ""), ev.get("tool_input") or {}, ev.get("cwd")
     kind, isa_paths = classify.classify(tool, ti, cwd, ev.get("temp_dirs", ()))
+    if kind == "isa-cmd":
+        return _post_isa_cmd(ev)
     masters = [p for p in isa_paths if state.is_master_isa(os.path.join(cwd or "", os.path.expanduser(p)))]
     now = time.time()
-    out, touched = [], []
+    out, touched, warn = [], [], ""
     with state.session(ev["harness"], ev["session"]) as st:
+        was_off = _mode(st) == "off"
         # the bound ISA changed on disk without a file-tool path naming it (a shell edit: heredoc,
         # `sed -i`, a script): that call was an ISA edit, not a project change
         shell_edit = not masters and _isa_touched(st)
         if masters:
             path = os.path.realpath(os.path.join(cwd or "", os.path.expanduser(masters[-1])))
-            if st.get("bound") != path:
-                if st.get("bound"):
-                    out.append(f"ISA binding switched to {_tilde(path)} (was {_tilde(st['bound'])}).")
-                st["bound"] = path
+            warn = _bind(st, path, ev, out)
             st["last_isa_edit"] = now
             st["since_isa"] = 0
             _isa_touched(st)  # baseline mtime for the next shell-edit check
@@ -391,8 +606,9 @@ def _post_tool(ev):
         elif kind == "write" or (kind == "unknown" and tool in classify.SHELL_TOOLS and _script_changed(ev, st)):
             _count_change(st, now, out)
             touched = _changed_projects(ev, kind)
+            if was_off and _switch_on(st, "change", "a command changed project files"):
+                warn = "ISA: ON — a command changed project files; the turn needs an ISA before it ends"
         bound = _bound(st)
-        last_mutation = st["last_mutation"]
     if bound:
         for key in touched:
             if state.note_project(bound, key) and key != state.isa_home_key(bound):
@@ -404,22 +620,21 @@ def _post_tool(ev):
             out.append(f"ISA lint — {len(errors)} error(s) in {_tilde(bound)}:\n{_fmt(errors)}")
         else:
             out.append(_status_line(bound) + " — lint ok" + (f" ({len(warns)} warning(s))" if warns else "") + ".")
-    if bound and (masters or shell_edit or _is_verify(ev)):
+    if bound and (masters or shell_edit):
         parsed = _parsed(bound)
-        if parsed and (masters or shell_edit):
+        if parsed:
             bad = evidence.unproven_ticks(bound, parsed)
             if bad:
-                out.append("ISA evidence — ticked without a passing `isa verify` run (verify or untick):\n"
-                           + evidence.describe(bad))
+                out.append("ISA evidence — ticked without a passing `isa verify` run (only `isa verify` ticks; "
+                           "untick these):\n" + evidence.describe(bad))
             order = evidence.blocked(parsed, sorted(evidence.ticked(parsed)))
             if order:
                 out.append("ISA order — ticked out of dependency order (untick until the dependency is done):\n"
                            + evidence.describe_blocked(order))
-        pending = evidence.pending_ticks(bound, parsed, last_mutation) if parsed else []
-        if pending:
-            out.append(f"Passed `isa verify`, not ticked yet: {', '.join(pending)} — tick now, with their "
-                       "Verification lines; other changes are refused until you do.")
-    return {"context": "\n".join(out)} if out else {}
+    res = {"context": "\n".join(out)} if out else {}
+    if warn:
+        res["warn"] = warn
+    return res
 
 
 def _tool_failed(ev):
@@ -430,46 +645,13 @@ def _tool_failed(ev):
                 if _script_changed(ev, st):
                     _count_change(st, time.time(), [])
     st = state.read_session(ev["harness"], ev["session"])
+    if _bound(st) and _is_verify(ev):
+        return {"context": "A probe failed. Claim wrong or code wrong? If the claim, update the ISA now (split, "
+                           "tighten, or add an ISC; log a Decision); if the code, fix it and run `isa verify` again."}
     if _bound(st) and ev.get("tool") in classify.SHELL_TOOLS:
-        return {"context": "A command failed. If it was an ISC probe, that ISC stays unticked — fold what the "
-                           "failure taught you into the ISA (split, tighten, or add an ISC; log a Decision)."}
+        return {"context": "A command failed — fold what the failure taught you into the ISA (split, tighten, "
+                           "or add an ISC; log a Decision)."}
     return {}
-
-
-def _unclosed(bound):
-    """Every counted criterion is ticked but the ISA is still open: the close (and its Goal line) is due."""
-    parsed = _parsed(bound)
-    if not parsed or not parsed["counted"] or not all(i in evidence.ticked(parsed) for i in parsed["counted"]):
-        return []
-    phase = state.frontmatter(bound).get("phase", "?")
-    return [f"every criterion of {_tilde(bound)} is ticked but `phase` is still `{phase}` — close it: run "
-            f"`isa verify {_tilde(bound)}` last, write the `- Goal: yes|no — …` line and set `phase: complete`; "
-            "or add the criterion that is still missing"]
-
-
-def _evidence_problems(bound, last_mutation, closing):
-    parsed = _parsed(bound)
-    if not parsed:
-        return []
-    out = []
-    bad = evidence.unproven_ticks(bound, parsed)
-    if bad:
-        out.append("ticked without a passing `isa verify` run — verify or untick:\n" + evidence.describe(bad))
-    order = evidence.blocked(parsed, sorted(evidence.ticked(parsed)))
-    if order:
-        out.append("ticked out of dependency order — untick until the dependency is done:\n"
-                   + evidence.describe_blocked(order))
-    pending = evidence.pending_ticks(bound, parsed, last_mutation)
-    if pending:
-        out.append(f"`isa verify` passed for {', '.join(pending)} but the ISA does not tick "
-                   f"{'it' if len(pending) == 1 else 'them'} — tick with the Verification lines, keep `progress` true")
-    if closing:
-        seen = {i for i, _ in bad}
-        stale = [x for x in evidence.unproven_ticks(bound, parsed, since=last_mutation) if x[0] not in seen]
-        if stale:
-            out.append(f"closing needs every probe re-proven after the last project change — run "
-                       f"`isa verify {_tilde(bound)}`:\n" + evidence.describe(stale))
-    return out
 
 
 def _attested_notice(st, bound):
@@ -496,35 +678,39 @@ def _attested_notice(st, bound):
 def _stop(ev):
     pid = str(ev.get("prompt_id") or "_")
     with state.session(ev["harness"], ev["session"]) as st:
+        if _mode(st) != "on":
+            return {}  # OFF: the gate said this is no task
         bound = _bound(st)
         if _isa_touched(st):  # edited by a call whose PostToolUse never ran (e.g. a failed command)
             st["last_isa_edit"] = time.time()
+        need = _needs_isa(st, bound, ev.get("prompt_id"))
+        if need == "scaffold":
+            return {}  # the clarify-first scaffold, on the prompt that created it
         started = st.get("prompt_started", 0.0)
-        if started and st["last_mutation"] < started and st["last_isa_edit"] < started:
+        if need is not True and started and st["last_mutation"] < started and st["last_isa_edit"] < started:
             return {}  # nothing happened this turn: nothing to check
-        mutations, last_mutation = st["mutations"], st["last_mutation"]
-    problems = []
-    if mutations and not bound:
-        problems.append("project files were changed but no ISA is bound to this session — write one now "
-                        "that records what was done and how it was verified")
+    items = []
+    if need is True:  # checked even on a turn that changed nothing: a review is work too
+        items.append({"code": "no-isa", "isc": None, "line": NO_ISA})
+        bound = None if not bound or _scaffold(bound) or state.frontmatter(bound).get("phase") == "complete" \
+            else bound
     if bound:  # reads the ISA, the ledger and session state only — never runs a probe
         errors, _ = _lint(bound, "auto", ev["harness"], ev["session"])
-        closing = state.frontmatter(bound).get("phase") == "complete"
-        if errors:
-            what = "the close gate (`phase: complete`)" if closing else "lint"
-            problems.append(f"{_tilde(bound)} fails {what}:\n{_fmt(errors)}")
-        problems += _evidence_problems(bound, last_mutation, closing)
-        if not closing and not errors:
-            problems += _unclosed(bound)
+        items += problems.current(bound, lint_errors=errors)
     with state.session(ev["harness"], ev["session"]) as st:
-        if not problems:
+        if not items:
             return _attested_notice(st, bound)
         already = st["stop_blocks"].get(pid, 0) >= 1 or ev.get("retried")
         st["stop_blocks"][pid] = st["stop_blocks"].get(pid, 0) + 1
         if len(st["stop_blocks"]) > 50:
             for k in sorted(st["stop_blocks"])[:-50]:
                 st["stop_blocks"].pop(k, None)
-    text = "ISA check before ending the turn:\n" + "\n".join(f"- {p}" for p in problems)
+        if already and any(it["code"] == "no-isa" for it in items):
+            st["blocked_no_isa"] = pid  # an ISA-less problem has no ledger: it lives in the session
+    text = "ISA check before ending the turn:\n" + "\n".join(f"- {p}" for p in problems.render(items))
     if already:
-        return {"warn": "ISA still not true after one retry — ending the turn anyway.\n" + text}
+        if bound:  # escalate: the open problems outlive the turn (SPEC-v2 § 4.5) — in the ledger, never the ISA
+            problems.record_blocked(bound, items)
+        return {"warn": "ISA still not true after one retry — ending the turn anyway; these stay recorded as "
+                        "blocked (shown at the next start, `isa close` refuses until they are fixed).\n" + text}
     return {"block": text}

@@ -1,13 +1,15 @@
 """Evidence: what `isa verify` proved, per ISA. Standard library only.
 
-The model never writes its own evidence. `isa verify <ISA> [ISC-N…]` runs each ISC's
+The model never writes its own evidence. `isa verify <ISA> [ISC-N…]` (commands.py) runs each ISC's
 Test Strategy `tool:` command and appends one line per ISC to that ISA's ledger:
 
     ~/.isa/_state/evidence/<slug>-<hash>.jsonl
-    {"t": epoch, "isc": "ISC-3", "tool_sha": sha256(tool), "ok": exit == 0, "exit": 0, "secs": 1.2,
-     "cwd": "/…", "tail": "last lines of output"}
+    {"v": 2, "t": epoch, "isc": "ISC-3", "kind": "verify|close|attest", "run": "green|red",
+     "tool_sha": sha256(tool), "ok": exit == 0, "exit": 0, "secs": 1.2, "root": "/…", "cwd": "/…",
+     "tail": "last lines of output", "evidence": "attest text"}
 
-The hooks deny tool writes aimed at the ledger (engine.py).
+plus `strategy` rows (the Test Strategy as first verified). v1 rows (no `v`) read as green verify
+rows. The hooks deny tool writes aimed at the ledger (engine.py).
 
 An ISC is *mechanical* when its Test Strategy entry has a `tool:` and a type other than
 SELF_ATTESTED; everything else (manual checks, screenshots, evals, ISCs with no entry — E1)
@@ -18,8 +20,6 @@ ledger line for it passed and was made with the probe as it reads now (same `too
 import hashlib
 import json
 import os
-import subprocess
-import time
 
 from . import lint, state
 
@@ -30,7 +30,7 @@ TAIL_CHARS = 800
 # ------------------------------------------------------------------ ledger
 
 def ledger_dir():
-    return state.state_dir("evidence")
+    return os.path.join(state.home(), "_state", "evidence")  # created by `record`, never by a read
 
 
 def ledger_path(isa_path):
@@ -53,14 +53,15 @@ def tool_sha(tool):
 
 
 def record(isa_path, rows):
+    os.makedirs(ledger_dir(), exist_ok=True)
     with open(ledger_path(isa_path), "a") as f:
         for row in rows:
             f.write(json.dumps(row) + "\n")
 
 
-def latest(isa_path):
-    """{isc: latest ledger row}."""
-    out = {}
+def rows(isa_path):
+    """Every ledger row of an ISA, in order (unparseable lines skipped)."""
+    out = []
     try:
         with open(ledger_path(isa_path)) as f:
             for line in f:
@@ -68,11 +69,31 @@ def latest(isa_path):
                     row = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(row, dict) and "isc" in row:
-                    out[row["isc"]] = row
+                if isinstance(row, dict):
+                    out.append(row)
     except OSError:
         pass
     return out
+
+
+def latest(isa_path):
+    """{isc: latest green probe row} — `isa verify` / `isa close` runs; red baselines and attestations
+    are not proof of a probe passing."""
+    out = {}
+    for row in rows(isa_path):
+        if "isc" in row and row.get("run", "green") == "green" and row.get("kind", "verify") in ("verify", "close"):
+            out[row["isc"]] = row
+    return out
+
+
+def row_fingerprint(row):
+    """The tree fingerprint a row was recorded against; None for a v1 row (no `v`)."""
+    return row.get("fingerprint") if row.get("v") else None
+
+
+def attested(isa_path):
+    """{isc: latest attest row}."""
+    return {r["isc"]: r for r in rows(isa_path) if r.get("kind") == "attest" and "isc" in r}
 
 
 # ------------------------------------------------------------------ probes and proof
@@ -137,6 +158,15 @@ def pending_ticks(isa_path, parsed, since):
             and status(isa_path, parsed, i, since, rows, pr) == "proven" and not blocked(parsed, [i])]
 
 
+def unattested_ticks(isa_path, parsed):
+    """[(isc, type)] self-attested ISCs ticked with no `isa verify --attest` row. Only for ISAs started
+    under v2 (lint.is_v2): a v1 ISA's hand ticks predate the attest command (SPEC-v2 § 8)."""
+    if not lint.is_v2(parsed["fm"]):
+        return []
+    att = attested(isa_path)
+    return [(i, t) for i, t in self_attested_ticks(parsed) if i not in att]
+
+
 def self_attested_ticks(parsed):
     pr = probes(parsed)
     return [(i, pr[i]["type"]) for i in parsed["counted"] if i in ticked(parsed) and not pr[i]["mechanical"]]
@@ -177,65 +207,3 @@ def describe_blocked(rows):
 
 def describe(pairs):
     return "\n".join(f"  - {i}: {why}" for i, why in pairs)
-
-
-# ------------------------------------------------------------------ isa verify
-
-def run(isa_path, select=None, cwd=None, timeout=600, out=print):
-    """Run the probes of `select` (default: every mechanical ISC), record them, report. → exit code."""
-    try:
-        text = open(isa_path, encoding="utf-8").read()
-    except OSError as e:
-        out(f"isa verify: cannot read {isa_path}: {e}")
-        return 2
-    parsed = lint.parse(text, isa_path)
-    pr = probes(parsed)
-    unknown = [i for i in (select or []) if i not in pr]
-    if unknown:
-        out(f"isa verify: not a counted leaf ISC of this ISA: {', '.join(unknown)}")
-        return 2
-    chosen = list(select) if select else [i for i in parsed["counted"] if pr[i]["mechanical"]]
-    cwd = cwd or os.getcwd()
-    results, rows, failed = {}, [], False
-    for i in chosen:
-        p = pr[i]
-        if not p["mechanical"]:
-            out(f"{i} SKIP  {p['type']} — self-attested, not run (listed to the user at close)")
-            continue
-        tool = p["tool"].strip()
-        if tool not in results:  # ISCs sharing a probe run it once
-            t0 = time.time()
-            try:
-                r = subprocess.run(tool, shell=True, executable="/bin/bash", cwd=cwd, capture_output=True,
-                                   text=True, timeout=timeout)
-                code, output = r.returncode, (r.stdout or "") + (r.stderr or "")
-            except subprocess.TimeoutExpired as e:
-                code = 124
-                output = f"{e.stdout or ''}{e.stderr or ''}\n[timed out after {timeout}s]"
-            results[tool] = (code, round(time.time() - t0, 2), output[-TAIL_CHARS:])
-        code, secs, tail = results[tool]
-        ok = code == 0
-        failed |= not ok
-        rows.append({"t": time.time(), "isc": i, "tool_sha": tool_sha(tool), "ok": ok, "exit": code,
-                     "secs": secs, "cwd": cwd, "tail": tail})
-        out(f"{i} {'PASS' if ok else 'FAIL'}  exit {code}  {secs}s  {tool}")
-        if not ok:
-            out("\n".join("    " + line for line in tail.rstrip().splitlines()[-15:]))
-    if rows:
-        record(isa_path, rows)
-    stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
-    waiting = blocked(parsed, [r["isc"] for r in rows if r["ok"] and r["isc"] not in ticked(parsed)])
-    for i, f, d, open_ in waiting:
-        out(f"{i} blocked — Feature `{f}` depends on `{d}` (still open: {', '.join(open_)}); "
-            f"the pass is recorded, tick {i} once `{d}` is done")
-    todo = [r["isc"] for r in rows if r["ok"] and r["isc"] not in ticked(parsed)
-            and r["isc"] not in {w[0] for w in waiting}]
-    if todo:
-        out(f"\nPassed and not ticked yet — tick now; the hooks refuse other changes until you do: {', '.join(todo)}")
-        out("Verification lines:")
-        for r in rows:
-            if r["isc"] in todo:
-                out(f"- {r['isc']}: `isa verify` PASS {stamp} — `{pr[r['isc']]['tool'].strip()}`")
-    if not rows and not failed:
-        out("nothing to run: no mechanical ISC selected")
-    return 1 if failed else 0

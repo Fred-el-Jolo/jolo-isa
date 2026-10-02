@@ -39,7 +39,7 @@ class TestHomeKey(unittest.TestCase):
             del os.environ["ISA_HOME"]
 
     def test_home_session_can_write_its_isa(self):
-        path = subprocess.run([sys.executable, ISA, "new", "t"], cwd=self.fake, env=self.env, text=True,
+        path = subprocess.run([sys.executable, ISA, "new", "t", "--path-only"], cwd=self.fake, env=self.env, text=True,
                               capture_output=True).stdout.strip()
         self.assertIn(os.sep + "_home" + os.sep, path)
         d = {"hook_event_name": "PreToolUse", "session_id": "home-s", "cwd": self.fake, "prompt_id": "p",
@@ -62,7 +62,7 @@ class TestCompleteBinding(HookCase):
         self.assertIn("new ISA", self.reason(out))
 
     def test_refusal_ignores_old_lint(self):
-        broken = CLOSED.replace("tool: bun arxiv.ts 2401.12345 | wc -l", "tool: bun arxiv.ts <some id> | wc -l")
+        broken = CLOSED.replace('tool: test "$(bun arxiv.ts 2401.12345 | wc -l)"', 'tool: test "$(bun arxiv.ts <some id> | wc -l)"')
         self.assertNotEqual(broken, CLOSED)
         self.write_isa(broken)
         _, out, _ = self.edit_project()
@@ -71,10 +71,10 @@ class TestCompleteBinding(HookCase):
         self.assertNotIn("does not pass the articulation gate", self.reason(out))
 
     def test_quiet_turn_stop_passes(self):
-        broken = CLOSED.replace("tool: bun arxiv.ts 2401.12345 | wc -l", "tool: bun arxiv.ts <some id> | wc -l")
+        broken = CLOSED.replace('tool: test "$(bun arxiv.ts 2401.12345 | wc -l)"', 'tool: test "$(bun arxiv.ts <some id> | wc -l)"')
         self.write_isa(broken)
         self.pid = "p-quiet"
-        self.hook("UserPromptSubmit", prompt="what's next?")
+        self.hook("UserPromptSubmit", prompt="thanks, looks good")  # pre-filter: no (a question would be judged)
         self.hook("PreToolUse", tool_name="Read", tool_input={"file_path": "/etc/hosts"})
         code, _, err = self.hook("Stop", stop_hook_active=False)
         self.assertEqual((code, err), (0, ""))

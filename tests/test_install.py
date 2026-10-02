@@ -60,6 +60,15 @@ class TestInstall(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "pi", "extensions", "isa.ts")))
         self.assertTrue(os.path.islink(os.path.join(self.tmp, "local", "bin", "isa")))
 
+    def test_prompt_hook_outlasts_the_judge(self):
+        """SPEC-v2 § 1.2: the prompt hook may wait for the gate's judge (12 s), so its limit is 20 s."""
+        self.run_install()
+        after = json.load(open(self.settings))
+        limits = {ev: h["timeout"] for ev, gs in after["hooks"].items() for g in gs for h in g["hooks"]
+                  if "isa hook claude" in h.get("command", "")}
+        self.assertEqual(limits.pop("UserPromptSubmit"), 20)
+        self.assertEqual(set(limits.values()), {15})
+
     def test_idempotent(self):
         self.run_install()
         first = open(self.settings, "rb").read()

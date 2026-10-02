@@ -122,40 +122,37 @@ class TestDependencyLint(unittest.TestCase):
             self.assertFalse([e for e in errors(text) if "depends on" in e or "cycle" in e], name)
 
 
-
 class TestBlockedTick(OrderCase):
-    def test_tick_of_dependent_feature_refused(self):
+    """SPEC-v2: `isa verify` ticks, so it applies the order — the model can't tick at all (test_commands)."""
+
+    def test_dependent_pass_waits(self):
         path = self.write_isa(self.text)
         self.flag("ok3")
-        self.verify(path, "ISC-3")
-        out = self.pre("Edit", file_path=path, old_string="- [ ] ISC-3:", new_string="- [x] ISC-3:")
-        self.assertEqual(self.decision(out), "deny")
-        reason = self.reason(out)
-        self.assertIn("ISC-3 belongs to Feature `B`, which depends on `A`", reason)
-        self.assertIn("still open in `A`: ISC-1, ISC-2", reason)
-
+        rc, out = self.verify(path, "ISC-3")
+        self.assertEqual(rc, 0, out)
+        self.assertFalse(lint.parse(read(path))["iscs"]["ISC-3"][0])
+        self.assertIn("ISC-3 passed but waits — Feature `B` depends on `A` (still open: ISC-1, ISC-2)", out)
 
 
 class TestDependencyDone(OrderCase):
-    def setUp(self):
-        super().setUp()
-        self.path = self.write_isa(self.text)
+    def test_dependency_and_dependent_in_one_run(self):
+        path = self.write_isa(self.text)
         for n in (1, 2, 3):
             self.flag(f"ok{n}")
-        self.verify(self.path, "ISC-1", "ISC-2", "ISC-3")
+        rc, out = self.verify(path, "ISC-3", "ISC-1", "ISC-2")  # listed out of order on purpose
+        self.assertEqual(rc, 0, out)
+        iscs = lint.parse(read(path))["iscs"]
+        self.assertTrue(all(iscs[i][0] for i in ("ISC-1", "ISC-2", "ISC-3")))
 
-    def test_dependency_and_dependent_in_one_edit_refused(self):
-        out = self.pre("Write", file_path=self.path, content=tick(self.text, "ISC-1", "ISC-2", "ISC-3"))
-        self.assertEqual(self.decision(out), "deny")
-        self.assertIn("ISC-3 belongs to Feature `B`", self.reason(out))
-
-    def test_allowed_after_dependency_ticked_earlier(self):
-        self.assertIsNone(self.decision(self.pre("Write", file_path=self.path,
-                                                 content=tick(self.text, "ISC-1", "ISC-2"))))
-        self.write_isa(tick(self.text, "ISC-1", "ISC-2"), self.path)
-        out = self.pre("Edit", file_path=self.path, old_string="- [ ] ISC-3:", new_string="- [x] ISC-3:")
-        self.assertIsNone(self.decision(out))
-
+    def test_waiting_pass_ticked_by_a_later_run(self):
+        path = self.write_isa(self.text)
+        for n in (1, 2, 3):
+            self.flag(f"ok{n}")
+        self.verify(path, "ISC-3")
+        self.verify(path, "ISC-1", "ISC-2")
+        self.assertFalse(lint.parse(read(path))["iscs"]["ISC-3"][0])  # a tick needs its own run
+        self.verify(path, "ISC-3")
+        self.assertTrue(lint.parse(read(path))["iscs"]["ISC-3"][0])
 
 
 class TestUnconstrained(OrderCase):
@@ -164,35 +161,32 @@ class TestUnconstrained(OrderCase):
         self.flag("ok4")
         self.flag("ok5")
         self.verify(path, "ISC-4", "ISC-5")
-        self.assertIsNone(self.decision(self.pre("Write", file_path=path, content=tick(self.text, "ISC-4", "ISC-5"))))
+        iscs = lint.parse(read(path))["iscs"]
+        self.assertTrue(iscs["ISC-4"][0] and iscs["ISC-5"][0])
 
     def test_first_feature_ticks_freely(self):
         path = self.write_isa(self.text)
         self.flag("ok1")
         self.verify(path, "ISC-1")
-        self.assertIsNone(self.decision(self.pre("Write", file_path=path, content=tick(self.text, "ISC-1"))))
+        self.assertTrue(lint.parse(read(path))["iscs"]["ISC-1"][0])
 
     def test_isa_without_features(self):
         path = self.write_isa(self.text.split("\n## Features")[0] + "\n")
         self.flag("ok3")
         self.verify(path, "ISC-3")
-        text = read(path)
-        self.assertIsNone(self.decision(self.pre("Write", file_path=path, content=tick(text, "ISC-3"))))
-
+        self.assertTrue(lint.parse(read(path))["iscs"]["ISC-3"][0])
 
 
 class TestNoDeadlock(OrderCase):
-    def test_blocked_pass_does_not_freeze_work(self):
+    def test_waiting_pass_does_not_freeze_work(self):
         path = self.write_isa(self.text)
         self.flag("ok3")
         rc, out = self.verify(path, "ISC-3")
         self.assertEqual(rc, 0)
-        self.assertIn("ISC-3 blocked", out)
-        self.assertNotIn("Passed and not ticked yet", out)
+        self.assertIn("ISC-3 passed but waits", out)
         project_write = self.pre("Write", file_path=os.path.join(self.proj, "y.py"), content="y")
         self.assertIsNone(self.decision(project_write))
         self.assertEqual(self.hook("Stop", stop_hook_active=False)[0], 0)
-
 
 
 class TestShellOutOfOrder(OrderCase):

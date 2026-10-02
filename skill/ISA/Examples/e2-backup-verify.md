@@ -6,6 +6,7 @@ phase: execute
 progress: 0/18
 started: 2026-03-15T16:45:00Z
 updated: 2026-03-21T22:00:00Z
+context_sufficient: true
 ---
 
 <!-- Fictitious example. "rsync-verify" is a teaching project name; any resemblance to real tools is coincidental. -->
@@ -58,18 +59,21 @@ Add a `--verify` flag that, after the rsync copy step completes, walks both sour
 ```yaml
 - isc: ISC-1
   type: bash
+  kind: behaviour
   check: clean backup verifies pass
   threshold: exit 0
   tool: ./test/integration/clean-tree.sh && rsync-verify --verify ./tmp/src ./tmp/dst
 
 - isc: ISC-2
   type: bash
+  kind: behaviour
   check: corrupted backup fails verify
   threshold: exit 2
   tool: ./test/integration/clean-tree.sh && printf '\x00' >> ./tmp/dst/file7.bin && rsync-verify --verify ./tmp/src ./tmp/dst; test $? -eq 2
 
 - isc: ISC-3
   type: bash
+  kind: behaviour
   check: stderr names the flipped file with the MISMATCH prefix
   threshold: 'exactly 1 line, equal to "MISMATCH: file7.bin"'
   tool: |-
@@ -77,90 +81,105 @@ Add a `--verify` flag that, after the rsync copy step completes, walks both sour
 
 - isc: ISC-4
   type: bash
+  kind: behaviour
   check: a deleted destination file is reported and fails the run
   threshold: '"MISSING: file3.bin" on stderr + exit 2'
   tool: ./test/integration/clean-tree.sh && rm ./tmp/dst/file3.bin && rsync-verify --verify ./tmp/src ./tmp/dst; test $? -eq 2
 
 - isc: ISC-5
   type: bash
+  kind: behaviour
   check: an extra destination file is a warning only
   threshold: '"EXTRA: stray.bin" on stderr + exit 0'
   tool: ./test/integration/clean-tree.sh && touch ./tmp/dst/stray.bin && rsync-verify --verify ./tmp/src ./tmp/dst
 
 - isc: ISC-6
   type: bash
+  kind: behaviour
   check: no whole-file buffer reads in the hash path
   threshold: zero matches (rg exits 1)
   tool: rg -n 'readFileSync|Buffer\.from\(|await .*\.arrayBuffer\(\)' src/verify/
 
 - isc: ISC-7
   type: performance
+  kind: behaviour
   check: verify-mode ≤ 1.5× no-verify
   threshold: ratio ≤ 1.5
   tool: bash benchmarks/10gb-tree.sh
 
 - isc: ISC-8
   type: unit-test
+  kind: behaviour
   check: pool high-water mark on a 1,000-file tree
   threshold: max concurrent workers ≤ os.cpus().length
   tool: bun test test/pool.test.ts -t "never exceeds cpu count"
 
 - isc: ISC-9
   type: memory
+  kind: behaviour
   check: peak RSS during 50GB hash
   threshold: ≤ 256MB
   tool: bash benchmarks/large-file-rss.sh
 
 - isc: ISC-10
   type: bash
+  kind: behaviour
   check: --help mentions --verify
   threshold: exactly 1 matching line
   tool: rsync-verify --help | grep -c -- '--verify '
 
 - isc: ISC-11
   type: bash
+  kind: behaviour
   check: JSON output has the documented keys and types
   threshold: jq prints true
   tool: "rsync-verify --verify --json ./tmp/src ./tmp/dst | jq '(.passed|type==\"boolean\") and (.mismatches|type==\"array\") and (.missing|type==\"array\") and (.extra|type==\"array\") and (.elapsed_ms|type==\"number\")'"
 
 - isc: ISC-12
   type: bash
+  kind: behaviour
   check: no rsync process spawned under --verify-only
   threshold: zero rsync execve calls
   tool: strace -f -e trace=execve rsync-verify --verify-only ./tmp/src ./tmp/dst 2>&1 | grep -c 'execve(".*/rsync"' | grep -qx 0
 
 - isc: ISC-13
   type: bash
+  kind: behaviour
   check: permission-denied source file
   threshold: '"ERROR: cannot read" on stderr + exit 3'
   tool: ./test/integration/clean-tree.sh && chmod 000 ./tmp/src/file1.bin && rsync-verify --verify ./tmp/src ./tmp/dst; test $? -eq 3
 
 - isc: ISC-14
   type: bash
+  kind: behaviour
   check: SIGINT mid-run
   threshold: '"verify aborted at file" on stderr + exit 130'
   tool: ./test/integration/sigint.sh   # starts verify on the 10GB tree, sends SIGINT after 2s, checks message + $?
 
 - isc: ISC-15
   type: bash
+  kind: regression
   check: --verify with a remote destination is rejected
   threshold: 'stderr "ERROR: --verify requires local destination" + non-zero exit'
   tool: rsync-verify --verify ./tmp/src ssh://host/path 2>&1 | grep -q 'requires local destination'
 
 - isc: ISC-16
   type: bash
+  kind: regression
   check: plain run opens no hash stream
   threshold: zero "hash:" lines in debug trace
   tool: RSYNC_VERIFY_DEBUG=1 rsync-verify ./tmp/src ./tmp/dst 2>&1 | grep -c '^hash:' | grep -qx 0
 
 - isc: ISC-17
   type: bash
+  kind: regression
   check: file contents never appear in any output stream or log
   threshold: 0 occurrences of the fixture sentinel
   tool: rsync-verify --verify ./tmp/src ./tmp/dst 2>&1 | cat - ~/.cache/rsync-verify/*.log | rg -c "TEST_FIXTURE_SENTINEL_BYTES" | grep -qx 0
 
 - isc: ISC-18
   type: property
+  kind: regression
   property: "exit code is 0 ⇔ mismatches = 0 ∧ missing = 0"
   generator: "random trees of 1–200 files, each file independently flipped / deleted / untouched / extra"
   runs: 500

@@ -12,22 +12,25 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..")
 process.env.ISA_BIN = join(ROOT, "runtime", "bin", "isa")
 process.env.ISA_HOME = mkdtempSync(join(tmpdir(), "isa-pi-"))
 process.env.ISA_SKILL_DIR = join(ROOT, "skill", "ISA")
+process.env.ISA_JUDGE = "heuristic" // no test ever calls a model
+delete process.env.ISA_MODE
 const { default: isaExtension } = await import("../isa.ts")
 
 const PROJ = mkdtempSync(join(homedir(), ".cache", "isa-pi-proj-"))
 mkdirSync(join(PROJ, ".git"))
 const E1 = readFileSync(join(ROOT, "skill/ISA/Examples/e1-minimal.md"), "utf8")
 
-function harness(sessionId: string) {
+function harness(sessionId: string, engine?: Function, branch: unknown[] = []) {
   const handlers: Record<string, Function> = {}
   const notes: string[] = []
   const pi = { on: (name: string, fn: Function) => { handlers[name] = fn; return () => {} } }
   const ctx = {
     cwd: PROJ, hasUI: true, mode: "tui",
     ui: { notify: (m: string) => notes.push(m) },
-    sessionManager: { getSessionId: () => sessionId },
+    sessionManager: { getSessionId: () => sessionId, getBranch: () => branch },
   }
-  isaExtension(pi as any)
+  if (engine) isaExtension(pi as any, engine as any)
+  else isaExtension(pi as any)
   const fire = (name: string, event: Record<string, unknown> = {}) => handlers[name]?.(event, ctx)
   return { fire, notes }
 }
@@ -37,13 +40,34 @@ function isaPath() {
   return join(process.env.ISA_HOME!, key, "20260101-000000_t", "ISA.md")
 }
 
-test("first run injects the protocol, later runs only the status", () => {
-  const { fire } = harness("s-protocol")
-  const first = fire("before_agent_start", { prompt: "hello" })
-  assert.match(first.message.content, /\[ISA protocol/)
-  assert.equal(first.message.display, false)
-  const second = fire("before_agent_start", { prompt: "again" })
-  assert.doesNotMatch(second.message.content, /\[ISA protocol/)
+test("an OFF prompt injects nothing; a task prompt injects the ON block once", () => {
+  const { fire, notes } = harness("s-protocol")
+  assert.equal(fire("before_agent_start", { prompt: "hello" }), undefined)
+  assert.ok(notes.some((n) => /^ISA: OFF/.test(n)))
+  const on = fire("before_agent_start", { prompt: "Fix the bug in dates.py so the tests pass" })
+  assert.match(on.message.content, /\[ISA: ON/)
+  assert.equal(on.message.display, false)
+  assert.ok(notes.some((n) => /^ISA: ON/.test(n)))
+  const again = fire("before_agent_start", { prompt: "and add a test for it too please" })
+  assert.doesNotMatch(again.message.content, /\[ISA: ON/)
+})
+
+test("the prompt call gets its own timeout and the previous assistant message", () => {
+  const calls: { payload: Record<string, unknown>; timeout?: number }[] = []
+  const stub = (payload: Record<string, unknown>, timeout?: number) => { calls.push({ payload, timeout }); return {} }
+  const branch = [
+    { type: "message", message: { role: "user", content: [{ type: "text", text: "review it?" }] } },
+    { type: "message", message: { role: "assistant", content: [{ type: "text", text: "x".repeat(3000) + "I propose a review." }] } },
+    { type: "custom", customType: "isa" },
+  ]
+  const { fire } = harness("s-stub", stub, branch)
+  fire("before_agent_start", { prompt: "go" })
+  fire("tool_call", { toolName: "read", input: { path: "x" } })
+  const prompt = calls.find((c) => c.payload.event === "prompt")!
+  assert.equal(prompt.timeout, 20000)
+  assert.equal((prompt.payload.context as string).length, 2000)
+  assert.match(prompt.payload.context as string, /I propose a review\.$/)
+  for (const c of calls.filter((c) => c.payload.event !== "prompt")) assert.equal(c.timeout, undefined)
 })
 
 test("mutating tool is blocked until an ISA is bound", () => {
@@ -61,11 +85,11 @@ test("mutating tool is blocked until an ISA is bound", () => {
 
 const DONE = { outcome: "completed", context: { canContinue: true } }
 
-// a turn that leaves a real ISA problem (progress lies) after a project change
+// a turn that leaves a real ISA problem (a lint error: no Anti ISC) after a project change
 function problemTurn(fire: Function) {
   fire("before_agent_start", { prompt: "do it" })
   const p = isaPath(); mkdirSync(dirname(p), { recursive: true })
-  writeFileSync(p, E1.replace("progress: 0/4", "progress: 4/4"))
+  writeFileSync(p, E1.replace("ISC-4: Anti:", "ISC-4:"))
   fire("tool_result", { toolName: "write", input: { path: p }, content: [], isError: false })
   fire("tool_result", { toolName: "edit", input: { path: join(PROJ, "x.py") }, content: [], isError: false })
 }
@@ -75,7 +99,7 @@ test("real ISA problem: exactly one continuation per prompt", () => {
   problemTurn(fire)
   const first = fire("agent_before_settle", DONE)
   assert.equal(first.continue, true)
-  assert.match(first.entries[0].content, /progress `4\/4` but criteria say 0\/4/)
+  assert.match(first.entries[0].content, /no `Anti:` ISC/)
   assert.equal(fire("agent_before_settle", DONE), undefined)
   assert.ok(notes.some((n) => /ending the turn anyway/.test(n)))
 })

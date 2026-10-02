@@ -1,12 +1,18 @@
 """`isa` command line. Standard library only.
 
     isa ls [--all]               ISAs of the current project (or every project)
-    isa new <slug>               create a fresh ISA folder for this project, print the ISA.md path
+    isa new <slug> [--tier E3] [--goal "<verbatim span>"] [--path-only]
+                                 create the task ISA (frontmatter: root, stated_goal, asks) and print
+                                 its path — the hooks bind it to the session
     isa where                    project key and ISA folder for the current directory
-    isa lint [--moment M] FILE…  mechanical gate check (same engine the hooks use)
-    isa fit "<prompt>"           would an ISA structure this work? (strong | maybe | none + reasons)
-    isa verify ISA [ISC-N…]      run the ISCs' Test Strategy probes (default: all mechanical ones) and
-                                 record the results — the only evidence a tick can rest on
+    isa lint [--close] FILE…     recompute progress / nested parents / orphaned generated lines, then
+                                 the mechanical gate check (same engine the hooks use)
+    isa fit "<prompt>"           the gate's free pre-filter verdict (yes | no | unsure → judge) + fit score
+    isa verify [--red] ISA [ISC-N…] [--attest "<evidence>"]
+                                 run the probes (cwd = the ISA's root), record them, tick what passed and
+                                 untick what regressed; --attest ticks a self-attested ISC; --red records
+                                 the failing baseline before the change and ticks nothing
+    isa close ISA                re-run every probe; close the ISA only when all pass and lint --close is clean
     isa status --session ID [--harness H] [--json]
                                  the session's bound ISA: tier, phase, progress, open ISCs (read-only)
     isa hook <harness>           hook entry point: event JSON on stdin, harness JSON on stdout
@@ -16,7 +22,7 @@ import os
 import sys
 import traceback
 
-from . import engine, evidence, fit, lint, state, status
+from . import commands, engine, fit, state, status
 
 
 def main(argv=None):
@@ -28,18 +34,22 @@ def main(argv=None):
     if cmd == "hook":
         return hook(args[0] if args else "claude")
     if cmd == "lint":
-        return lint.main(args)
+        return commands.lint_cmd(args)
     if cmd == "ls":
         return _ls(args)
     if cmd == "new":
-        p = state.new_isa_path(os.getcwd(), " ".join(args) or "task")
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        print(p)
-        return 0
+        return commands.new(args)
+    if cmd == "close":
+        if len(args) != 1:
+            print("usage: isa close ISA.md", file=sys.stderr)
+            return 2
+        return commands.close(os.path.expanduser(args[0]))
     if cmd == "fit":
         text = " ".join(args) if args else sys.stdin.read()
+        verdict, why = fit.prefilter(text)
         level, reasons = fit.score(text)
-        print(level + ("".join(f"\n  - {r}" for r in reasons)))
+        print(f"{verdict} — {why}" + (" (goes to the judge)" if verdict == "unsure" else "")
+              + f"\n  fit score: {level}" + "".join(f"\n  - {r}" for r in reasons))
         return 0
     if cmd == "verify":
         return _verify(args)
@@ -73,14 +83,26 @@ def _ls(args):
 
 
 def _verify(args):
-    timeout = 600
-    if "--timeout" in args:
-        i = args.index("--timeout")
-        timeout, args = int(args[i + 1]), args[:i] + args[i + 2:]
+    timeout, attest, red = 600, None, False
+    args = list(args)
+    for flag in ("--timeout", "--attest"):
+        if flag in args:
+            i = args.index(flag)
+            if i + 1 >= len(args):
+                print(f"isa verify: {flag} needs a value", file=sys.stderr)
+                return 2
+            val, args = args[i + 1], args[:i] + args[i + 2:]
+            if flag == "--timeout":
+                timeout = int(val)
+            else:
+                attest = val
+    if "--red" in args:
+        red, args = True, [a for a in args if a != "--red"]
     if not args:
-        print("usage: isa verify ISA.md [ISC-N…] [--timeout SECONDS]", file=sys.stderr)
+        print('usage: isa verify [--red] ISA.md [ISC-N…] [--attest "<evidence>"] [--timeout SECONDS]',
+              file=sys.stderr)
         return 2
-    return evidence.run(os.path.expanduser(args[0]), args[1:], timeout=timeout)
+    return commands.verify(os.path.expanduser(args[0]), args[1:], red=red, attest=attest, timeout=timeout)
 
 
 def _status(args):
@@ -142,8 +164,16 @@ def _claude_in(d):
         "prompt_id": d.get("prompt_id"), "source": d.get("source"), "prompt": d.get("prompt"),
         "tool": d.get("tool_name"), "tool_input": d.get("tool_input"), "tool_use_id": d.get("tool_use_id"),
         "temp_dirs": [d["scratchpad_dir"]] if d.get("scratchpad_dir") else [],
-        "retried": bool(d.get("stop_hook_active")), "_name": name,
+        "retried": bool(d.get("stop_hook_active")), "transcript_path": d.get("transcript_path"),
+        "tool_output": _tool_output(d.get("tool_response")), "_name": name,
     }
+
+
+def _tool_output(resp):
+    """The text a tool printed (Bash: stdout), as far as the hook input carries it."""
+    if isinstance(resp, dict):
+        return str(resp.get("stdout") or resp.get("output") or resp.get("content") or "")
+    return "" if resp is None else str(resp)
 
 
 def _claude_out(ev, res):

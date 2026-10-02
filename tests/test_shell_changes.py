@@ -123,38 +123,33 @@ class TestNonGit(ScriptCase):
 
 
 class TestFreshnessSeesScripts(ScriptCase):
-    def test_script_edit_after_a_tick_makes_its_pass_stale(self):
+    """SPEC-v2 § 4.2: a pass records the tree's fingerprint; a script's edit changes it, whatever the
+    classifier made of the command. Freshness itself is the close's job (it re-runs every probe)."""
+
+    def test_script_edit_changes_the_fingerprint(self):
         import sys
-        from tests.test_evidence import FIXTURE, tick
+        from tests.test_evidence import FIXTURE
         from tests.test_hooks import ISA
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "runtime"))
-        from isa import evidence, lint
+        from isa import evidence, fingerprint
         flags = os.path.join(self.tmp, "flags")
         os.makedirs(flags)
         open(os.path.join(flags, "ok2"), "w").close()
-        text = FIXTURE.replace("{d}", flags)
-        path = self.write_isa(text)
+        path = self.write_isa(FIXTURE.replace("{d}", flags))
         subprocess.run([sys.executable, ISA, "verify", path, "ISC-2"], cwd=self.proj, env=self.env,
                        check=True, capture_output=True)
-        self.write_isa(tick(text, "ISC-2"), path)
         old = os.environ.get("ISA_HOME")
         os.environ["ISA_HOME"] = self.home
         try:
-            parsed = lint.parse(tick(text, "ISC-2"), path)
-            self.assertEqual(evidence.status(path, parsed, "ISC-2", since=self.session()["last_mutation"]), "proven")
+            [row] = [r for r in evidence.rows(path) if r.get("kind") == "verify"]
+            self.assertEqual(row["fingerprint"], fingerprint.of(self.proj))
             self.script("open('a.txt', 'w').write('edited by a script\\n')")
-            self.assertEqual(evidence.status(path, parsed, "ISC-2", since=self.session()["last_mutation"]), "stale")
+            self.assertNotEqual(fingerprint.of(self.proj), row["fingerprint"])
         finally:
             if old is None:
                 os.environ.pop("ISA_HOME", None)
             else:
                 os.environ["ISA_HOME"] = old
-        # and closing on that stale pass is refused
-        closed = tick(text, "ISC-2").replace("phase: build", "phase: complete")
-        self.write_isa(closed, path)
-        code, _, err = self.hook("Stop", stop_hook_active=False)
-        self.assertEqual(code, 2)
-        self.assertIn("ISC-2: its pass is older than the last project change", err)
 
 
 class TestBudget(ScriptCase):

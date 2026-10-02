@@ -143,66 +143,79 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
 ```yaml
 - isc: ISC-1
   type: bash
+  kind: behaviour
   check: build artifacts and signatures
   threshold: 3 artifacts, each signature verifies
   tool: bun run tauri build && bash scripts/verify-signatures.sh dist/
 
 - isc: ISC-2
   type: bash
+  kind: behaviour
   check: macOS Gatekeeper accepts the signed .dmg
   threshold: spctl reports "accepted (source=Notarized Developer ID)"
   tool: spctl --assess --verbose dist/WattWatch.dmg
 
 - isc: ISC-3
   type: bash
+  kind: behaviour
   check: artifact size after compression
   threshold: ≤ 25MB each
   tool: du -m dist/WattWatch.dmg dist/WattWatch.AppImage dist/WattWatch.msi
 
 - isc: ISC-4
   type: bash
+  kind: http
   check: download page checksums vs fetched artifacts
   threshold: every posted SHA-256 matches
   tool: bash scripts/verify-download-page.sh https://wattwatch.example.org/download
 
 - isc: ISC-5
   type: bash
+  kind: file
   check: CLI version vs package.json
   threshold: strings equal
   tool: test "$(wattwatch --version)" = "$(jq -r .version package.json)"
 
 - isc: ISC-6
   type: manual
+  kind: doc
   check: timed first-run with one Shelly and one Powerwall
   threshold: ≤ 10 minutes, 3 of 3 test users
   tool: moderated first-run sessions with a stopwatch
 
 - isc: ISC-7
   type: bash
+  kind: behaviour
   check: mDNS scan returns Shelly devices in test rig
   threshold: ≥ 1 device discovered in ≤ 30s
   tool: bun run scripts/mdns-probe.ts
 
 - isc: ISC-8
   type: unit-test
+  kind: behaviour
   check: Emporia setup with valid creds and a reachable UDP port
   threshold: setup succeeds; unreachable port shows an error
   tool: bun test test/onboarding/emporia.test.ts
 
 - isc: ISC-9
   type: bash
+  kind: behaviour
+  risk: high
   check: Powerwall setup with the gateway only, Tesla cloud blocked
   threshold: setup succeeds with cloud hosts null-routed
   tool: bash scripts/offline-setup.sh powerwall
 
 - isc: ISC-10
   type: unit-test
+  kind: behaviour
   check: Sense toggle before and after disclaimer dismissal
   threshold: toggle disabled until dismissed
   tool: bun test test/onboarding/sense-gate.test.ts
 
 - isc: ISC-11
   type: property
+  kind: behaviour
+  risk: high
   property: "∀ credential c entered in onboarding: c never appears in any file under the app-data dir; keychain holds it"
   generator: "random credentials incl. unicode and 1–256 chars, across all four driver types"
   runs: 200
@@ -210,12 +223,14 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
 
 - isc: ISC-12
   type: unit-test
+  kind: behaviour
   check: driver against Gen1 and Gen2 mock devices
   threshold: readings from both endpoints
   tool: bun test test/drivers/shelly.test.ts
 
 - isc: ISC-13
   type: property
+  kind: behaviour
   property: "decode(encode(frame)) == frame for 16-channel frames; channel i maps to the user label for i"
   generator: "random 16-channel frames with watt values 0–15000 and random label maps"
   runs: 1000
@@ -223,96 +238,114 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
 
 - isc: ISC-14
   type: bash
+  kind: behaviour
+  risk: high
   check: Powerwall driver reads /api/meters/aggregates with valid auth
   threshold: returns site/load/solar/battery values
   tool: bun run scripts/powerwall-probe.ts --gateway 192.168.x.x
 
 - isc: ISC-15
   type: unit-test
+  kind: behaviour
   check: Sense driver auth against a mock WebSocket + warning banner
   threshold: connects; warning rendered once per session
   tool: bun test test/drivers/sense.test.ts
 
 - isc: ISC-16
   type: unit-test
+  kind: behaviour
   check: state after 3 and 10 consecutive failed polls
   threshold: degraded at 3; offline + 60s pause at 10
   tool: bun test test/drivers/health.test.ts
 
 - isc: ISC-17
   type: bash
+  kind: behaviour
   check: poll latency per driver class over 1,000 polls
   threshold: LAN p95 ≤ 200ms; cloud p95 ≤ 2000ms
   tool: bun run scripts/poll-latency.ts --polls 1000
 
 - isc: ISC-18
   type: bash
+  kind: schema
   check: table list
   threshold: exactly the 8 named tables
   tool: sqlite3 "$DB" ".tables" | tr -s ' ' '\n' | sort | xargs
 
 - isc: ISC-19
   type: unit-test
+  kind: behaviour
   check: rollup and 7-day raw pruning with a fake clock
   threshold: 5-min aggregates match raw sums; raw rows older than 7d gone
   tool: bun test test/db/rollup.test.ts
 
 - isc: ISC-20
   type: unit-test
+  kind: behaviour
   check: retention with a fake clock at +14 months
   threshold: hourly rows ≤ 13 months old; daily rows all kept
   tool: bun test test/db/retention.test.ts
 
 - isc: ISC-21
   type: bash
+  kind: schema
   check: PRAGMA integrity_check on existing db
   threshold: returns "ok"
   tool: sqlite3 ${APP_DATA}/wattwatch/db.sqlite "PRAGMA integrity_check"
 
 - isc: ISC-22
   type: bash
+  kind: schema
   check: JSON export of the 6-month fixture archive
   threshold: ≤ 30s, file parses
   tool: time wattwatch export --json --db test/fixtures/6mo.sqlite --out /tmp/x.json && jq -e . /tmp/x.json >/dev/null
 
 - isc: ISC-23
   type: screenshot
+  kind: visual
+  risk: low — solar energy production, not a production environment
   check: live dashboard tiles over 15 seconds
   threshold: 4 tiles present; values change on the 5s tick
   tool: bunx playwright test e2e/dashboard.spec.ts (3 shots, 5s apart), viewed
 
 - isc: ISC-24
   type: unit-test
+  kind: behaviour
   check: circuit list order and sparkline window
   threshold: sorted by current draw; sparkline spans 60 minutes
   tool: bun test test/ui/circuits.test.ts
 
 - isc: ISC-25
   type: screenshot
+  kind: visual
   check: Sankey with solar → home / battery / grid
   threshold: three outflows visible, widths proportional to fixture values
   tool: bunx playwright test e2e/sankey.spec.ts, viewed
 
 - isc: ISC-26
   type: unit-test
+  kind: behaviour
   check: drill-down levels and zoom/pan
   threshold: raw, hourly and daily views reachable; zoom and pan change the visible range
   tool: bunx playwright test e2e/drilldown.spec.ts
 
 - isc: ISC-27
   type: performance
+  kind: behaviour
   check: 60fps scroll with 90 days loaded
   threshold: median frame time ≤ 16.6ms
   tool: tauri devtools performance recorder
 
 - isc: ISC-28
   type: performance
+  kind: behaviour
   check: click → first paint p95
   threshold: ≤ 100ms
   tool: bun run scripts/ui-latency.ts --runs 200
 
 - isc: ISC-29
   type: property
+  kind: behaviour
   property: "parse(format(rule)) == rule for every rule in the metric × op × threshold × duration grammar"
   generator: "random metrics from the schema, ops < <= > >= ==, thresholds, durations 1s–24h"
   runs: 1000
@@ -320,54 +353,69 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
 
 - isc: ISC-30
   type: unit-test
+  kind: behaviour
   check: firing rule side effects
   threshold: 1 notification call + 1 event row
   tool: bun test test/alerts/fire.test.ts
 
 - isc: ISC-31
   type: unit-test
+  kind: behaviour
   check: alert fired while app closed (fake clock across restart)
   threshold: shown on next launch
   tool: bun test test/alerts/persist.test.ts
 
 - isc: ISC-32
   type: unit-test
+  kind: behaviour
+  risk: low — the OS notification permission, not access control
   check: firing rule with notification permission denied
   threshold: event row still written, no throw
   tool: bun test test/alerts/permission-denied.test.ts
 
 - isc: ISC-33
   type: unit-test
+  kind: behaviour
+  risk: high
   check: stored password hash parameters
   threshold: $argon2id$v=19$m=65536,t=3,p=4
   tool: bun test test/auth/kdf.test.ts
 
 - isc: ISC-34
   type: bash
+  kind: schema
+  risk: high
   check: DB opened without the key
   threshold: '"file is not a database"'
   tool: sqlite3 ${APP_DATA}/wattwatch/db.sqlite 'SELECT 1' 2>&1
 
 - isc: ISC-35
   type: unit-test
+  kind: behaviour
+  risk: high
   check: sixth unlock attempt after five failures
   threshold: rejected with cooldown ≥ 300s
   tool: bun test test/auth/cooldown.test.ts
 
 - isc: ISC-36
   type: unit-test
+  kind: behaviour
+  risk: high
   check: reset flow without and with the data-loss confirmation
   threshold: reset blocked until confirmed; no recovery key generated
   tool: bun test test/auth/reset.test.ts
 
 - isc: ISC-37
   type: unit-test
+  kind: behaviour
   check: default sync setting + enable screen
   threshold: default off; explanation screen shown before on
   tool: bun test test/sync/defaults.test.ts
 
 - isc: ISC-38
   type: property
+  kind: behaviour
+  risk: high
   property: "sync_key(pw, salt) is deterministic per install and differs across salts"
   generator: "random passwords × random 16-byte salts"
   runs: 1000
@@ -375,6 +423,7 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
 
 - isc: ISC-39
   type: property
+  kind: behaviour
   property: "∀ payload p: relay-stored blob ≠ p, decrypts to p only with the key, and carries a valid GCM tag"
   generator: "random JSON payloads 0–64KB drawn from the sync schema"
   runs: 1000
@@ -382,66 +431,79 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
 
 - isc: ISC-40
   type: bash
+  kind: behaviour
+  risk: high
   check: second-device pairing on the staging relay
   threshold: paired and showing data in ≤ 60s
   tool: bun run scripts/pair-two-devices.ts --relay staging
 
 - isc: ISC-41
   type: bash
+  kind: behaviour
   check: server-side ciphertext after disable
   threshold: 0 objects for the install within 24h; confirmation shown
   tool: bun run scripts/relay-objects.ts --install $INSTALL_ID --after-disable 24h
 
 - isc: ISC-42
   type: unit-test
+  kind: behaviour
+  risk: high
   check: update checks over 72h of fake clock; install gating
   threshold: 3 checks; nothing applied until "Install" clicked
   tool: bun test test/update/schedule.test.ts
 
 - isc: ISC-43
   type: unit-test
+  kind: behaviour
   check: unsigned and tampered payloads
   threshold: both abort with a visible error
   tool: bun test test/update/signature.test.ts
 
 - isc: ISC-44
   type: bash
+  kind: behaviour
   check: diagnostic bundle contents
   threshold: schema only (0 INSERT lines), logs ≤ 24h old, os.json present
   tool: wattwatch diag --out /tmp/d.zip && unzip -p /tmp/d.zip schema.sql | rg -c INSERT | grep -qx 0
 
 - isc: ISC-45
   type: unit-test
+  kind: behaviour
   check: crash reporter default + preview
   threshold: off by default; preview shows the exact bytes later sent
   tool: bun test test/crash/preview.test.ts
 
 - isc: ISC-46
   type: bash
+  kind: regression
   check: outbound packets on first launch before consent
   threshold: 0 packets to non-LAN destinations
   tool: tcpdump -i en0 'not net 192.168.0.0/16 and not net 10.0.0.0/8 and not net 172.16.0.0/12' for 60s
 
 - isc: ISC-47
   type: bash
+  kind: regression
   check: control affordances and write paths
   threshold: zero matches (rg exits 1)
   tool: rg -n -i '"control"|>Control<|setRelay|set_output|/relay/' src/
 
 - isc: ISC-48
   type: unit-test
+  kind: regression
   check: DB file set before and after a simulated migration
   threshold: a timestamped .bak exists before the migration writes
   tool: bun test test/update/backup.test.ts
 
 - isc: ISC-49
   type: bash
+  kind: regression
   check: no Electron in dependency tree
   threshold: zero matches (rg exits 1)
   tool: bun pm ls | rg -i electron
 
 - isc: ISC-50
   type: bash
+  kind: regression
   check: no third-party telemetry SDK strings in source
   threshold: zero matches (rg exits 1)
   tool: rg "google-analytics|sentry|mixpanel|posthog|fullstory" src/
@@ -560,44 +622,44 @@ Ship a Tauri-based desktop application — code-named WattWatch and distributed 
 
 ## Verification
 
-- ISC-1: `bun run tauri build && verify-signatures.sh dist/` — 3 artifacts, 3 signatures OK
-- ISC-2: `spctl --assess --verbose dist/WattWatch.dmg` — `dist/WattWatch.dmg: accepted (source=Notarized Developer ID)`
-- ISC-3: `du -m dist/WattWatch.dmg` — `22M`; `du -m dist/WattWatch.AppImage` — `19M`; `du -m dist/WattWatch.msi` — `24M`
-- ISC-4: `verify-download-page.sh` — 3/3 checksums match
-- ISC-5: `wattwatch --version` — `1.0.0-rc.3`, equal to package.json
-- ISC-6: three moderated first runs — 6:40, 8:15, 9:02
-- ISC-7: mdns-probe.ts run on test LAN with 3 Shelly Gen2 devices — discovered all 3 in 4.1s
-- ISC-8: `bun test test/onboarding/emporia.test.ts` — 3 passed
-- ISC-9: `offline-setup.sh powerwall` with Tesla cloud null-routed — setup complete
-- ISC-10: `bun test test/onboarding/sense-gate.test.ts` — 2 passed
-- ISC-12: `bun test test/drivers/shelly.test.ts` — 6 passed (Gen1 + Gen2)
-- ISC-13: `bun test test/drivers/emporia.property.test.ts` — 1000 runs, 0 failures
-- ISC-14: powerwall-probe.ts against test gateway — `{site_now: -1240, load_now: 3120, solar_now: 4360, battery_now: 0, percentage_charged: 87.4}`
-- ISC-16: `bun test test/drivers/health.test.ts` — 4 passed
-- ISC-17: `poll-latency.ts --polls 1000` — LAN p95 41ms; cloud (Sense mock) p95 1320ms
-- ISC-18: `sqlite3 "$DB" .tables` — `aggregate_5min aggregate_daily aggregate_hourly circuit device event sensor_reading user_pref`
-- ISC-19: `bun test test/db/rollup.test.ts` — 5 passed
-- ISC-20: `bun test test/db/retention.test.ts` — 3 passed
-- ISC-21: `sqlite3 db.sqlite "PRAGMA integrity_check"` — `ok`
-- ISC-22: 6-month fixture export — `real 0m11.8s`, `jq -e .` exit 0
-- ISC-23: dashboard shots `shots/dash-{0,5,10}s.png` viewed — 4 tiles, values change between shots
-- ISC-24: `bun test test/ui/circuits.test.ts` — 3 passed
-- ISC-25: `shots/sankey.png` viewed — solar → home / battery / grid, widths match fixture 2.1 / 1.4 / 0.8 kW
-- ISC-27: Tauri devtools recorder, 90-day dataset on 2019 MacBook Air — median frame time 14.2ms during scroll
-- ISC-28: ui-latency.ts 200 runs on tier-1 hardware — p95 click-to-paint 78ms
-- ISC-29: `bun test test/alerts/rule-grammar.property.test.ts` — 1000 runs, 0 failures
-- ISC-30: `bun test test/alerts/fire.test.ts` — 2 passed
-- ISC-31: `bun test test/alerts/persist.test.ts` — 1 passed
-- ISC-33: `bun test test/auth/kdf.test.ts` — hash prefix `$argon2id$v=19$m=65536,t=3,p=4`
-- ISC-34: `sqlite3 db.sqlite 'SELECT 1'` without key — `Error: file is not a database`
-- ISC-35: `bun test test/auth/cooldown.test.ts` — 2 passed
-- ISC-36: `bun test test/auth/reset.test.ts` — 2 passed
-- ISC-42: `bun test test/update/schedule.test.ts` — 2 passed
-- ISC-43: `bun test test/update/signature.test.ts` — 2 passed
-- ISC-44: diag bundle — `schema.sql` 0 INSERT lines, `drivers.log` oldest line 23h51m, `os.json` present
-- ISC-45: `bun test test/crash/preview.test.ts` — 2 passed
-- ISC-46: 60-second tcpdump on first launch before consent — 0 packets to non-LAN destinations
-- ISC-47: `rg -n -i '"control"|>Control<|setRelay|set_output|/relay/' src/` — empty
-- ISC-48: `bun test test/update/backup.test.ts` — 1 passed (`db.sqlite.bak-20260427T221500`)
-- ISC-49: `bun pm ls | rg -i electron` — empty
-- ISC-50: `rg "google-analytics|sentry|mixpanel|posthog|fullstory" src/` — empty
+- ISC-1: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun run tauri build && bash scripts/verify-signatures.sh dist/` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L2)
+- ISC-2: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `spctl --assess --verbose dist/WattWatch.dmg` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L3)
+- ISC-3: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `du -m dist/WattWatch.dmg dist/WattWatch.AppImage dist/WattWatch.msi` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L4)
+- ISC-4: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bash scripts/verify-download-page.sh https://wattwatch.example.org/download` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L5)
+- ISC-5: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `test "$(wattwatch --version)" = "$(jq -r .version package.json)"` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L6)
+- ISC-6: attested 2026-04-27T22:30:00 — three moderated first runs — 6:40, 8:15, 9:02 (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L7)
+- ISC-7: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun run scripts/mdns-probe.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L8)
+- ISC-8: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/onboarding/emporia.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L9)
+- ISC-9: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bash scripts/offline-setup.sh powerwall` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L10)
+- ISC-10: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/onboarding/sense-gate.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L11)
+- ISC-12: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/drivers/shelly.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L12)
+- ISC-13: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/drivers/emporia.property.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L13)
+- ISC-14: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun run scripts/powerwall-probe.ts --gateway 192.168.x.x` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L14)
+- ISC-16: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/drivers/health.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L15)
+- ISC-17: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun run scripts/poll-latency.ts --polls 1000` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L16)
+- ISC-18: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `sqlite3 "$DB" ".tables" | tr -s ' ' '\n' | sort | xargs` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L17)
+- ISC-19: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/db/rollup.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L18)
+- ISC-20: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/db/retention.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L19)
+- ISC-21: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `sqlite3 ${APP_DATA}/wattwatch/db.sqlite "PRAGMA integrity_check"` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L20)
+- ISC-22: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `time wattwatch export --json --db test/fixtures/6mo.sqlite --out /tmp/x.json && jq -e . /tmp/x.json >/dev/null` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L21)
+- ISC-23: attested 2026-04-27T22:30:00 — dashboard shots `shots/dash-{0,5,10}s.png` viewed — 4 tiles, values change between shots (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L22)
+- ISC-24: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/ui/circuits.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L23)
+- ISC-25: attested 2026-04-27T22:30:00 — `shots/sankey.png` viewed — solar → home / battery / grid, widths match fixture 2.1 / 1.4 / 0.8 kW (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L24)
+- ISC-27: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `tauri devtools performance recorder` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L25)
+- ISC-28: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun run scripts/ui-latency.ts --runs 200` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L26)
+- ISC-29: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/alerts/rule-grammar.property.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L27)
+- ISC-30: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/alerts/fire.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L28)
+- ISC-31: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/alerts/persist.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L29)
+- ISC-33: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/auth/kdf.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L30)
+- ISC-34: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `sqlite3 ${APP_DATA}/wattwatch/db.sqlite 'SELECT 1' 2>&1` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L31)
+- ISC-35: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/auth/cooldown.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L32)
+- ISC-36: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/auth/reset.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L33)
+- ISC-42: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/update/schedule.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L34)
+- ISC-43: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/update/signature.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L35)
+- ISC-44: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `wattwatch diag --out /tmp/d.zip && unzip -p /tmp/d.zip schema.sql | rg -c INSERT | grep -qx 0` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L36)
+- ISC-45: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/crash/preview.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L37)
+- ISC-46: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `tcpdump -i en0 'not net 192.168.0.0/16 and not net 10.0.0.0/8 and not net 172.16.0.0/12' for 60s` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L38)
+- ISC-47: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `rg -n -i '"control"|>Control<|setRelay|set_output|/relay/' src/` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L39)
+- ISC-48: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun test test/update/backup.test.ts` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L40)
+- ISC-49: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `bun pm ls | rg -i electron` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L41)
+- ISC-50: verified 2026-04-27T22:30:00 — exit 0 in 0.3s — `rg "google-analytics|sentry|mixpanel|posthog|fullstory" src/` (ledger: 20260115-090000_wattwatch-v1-dfd99783f158#L42)

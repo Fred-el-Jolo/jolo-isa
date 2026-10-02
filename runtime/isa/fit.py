@@ -1,12 +1,52 @@
-"""Does this prompt describe work an ISA would structure? Deterministic stand-in for a Jev judgment.
+"""The gate's free, deterministic first pass (SPEC-v2 § 1.2), and a fit score for `isa fit`.
 
-`score(prompt)` → (level, reasons) with level "strong" | "maybe" | "none". The statement it checks
-against is fit.md. It never gates anything: the verdict is context for the model. Replace
-`score` with a model judgment (Future D, JEV.md) without changing callers.
+`prefilter(prompt)` → (verdict, reason) with verdict "yes" | "no" | "unsure". Rules, in order:
+greeting/thanks → no · short prompt (≤ 4 words: "go", "ok do it", "fix these") → unsure, since it
+usually authorises work proposed in the turn before, which only the judge (with that context) sees ·
+question or explanation → unsure · explicit ISA mention → yes · work verb with an object → yes ·
+anything else → unsure. Only `unsure` reaches the judge (judge.py); a false yes is the accepted cost.
+
+`score(prompt)` → (level, reasons) is the older heuristic ("strong" | "maybe" | "none"), kept as a
+detail line for `isa fit`. It decides nothing. fit.md states what the gate question protects.
 """
 import re
 
-# work whose outcome someone relies on and whose parts could be skipped
+SOCIAL = {"hi", "hello", "hey", "yo", "thanks", "thank", "you", "thx", "ty", "cheers", "cool", "nice", "great",
+          "perfect", "awesome", "good", "looks", "look", "lgtm", "bye", "morning", "evening", "night", "very",
+          "much", "a", "lot", "so", "all", "that", "works", "excellent", "wonderful", "merci", "bravo"}
+WORK_VERB = re.compile(
+    r"\b(fix|add|implement|refactor|write|rewrite|review|migrate|deploy|create|build|update|remove|delete|"
+    r"rename|change|modify|install|configure|set up|port|convert|optimi[sz]e|improve|test|debug|audit|design|"
+    r"plan|draft|document|upgrade|clean up|integrate|scaffold|generate|make|ship|publish|release|translate|"
+    r"summari[sz]e|compare|investigate|research|analy[sz]e|assess|evaluate|benchmark|spec|prototype)\b",
+    re.I)
+QUESTION = re.compile(r"^\s*(what|why|how|when|where|which|who|whose|is|are|was|were|does|do|did|can|could|"
+                      r"should|would|will|may|might)\b", re.I)
+EXPLAIN = re.compile(r"\b(explain|describe|tell me about|remind me|meaning of|what('s| is| are| does))\b", re.I)
+ISA_MENTION = re.compile(r"\bISA\b|\bideal state\b|\bISC\b", re.I)
+
+
+def prefilter(prompt):
+    text = (prompt or "").strip()
+    words = re.findall(r"[\w'-]+", text.lower())
+    if not text or text.startswith("/"):
+        return "no", "empty prompt or slash command"
+    if words and all(w in SOCIAL for w in words):
+        return "no", "greeting or thanks"
+    if len(words) <= 4:
+        return "unsure", "short prompt: it may authorise work proposed earlier"
+    if QUESTION.match(text) or text.rstrip().endswith("?") or EXPLAIN.search(text):
+        return "unsure", "phrased as a question or an explanation request"
+    if ISA_MENTION.search(text):
+        return "yes", "explicit ISA mention"
+    m = WORK_VERB.search(text)
+    if m:
+        return "yes", f"work request ({m.group(0).lower()} …)"
+    return "unsure", "no work verb recognised"
+
+
+# ------------------------------------------------------------------ detail score (isa fit)
+
 OUTCOME_VERBS = re.compile(
     r"\b(review|audit|assess|evaluat\w*|analy[sz]\w*|investigat\w*|diagnos\w*|root[- ]cause|debug\w*|"
     r"compar\w*|benchmark\w*|research\w*|survey|inventor(y|ies)|map (out|the)|plan\w*|design\w*|spec(ify|s)?|"
@@ -18,8 +58,6 @@ DONE_LANG = re.compile(r"\b(make sure|ensure|so that|until|definition of done|ac
                        re.I)
 QUESTION_START = re.compile(r"^\s*(what|who|when|where|which|why|is|are|was|were|does|do|did|can|could|"
                             r"should|how (do|does|can|much|many|long))\b", re.I)
-EXPLAIN = re.compile(r"\b(explain|what('s| is| are| does)|meaning of|define|definition of(?! done)|tell me about|"
-                     r"remind me)\b", re.I)
 SMALL_TALK = re.compile(r"^\s*(ok(ay)?|thanks?|thank you|yes|no|yep|nope|sure|cool|great|nice|lgtm|go|continue|"
                         r"proceed|stop|hi|hello)\b[\s.!]*$", re.I)
 
@@ -61,18 +99,3 @@ def score(prompt):
         pts -= 2
     level = "strong" if pts >= 4 else "maybe" if pts >= 2 else "none"
     return level, (reasons if level != "none" else [])
-
-
-def advice(level, reasons, bound=None):
-    """One short paragraph for the model; empty when the prompt doesn't fit."""
-    if level == "none":
-        return ""
-    why = "; ".join(reasons)
-    head = f"ISA fit: {level} ({why})."
-    if bound:
-        return head + " An ISA is bound — if this is a new task, give it its own ISA."
-    if level == "strong":
-        return (head + " Even if this stays read-only, structure it with an ISA before starting: Goal = the "
-                "conclusion to reach, ISCs = the questions the answer must settle (one per part, plus an `Anti:` "
-                "for the lazy answer), Verification = evidence per ISC. See fit.md in the ISA runtime.")
-    return head + " Consider an ISA if the answer has several parts that could each be skipped."

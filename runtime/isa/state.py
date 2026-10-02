@@ -211,9 +211,12 @@ def read_session(harness, session_id):
         return {}
 
 
-def log_prompt(harness, session_id, text, prompt_id=None):
+def log_prompt(harness, session_id, text, prompt_id=None, cwd=None, project=None, context=None):
+    """One row per user prompt. `cwd`/`project` make "this project's prompts" a lookup (`isa new`), and
+    `context` keeps the tail of the assistant message the prompt answers (a "go" means what it approves)."""
+    row = {"t": time.time(), "id": prompt_id, "text": text, "cwd": cwd, "project": project, "context": context or ""}
     with open(os.path.join(state_dir("prompts"), f"{_safe(harness)}-{_safe(session_id)}.jsonl"), "a") as f:
-        f.write(json.dumps({"t": time.time(), "id": prompt_id, "text": text}) + "\n")
+        f.write(json.dumps(row) + "\n")
 
 
 def prompts(harness, session_id):

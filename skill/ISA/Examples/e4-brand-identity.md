@@ -7,6 +7,7 @@ phase: execute
 progress: 15/56
 started: 2026-02-03T22:12:00Z
 updated: 2026-04-19T11:30:00Z
+context_sufficient: true
 ---
 
 <!-- Fictitious example. "Cardinal" is a teaching project name; any resemblance to real products or organizations is coincidental. The example.com domain is RFC 2606 reserved. -->
@@ -120,336 +121,392 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
 ```yaml
 - isc: ISC-1
   type: manual
+  kind: doc
   check: Figma component inspector for wordmark and mark
   threshold: two separate components sharing one baseline guide
   tool: open cardinal-brand-v1 in Figma, inspect both components
 
 - isc: ISC-2
   type: bash
+  kind: behaviour
   check: lockup components in the kit
   threshold: exactly horizontal, stacked, mark-only
   tool: bun scripts/figma-components.ts cardinal-brand-v1 --prefix 'logo/lockup/' --names
 
 - isc: ISC-3
   type: manual
+  kind: visual
   check: legibility at 16px favicon
   threshold: ≥2/3 unfamiliar viewers identify "Cardinal" within 5 seconds
   tool: screenshot + 3-viewer survey
 
 - isc: ISC-4
   type: manual
+  kind: visual
   check: 1-bit B&W recognizability
   threshold: ≥4/5 viewers say "same logo" as color version
   tool: viewer survey
 
 - isc: ISC-5
   type: bash
+  kind: behaviour
   check: exported logo files
   threshold: all 5 present
   tool: cd brand/logo && ls cardinal.svg cardinal@1x.png cardinal@2x.png cardinal@3x.png favicon.ico
 
 - isc: ISC-6
   type: bash
+  kind: behaviour
   check: clear-space rule in the usage doc
   threshold: ≥ 1 match
   tool: rg -c -i 'clear.space.*(½|1/2|half).*cap.height' brand/logo/USAGE.md
 
 - isc: ISC-7
   type: bash
+  kind: file
   check: typeface OFL 1.1
   threshold: license header matches "SIL OPEN FONT LICENSE Version 1.1"
   tool: rg -c 'SIL OPEN FONT LICENSE Version 1.1' fonts/*/LICENSE.txt
 
 - isc: ISC-8
   type: bash
+  kind: behaviour
   check: size tokens
   threshold: exactly 12 14 16 20 28 44
   tool: jq -r '.size | map(.value) | join(" ")' tokens/type.json
 
 - isc: ISC-9
   type: bash
+  kind: behaviour
   check: weight tokens
   threshold: exactly 400 600
   tool: jq -r '.weight | map(.value) | join(" ")' tokens/type.json
 
 - isc: ISC-10
   type: screenshot
+  kind: visual
   check: 16px body at 1.5 line-height in Chrome, Safari, Firefox
   threshold: no clipped descenders or uneven rhythm in any of the 3 shots
   tool: bunx playwright test e2e/body-copy.spec.ts --project=chromium,webkit,firefox, then view the 3 screenshots
 
 - isc: ISC-11
   type: bash
+  kind: behaviour
   check: hue tokens
   threshold: exactly cardinal-red-600, dawn-500
   tool: rg -o -- '--(cardinal|dawn)-[a-z-]*[0-9]+' tokens/colors.css | sort -u
 
 - isc: ISC-12
   type: bash
+  kind: behaviour
   check: neutral tokens
   threshold: exactly ink-900, 700, 500, 300, 100
   tool: rg -o -- '--ink-[0-9]+' tokens/colors.css | sort -u
 
 - isc: ISC-13
   type: bash
+  kind: behaviour
   check: CSS custom properties exist for every palette token
   threshold: 7 properties
   tool: rg -c -- '^\s*--(cardinal|dawn|ink)-' tokens/colors.css
 
 - isc: ISC-14
   type: bash
+  kind: behaviour
   check: Figma color styles vs tokens/colors.css
   threshold: identical name → hex sets
   tool: diff <(bun scripts/figma-styles.ts cardinal-brand-v1 --colors) <(bun scripts/css-tokens.ts tokens/colors.css)
 
 - isc: ISC-15
   type: bash
+  kind: behaviour
   check: WCAG 2.2 AA across all permitted FG/BG pairs
   threshold: zero violations
   tool: bun scripts/contrast-check.ts
 
 - isc: ISC-16
   type: bash
+  kind: file
   check: voice guide length
   threshold: ≤ 60 lines
   tool: wc -l < brand/voice.md
 
 - isc: ISC-17
   type: bash
+  kind: behaviour
   check: worked rewrites per context
   threshold: 6 contexts, each with an off-brand and an on-brand line
   tool: bun scripts/voice-audit.ts brand/voice.md --rewrites confirmation,error,headline,support,social,legal
 
 - isc: ISC-18
   type: manual
+  kind: doc
   check: voice guide reproducibility
   threshold: founder guesses wrong in ≥ 50% of 10 blind A/B trials
   tool: blind A/B test (Outsider draft + Founder rewrite vs Founder draft)
 
 - isc: ISC-19
   type: bash
+  kind: behaviour
   check: anti-voice list items
   threshold: "5"
   tool: sed -n '/^## Voice does not/,/^## /p' brand/voice.md | rg -c '^- '
 
 - isc: ISC-20
   type: bash
+  kind: http
   check: legacy assets referenced by the homepage
   threshold: zero matches (rg exits 1)
   tool: curl -s https://cardinal.example.com/ | rg 'napkin|legacy-blue|#1e4fd8|#2563eb|#3b82f6'
 
 - isc: ISC-21
   type: bash
+  kind: behaviour
   check: App Store screenshot exports
   threshold: 5 at 1290×2796 and 5 at 1179×2556
   tool: identify -format '%wx%h\n' brand/appstore/*.png | sort | uniq -c
 
 - isc: ISC-22
   type: screenshot
+  kind: visual
   check: welcome email in Gmail, Apple Mail, Outlook 365
   threshold: logo, palette and type intact in all 3 renders
   tool: email-preview service renders of emails/welcome.html, viewed
 
 - isc: ISC-23
   type: bash
+  kind: behaviour
   check: one-pager page count and page boxes
   threshold: 1 page; prints without clipping on Letter and A4
   tool: pdfinfo brand/partner-one-pager.pdf | rg '^Pages:' && bash scripts/print-fit.sh brand/partner-one-pager.pdf letter a4
 
 - isc: ISC-24
   type: bash
+  kind: behaviour
   check: tweet draft + image dimensions
   threshold: file exists; image 1200x675
   tool: test -s brand/launch-tweet.md && identify -format '%wx%h' brand/launch-tweet.png
 
 - isc: ISC-25
   type: bash
+  kind: behaviour
   check: lockup used on each of the 5 surfaces
   threshold: one distinct lockup id
   tool: bun scripts/surface-asset-audit.ts --asset lockup | sort -u | wc -l
 
 - isc: ISC-26
   type: bash
+  kind: behaviour
   check: primary color hex consistency across launch surfaces
   threshold: zero deviations from cardinal-red-600
   tool: bun scripts/surface-color-audit.ts --primary
 
 - isc: ISC-27
   type: bash
+  kind: behaviour
   check: family + weights used on each surface
   threshold: one family, weights ⊆ {400, 600}
   tool: bun scripts/surface-asset-audit.ts --asset type | sort -u
 
 - isc: ISC-28
   type: manual
+  kind: visual
   check: 5 unfamiliar viewers describe the mark in one word
   threshold: 0/5 say compass, leaf, or arrow
   tool: one-word association survey
 
 - isc: ISC-29
   type: bash
+  kind: regression
   check: colors used on launch surfaces outside the palette
   threshold: "0"
   tool: bun scripts/surface-color-audit.ts --off-palette | wc -l
 
 - isc: ISC-30
   type: bash
+  kind: regression
   check: redistributable license for the chosen family
   threshold: OFL or equivalent found
   tool: rg -l 'SIL OPEN FONT LICENSE|Apache License' fonts/*/LICENSE.txt
 
 - isc: ISC-31
   type: manual
+  kind: doc
   check: voice guide must not over-prescribe
   threshold: ≤1 voice violation in founder's own unguided 3-paragraph draft
   tool: voice author scores founder draft
 
 - isc: ISC-32
   type: bash
+  kind: regression
   check: placeholder copy in App Store screenshots
   threshold: zero matches
   tool: tesseract-batch brand/appstore/*.png | rg -i 'lorem|ipsum|your headline|placeholder'
 
 - isc: ISC-33
   type: bash
+  kind: regression
   check: napkin logo hash on any launch surface
   threshold: zero matches
   tool: bun scripts/surface-asset-audit.ts --find-hash $(sha256sum brand/_retired/napkin-logo.png | cut -c1-64)
 
 - isc: ISC-34
   type: bash
+  kind: regression
   check: welcome email's first greeting line vs every other template
   threshold: unique
   tool: bash scripts/greeting-uniqueness.sh emails/
 
 - isc: ISC-35
   type: bash
+  kind: behaviour
   check: Figma file permissions
   threshold: founder edit; cofounder + 3 angels view
   tool: bun scripts/figma-share.ts cardinal-brand-v1 --json | jq -r '.[] | "\(.email) \(.role)"'
 
 - isc: ISC-36
   type: bash
+  kind: behaviour
   check: repo assets vs a fresh Figma export
   threshold: empty diff
   tool: bun scripts/figma-export.ts cardinal-brand-v1 /tmp/kit && diff -r /tmp/kit brand-v1/assets
 
 - isc: ISC-37
   type: bash
+  kind: behaviour
   check: usage examples in README
   threshold: web, email, print, social subsections all present
   tool: sed -n '/^## How to use this kit/,/^## /p' README.md | rg -c '^### (Web|Email|Print|Social)'
 
 - isc: ISC-38
   type: bash
+  kind: file
   check: asset license + trademark notice
   threshold: both greps exit 0
   tool: rg -q 'CC BY 4.0' LICENSE && rg -q -i 'trademark' TRADEMARK.md
 
 - isc: ISC-39
   type: bash
+  kind: behaviour
   check: SVG well-formedness
   threshold: exit 0
   tool: xmllint --noout brand/logo/cardinal.svg
 
 - isc: ISC-40
   type: bash
+  kind: behaviour
   check: SVG size
   threshold: ≤ 4096 bytes
   tool: stat -c %s brand/logo/cardinal.svg
 
 - isc: ISC-41
   type: bash
+  kind: http
   check: sizes packed in the served favicon
   threshold: 16x16, 32x32, 48x48
   tool: curl -s https://cardinal.example.com/favicon.ico | identify -format '%wx%h\n' -
 
 - isc: ISC-42
   type: bash
+  kind: http
   check: apple-touch-icon dimensions
   threshold: 180x180
   tool: curl -s https://cardinal.example.com/apple-touch-icon.png | identify -format '%wx%h' -
 
 - isc: ISC-43
   type: bash
+  kind: http
   check: OG image dimensions + og:image meta
   threshold: 1200x630, meta points to /og.png
   tool: curl -s https://cardinal.example.com/og.png | identify -format '%wx%h' - && curl -s https://cardinal.example.com/ | rg -c 'og:image.*og\.png'
 
 - isc: ISC-44
   type: bash
+  kind: behaviour
   check: gut-check questions in the kit
   threshold: "4"
   tool: sed -n '/^## Voice gut-check/,/^## /p' brand/voice.md | rg -c '^\d\. .*\?$'
 
 - isc: ISC-45
   type: bash
+  kind: behaviour
   check: tone-by-context table rows
   threshold: 5 rows (marketing, transactional, error, support, legal)
   tool: rg -c '^\| (Marketing|Transactional|Error|Support|Legal) \|' brand/voice.md
 
 - isc: ISC-46
   type: bash
+  kind: regression
   check: worked examples in the voice guide
   threshold: ≥ 1 (the anti fires only at 0)
   tool: rg -c '^> ' brand/voice.md
 
 - isc: ISC-47
   type: bash
+  kind: http
   check: brand page is live and indexable
   threshold: 200, no noindex, not blocked by robots.txt
   tool: curl -s -o /dev/null -w '%{http_code}' https://cardinal.example.com/brand && ! curl -s https://cardinal.example.com/brand | rg -q noindex
 
 - isc: ISC-48
   type: bash
+  kind: http
   check: press ZIP contents
   threshold: logo in svg + png + ico, description 180–220 words
   tool: curl -sO https://cardinal.example.com/press/cardinal-press.zip && unzip -l cardinal-press.zip && unzip -p cardinal-press.zip about.txt | wc -w
 
 - isc: ISC-49
   type: manual
+  kind: doc
   check: launch tweet image draws unprompted curiosity
   threshold: ≥3 DM replies asking "what is this" within 48 hours
   tool: founder dry-run on personal X account, 7 days pre-launch
 
 - isc: ISC-50
   type: manual
+  kind: doc
   check: angels can sort on-brand vs decoy
   threshold: 4 of 5 correct identifications
   tool: 5-trial sort with planted decoys (off-brand color, off-brand voice, off-brand lockup)
 
 - isc: ISC-51
   type: manual
+  kind: visual
   check: written sign-off from the cofounder
   threshold: message on file approving the mark
   tool: link to the sign-off email in Decisions
 
 - isc: ISC-52
   type: bash
+  kind: behaviour
   check: retired assets folder
   threshold: 3 assets + README
   tool: ls brand/_retired/
 
 - isc: ISC-53
   type: bash
+  kind: regression
   check: new color or weight tokens since the v1 lock
   threshold: ≤ 2 added lines
   tool: git diff brand-v1-lock..HEAD -- tokens/ | rg -c '^\+\s*--|^\+\s*"(weight|value)"'
 
 - isc: ISC-54
   type: bash
+  kind: behaviour
   check: days between the v1-freeze tag and launch (2026-04-26)
   threshold: ≥ 7
   tool: echo $(( ($(date -d 2026-04-26 +%s) - $(git log -1 --format=%ct v1-freeze)) / 86400 ))
 
 - isc: ISC-55
   type: manual
+  kind: doc
   check: calendar invite
   threshold: 2026-05-03 event with founder, cofounder, brand designer as attendees
   tool: open the invite in the team calendar
 
 - isc: ISC-56
   type: manual
+  kind: visual
   check: retro notes
   threshold: founder quote present verbatim
   tool: read retro notes after 2026-05-03
@@ -520,18 +577,18 @@ Deliver a complete Cardinal brand identity v1 — logo (3 lockups), type system 
 
 ## Verification
 
-- ISC-1: Figma file `cardinal-brand-v1` shows wordmark and standalone mark as separate components, confirmed via component inspector. Verified 2026-02-26.
-- ISC-2: `figma-components.ts --prefix logo/lockup/` — `horizontal`, `stacked`, `mark-only`. Verified 2026-02-26.
-- ISC-3: Screenshot of `cardinal.example.com/favicon.ico` rendered in 3 browsers; viewer survey of 3 unfamiliar designers — 3/3 identified "Cardinal" within 4 seconds. Verified 2026-03-04.
-- ISC-4: 1-bit B&W viewer test — 5/5 viewers said "same logo." Verified 2026-03-04.
-- ISC-5: `ls brand/logo/` shows `cardinal.svg` (master), `cardinal@1x.png`, `cardinal@2x.png`, `cardinal@3x.png`, `favicon.ico`. Verified 2026-03-09.
-- ISC-7: `head -50 fonts/<family>/LICENSE.txt` returns `SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007`. Verified 2026-02-12.
-- ISC-8: `jq … tokens/type.json` — `12 14 16 20 28 44`. Verified 2026-02-19.
-- ISC-9: `jq … tokens/type.json` — `400 600`. Verified 2026-02-19.
-- ISC-11: `rg -o … tokens/colors.css` — `--cardinal-red-600`, `--dawn-500`. Verified 2026-02-19.
-- ISC-12: `rg -o -- '--ink-[0-9]+' tokens/colors.css` — `--ink-100 … --ink-900`, 5 tokens. Verified 2026-02-19.
-- ISC-13: `cat tokens/colors.css` shows seven `--cardinal-*` and `--ink-*` custom properties matching palette spec. Verified 2026-02-19.
-- ISC-15: `bun scripts/contrast-check.ts` exits 0; output confirms 24/24 permitted FG/BG pairs pass WCAG 2.2 AA. Verified 2026-02-19.
-- ISC-20: Homepage screenshot diff against staging shows new logo, type tokens, and color tokens; legacy assets purged from `public/`. Verified 2026-04-19.
-- ISC-35: Figma share dialog screenshot confirms founder has Edit, cofounder + 3 angels have Read. Verified 2026-02-26.
-- ISC-52: `ls brand/_retired/` shows `napkin-logo.png`, `legacy-blues.css`, `prior-tagline.md`, and `README.md` with retirement rationale. Verified 2026-04-05.
+- ISC-1: attested 2026-04-19T11:30:00 — Figma file `cardinal-brand-v1` shows wordmark and standalone mark as separate components, confirmed via component inspector. Verified 2026-02-26. (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L2)
+- ISC-2: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `bun scripts/figma-components.ts cardinal-brand-v1 --prefix 'logo/lockup/' --names` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L3)
+- ISC-3: attested 2026-04-19T11:30:00 — Screenshot of `cardinal.example.com/favicon.ico` rendered in 3 browsers; viewer survey of 3 unfamiliar designers — 3/3 identified "Cardinal" within 4 seconds. Verified 2026-03-04. (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L4)
+- ISC-4: attested 2026-04-19T11:30:00 — 1-bit B&W viewer test — 5/5 viewers said "same logo." Verified 2026-03-04. (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L5)
+- ISC-5: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `cd brand/logo && ls cardinal.svg cardinal@1x.png cardinal@2x.png cardinal@3x.png favicon.ico` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L6)
+- ISC-7: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `rg -c 'SIL OPEN FONT LICENSE Version 1.1' fonts/*/LICENSE.txt` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L7)
+- ISC-8: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `jq -r '.size | map(.value) | join(" ")' tokens/type.json` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L8)
+- ISC-9: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `jq -r '.weight | map(.value) | join(" ")' tokens/type.json` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L9)
+- ISC-11: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `rg -o -- '--(cardinal|dawn)-[a-z-]*[0-9]+' tokens/colors.css | sort -u` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L10)
+- ISC-12: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `rg -o -- '--ink-[0-9]+' tokens/colors.css | sort -u` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L11)
+- ISC-13: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `rg -c -- '^\s*--(cardinal|dawn|ink)-' tokens/colors.css` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L12)
+- ISC-15: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `bun scripts/contrast-check.ts` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L13)
+- ISC-20: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `curl -s https://cardinal.example.com/ | rg 'napkin|legacy-blue|#1e4fd8|#2563eb|#3b82f6'` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L14)
+- ISC-35: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `bun scripts/figma-share.ts cardinal-brand-v1 --json | jq -r '.[] | "\(.email) \(.role)"'` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L15)
+- ISC-52: verified 2026-04-19T11:30:00 — exit 0 in 0.3s — `ls brand/_retired/` (ledger: 20260203-141200_cardinal-brand-identity-launch-7ca001bdca68#L16)

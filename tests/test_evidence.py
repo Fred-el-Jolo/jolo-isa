@@ -1,4 +1,6 @@
-"""Evidence-gated ticks: `isa verify`, the ledger, and the hooks that refuse unproven ticks.
+"""Evidence: `isa verify` and its ledger, proof status, and the checks that report unproven ticks.
+
+Engine ticks and the refusal of model ticks (SPEC-v2 M2) are in test_commands.
 
 Run: python3 -m unittest tests.test_evidence
 """
@@ -22,6 +24,7 @@ phase: build
 progress: 0/4
 started: 2026-01-01T00:00:00Z
 updated: 2026-01-01T00:00:00Z
+context_sufficient: true
 ---
 
 ## Problem
@@ -44,21 +47,25 @@ Probes decide which ISCs may be ticked.
 ```yaml
 - isc: ISC-1
   type: bash
+  kind: file
   check: flag file one
   threshold: exit 0
   tool: echo run >> {d}/runs && test -f {d}/ok1
 - isc: ISC-2
   type: bash
+  kind: file
   check: flag file two
   threshold: exit 0
   tool: test -f {d}/ok2
 - isc: ISC-3
   type: manual
+  kind: doc
   check: look at it
   threshold: looks right
   tool: read the output
 - isc: ISC-4
   type: bash
+  kind: file
   check: same probe as ISC-1
   threshold: exit 0
   tool: echo run >> {d}/runs && test -f {d}/ok1
@@ -123,7 +130,7 @@ class TestVerifyRecords(EvidenceCase):
         rc, out = self.verify(path, "ISC-1")
         self.assertEqual(rc, 0, out)
         self.assertIn("ISC-1 PASS", out)
-        [row] = self.rows(path)
+        [row] = [r for r in self.rows(path) if r.get("kind") == "verify"]
         tool = f"echo run >> {self.d}/runs && test -f {self.d}/ok1"
         self.assertEqual((row["isc"], row["ok"], row["exit"], row["tool_sha"]),
                          ("ISC-1", True, 0, evidence.tool_sha(tool)))
@@ -141,7 +148,8 @@ class TestVerifyRecords(EvidenceCase):
         self.flag("ok2")
         rc, out = self.verify(path)
         self.assertEqual(rc, 0, out)
-        self.assertEqual(sorted(r["isc"] for r in self.rows(path)), ["ISC-1", "ISC-2", "ISC-4"])
+        self.assertEqual(sorted(r["isc"] for r in self.rows(path) if r.get("kind") == "verify"),
+                         ["ISC-1", "ISC-2", "ISC-4"])
         self.assertEqual(read(os.path.join(self.d, "runs")).count("run"), 1)  # shared probe ran once
 
     def test_unknown_isc_is_usage_error(self):
@@ -181,7 +189,7 @@ class TestSelfAttested(EvidenceCase):
         rc, out = self.verify(path, "ISC-3")
         self.assertEqual(rc, 0)
         self.assertIn("ISC-3 SKIP  manual — self-attested", out)
-        self.assertEqual(self.rows(path), [])
+        self.assertEqual([r for r in self.rows(path) if "isc" in r], [])
 
     def test_ticked_manual_and_probe_less_iscs_are_self_attested(self):
         path = self.write_isa(tick(self.text, "ISC-3"))
@@ -212,60 +220,6 @@ class GateCase(EvidenceCase):
             "\n## Verification\n\n- ISC-1: v\n- ISC-2: v\n- ISC-3: v\n- ISC-4: v\n- Goal: yes — fixture\n")
 
 
-class TestTickGateDenies(GateCase):
-    def test_write_ticking_never_run_probe(self):
-        path = self.write_isa(self.text)
-        out = self.pre("Write", file_path=path, content=tick(self.text, "ISC-2"))
-        self.assertEqual(self.decision(out), "deny")
-        self.assertIn("ISC-2: never run through `isa verify`", self.reason(out))
-        self.assertIn(f"isa verify", self.reason(out))
-
-    def test_edit_ticking_failed_probe(self):
-        path = self.write_isa(self.text)
-        self.verify(path, "ISC-2")
-        out = self.pre("Edit", file_path=path, old_string="- [ ] ISC-2:", new_string="- [x] ISC-2:")
-        self.assertEqual(self.decision(out), "deny")
-        self.assertIn("ISC-2: its latest `isa verify` run failed", self.reason(out))
-
-    def test_pass_older_than_last_project_change(self):
-        path = self.write_isa(self.text)
-        self.flag("ok2")
-        self.verify(path, "ISC-2")
-        time.sleep(0.01)
-        self.post_edit_project()
-        out = self.pre("Edit", file_path=path, old_string="- [ ] ISC-2:", new_string="- [x] ISC-2:")
-        self.assertEqual(self.decision(out), "deny")
-        self.assertIn("older than the last project change", self.reason(out))
-
-    def test_multiedit_and_pi_edit(self):
-        path = self.write_isa(self.text)
-        out = self.pre("MultiEdit", file_path=path, edits=[{"old_string": "- [ ] ISC-1:", "new_string": "- [x] ISC-1:"}])
-        self.assertEqual(self.decision(out), "deny")
-        out = self.pre("edit", path=path, edits=[{"oldText": "- [ ] ISC-4:", "newText": "- [x] ISC-4:"}])
-        self.assertEqual(self.decision(out), "deny")
-        self.assertIn("ISC-4", self.reason(out))
-
-    def test_new_isa_written_pre_ticked(self):
-        other = self.isa_path("20260101-000001_other")
-        out = self.pre("Write", file_path=other, content=tick(self.text, "ISC-1"))
-        self.assertEqual(self.decision(out), "deny")
-
-
-class TestTickGateAllows(GateCase):
-    def test_fresh_pass_allows_tick(self):
-        path = self.write_isa(self.text)
-        self.flag("ok2")
-        self.verify(path, "ISC-2")
-        self.write_isa(self.text, path)  # an ISA edit in between changes nothing
-        out = self.pre("Edit", file_path=path, old_string="- [ ] ISC-2:", new_string="- [x] ISC-2:")
-        self.assertIsNone(self.decision(out))
-
-    def test_self_attested_and_untick_allowed(self):
-        path = self.write_isa(self.text)
-        self.assertIsNone(self.decision(self.pre("Write", file_path=path, content=tick(self.text, "ISC-3"))))
-        self.assertIsNone(self.decision(self.pre("Write", file_path=path, content=self.text)))
-
-
 class TestShellTick(GateCase):
     def test_shell_tick_reported_and_blocks_stop(self):
         path = self.write_isa(self.text)
@@ -275,68 +229,6 @@ class TestShellTick(GateCase):
         code, _, err = self.hook("Stop", stop_hook_active=False)
         self.assertEqual(code, 2)
         self.assertIn("verify or untick", err)
-
-
-class TestVerifiedUntickedNudge(GateCase):
-    def test_verify_output_and_hook_context(self):
-        path = self.write_isa(self.text)
-        self.flag("ok2")
-        rc, out = self.verify(path, "ISC-2")
-        self.assertEqual(rc, 0)
-        self.assertIn("Passed and not ticked yet", out)
-        self.assertIn("- ISC-2: `isa verify` PASS", out)
-        hook_out = self.hook("PostToolUse", tool_name="Bash", tool_input={"command": f"isa verify {path} ISC-2"},
-                             tool_response={})[1]
-        self.assertIn("Passed `isa verify`, not ticked yet: ISC-2", self.ctx(hook_out))
-
-
-class TestPendingTickBlocksWork(GateCase):
-    def test_project_change_refused_until_ticked(self):
-        path = self.write_isa(self.text)
-        self.flag("ok2")
-        self.verify(path, "ISC-2")
-        out = self.pre("Write", file_path=os.path.join(self.proj, "y.py"), content="y")
-        self.assertEqual(self.decision(out), "deny")
-        self.assertIn("ISC-2 passed `isa verify` but is not ticked", self.reason(out))
-        self.assertIsNone(self.decision(self.pre("Bash", command=f"isa verify {path} ISC-1")))
-        tick_edit = dict(file_path=path, old_string="- [ ] ISC-2:", new_string="- [x] ISC-2:")
-        self.assertIsNone(self.decision(self.pre("Edit", **tick_edit)))
-        self.write_isa(tick(self.text, "ISC-2"), path)
-        self.assertIsNone(self.decision(self.pre("Write", file_path=os.path.join(self.proj, "y.py"), content="y")))
-
-
-class TestPendingTickBlocksStop(GateCase):
-    def test_stop_blocks_until_ticked(self):
-        path = self.write_isa(self.text)
-        self.flag("ok2")
-        self.verify(path, "ISC-2")
-        code, _, err = self.hook("Stop", stop_hook_active=False)
-        self.assertEqual(code, 2)
-        self.assertIn("`isa verify` passed for ISC-2 but the ISA does not tick it", err)
-        self.write_isa(tick(self.text, "ISC-2"), path)
-        self.pid = "p2"
-        self.assertEqual(self.hook("Stop", stop_hook_active=False)[0], 0)
-
-
-class TestCloseFreshness(GateCase):
-    def test_close_needs_passes_after_last_change(self):
-        self.flag("ok1")
-        self.flag("ok2")
-        path = self.write_isa(self.text)
-        self.assertEqual(self.verify(path)[0], 0)
-        self.write_isa(self.closed(), path)
-        self.assertEqual(self.hook("Stop", stop_hook_active=False)[0], 0)
-        time.sleep(0.01)
-        self.post_edit_project()
-        self.write_isa(self.closed(), path)
-        self.pid = "p2"
-        code, _, err = self.hook("Stop", stop_hook_active=False)
-        self.assertEqual(code, 2)
-        self.assertIn("closing needs every probe re-proven", err)
-        self.assertIn("ISC-1", err)
-        self.assertEqual(self.verify(path)[0], 0)
-        self.pid = "p3"
-        self.assertEqual(self.hook("Stop", stop_hook_active=False)[0], 0)
 
 
 class TestAttestedWarning(GateCase):
@@ -357,7 +249,7 @@ class TestAttestedWarning(GateCase):
 class TestPlaceholderLint(unittest.TestCase):
     def errors(self, tool, typ="bash"):
         text = FIXTURE.replace("{d}", "/x").replace("tool: test -f /x/ok2", f"tool: {tool}").replace(
-            "  type: bash\n  check: flag file two", f"  type: {typ}\n  check: flag file two")
+            "  type: bash\n  kind: file\n  check: flag file two", f"  type: {typ}\n  kind: file\n  check: flag file two")
         return [m for lvl, m in lint.lint("ISA.md", "articulation", text=text).items if lvl == "ERROR"]
 
     def test_placeholders_in_mechanical_probe(self):

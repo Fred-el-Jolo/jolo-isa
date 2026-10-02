@@ -4,7 +4,9 @@
 // pi events to engine events and engine results back to pi. It fails OPEN: pi blocks a tool
 // when a tool_call handler throws, so every handler catches its own errors and warns instead.
 //
-//   before_agent_start  → engine "session_start" (first run / after compaction) + "prompt"
+//   before_agent_start  → engine "session_start" (first run / after compaction) + "prompt" (the gate:
+//                          may wait for the judge, so it gets ISA_PROMPT_TIMEOUT_MS, and it carries the
+//                          tail of the previous assistant message — a "go" means what it approves)
 //   tool_call           → engine "pre_tool"      → { block, reason }
 //   tool_result         → engine "post_tool" / "tool_failed" → lint feedback appended to the result
 //   session_compact     → engine "compacted"     → protocol + Goal re-injected on the next run
@@ -17,14 +19,18 @@ import { join } from "node:path"
 
 const ISA_BIN = process.env.ISA_BIN || join(homedir(), ".local", "share", "isa", "runtime", "bin", "isa")
 const TIMEOUT_MS = Number(process.env.ISA_HOOK_TIMEOUT_MS || 5000)
+// the prompt event may wait for the gate's judge (ISA_JUDGE_TIMEOUT, 12 s): its limit must exceed it,
+// or the engine is killed and the session silently stays OFF
+const PROMPT_TIMEOUT_MS = Number(process.env.ISA_PROMPT_TIMEOUT_MS || 20000)
+const CONTEXT_CHARS = 2000
 
 type EngineResult = { context?: string; deny?: string; block?: string; warn?: string }
 
-export function callEngine(payload: Record<string, unknown>): EngineResult {
+export function callEngine(payload: Record<string, unknown>, timeoutMs: number = TIMEOUT_MS): EngineResult {
   const r = spawnSync("python3", [ISA_BIN, "hook", "pi"], {
     input: JSON.stringify(payload),
     encoding: "utf8",
-    timeout: TIMEOUT_MS,
+    timeout: timeoutMs,
   })
   if (r.error) throw r.error
   const out = (r.stdout || "").trim()
@@ -55,9 +61,26 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
       console.error(msg)
     }
   }
+  // the tail of the last assistant message on the current branch ("" when there is none)
+  const lastAssistantText = (ctx: ExtensionContext): string => {
+    try {
+      const entries = (ctx.sessionManager as any).getBranch?.() ?? []
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const m = entries[i]?.type === "message" ? entries[i].message : undefined
+        if (m?.role !== "assistant") continue
+        const content = typeof m.content === "string" ? m.content
+          : (m.content ?? []).filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n")
+        if (content.trim()) return content.slice(-CONTEXT_CHARS)
+      }
+    } catch {
+      // no context is fine: the judge then sees the prompt alone
+    }
+    return ""
+  }
   const run = (ctx: ExtensionContext, event: string, extra: Record<string, unknown> = {}): EngineResult => {
     try {
-      const res = engine({ event, session: sessionId(ctx), cwd: ctx.cwd, prompt_id: `pi-${runId}-${promptSeq}`, ...extra })
+      const payload = { event, session: sessionId(ctx), cwd: ctx.cwd, prompt_id: `pi-${runId}-${promptSeq}`, ...extra }
+      const res = event === "prompt" ? engine(payload, PROMPT_TIMEOUT_MS) : engine(payload)
       if (res.warn) warn(ctx, res.warn)
       return res
     } catch (e) {
@@ -81,7 +104,7 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
       startedFor = sid
       compacted = false
     }
-    const p = run(ctx, "prompt", { prompt: event.prompt })
+    const p = run(ctx, "prompt", { prompt: event.prompt, context: lastAssistantText(ctx) })
     if (p.context) parts.push(p.context)
     if (!parts.length) return
     return { message: { customType: "isa", content: parts.join("\n\n"), display: false } }
@@ -96,6 +119,8 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
     const res = run(ctx, event.isError ? "tool_failed" : "post_tool", {
       tool: (event as { toolName?: string }).toolName,
       tool_input: event.input,
+      // what the tool printed: `isa new` prints the ISA path the session is then bound to
+      tool_output: (event.content ?? []).filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n"),
     })
     if (!res.context) return
     return { content: [...event.content, { type: "text" as const, text: `\n[ISA] ${res.context}` }] }

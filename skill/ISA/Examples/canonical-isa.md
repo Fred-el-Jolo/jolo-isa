@@ -145,6 +145,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-1
   anchors_to: "derived: the marketplace is live on Cloudflare"
   type: bash
+  kind: behaviour
+  risk: high
   check: production deploy
   threshold: exit 0
   tool: bun run deploy
@@ -152,6 +154,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-2
   anchors_to: "derived: the marketplace is live on Cloudflare"
   type: bash
+  kind: behaviour
   check: strict-mode type check
   threshold: exit 0, 0 errors
   tool: bunx tsc --noEmit --strict
@@ -159,6 +162,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-3
   anchors_to: "derived: the marketplace is live on Cloudflare"
   type: bash
+  kind: http
   check: HTTP status + content-type
   threshold: 200 + text/html
   tool: |-
@@ -167,6 +171,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-4
   anchors_to: "derived: the marketplace is live on Cloudflare"
   type: bash
+  kind: file
   check: deployed version meta vs local HEAD
   threshold: strings equal
   tool: test "$(curl -s https://beanline.example.com | rg -o 'name="version" content="\K[0-9a-f]+')" = "$(git rev-parse --short HEAD)"
@@ -174,6 +179,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-5
   anchors_to: literal
   type: unit-test
+  kind: behaviour
   check: listing form submission with every required field and one photo
   threshold: response has an id and status pending_review
   tool: bun test test/listings.test.ts -t "submit listing"
@@ -181,6 +187,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-6
   anchors_to: "derived: buyer trust — only reviewed lots are public"
   type: bash
+  kind: http
   check: anonymous fetch of a pending listing
   threshold: HTTP 404
   tool: curl -s -o /dev/null -w '%{http_code}' https://beanline.example.com/listings/$PENDING_ID
@@ -188,6 +195,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-7
   anchors_to: "derived: quality lead approves a lot in ≤ 10 minutes"
   type: bash
+  kind: schema
   check: quality-lead approval time per lot, last 7 days
   threshold: p95 ≤ 600s
   tool: wrangler d1 execute beanline --command "SELECT p95 FROM review_timing_7d" --json | jq '.[0].results[0].p95'
@@ -195,6 +203,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-8
   anchors_to: literal
   type: bash
+  kind: behaviour
   check: public URL after approval
   threshold: HTTP 200 within 60s
   tool: bun run scripts/approve-and-poll.ts --sandbox --timeout=60
@@ -202,6 +211,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-9
   anchors_to: "derived: buyers never see lots they can't buy"
   type: bash
+  kind: behaviour
   check: sold-out lot disappears from /browse
   threshold: absent within 60s
   tool: bun run scripts/sellout-and-poll.ts --sandbox --timeout=60
@@ -209,6 +219,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-10
   anchors_to: "derived: buyers can find lots"
   type: bash
+  kind: behaviour
   check: articles on page 1 and their order
   threshold: 20 articles, listed_at descending
   tool: bun test test/browse.test.ts -t "pagination"
@@ -216,6 +227,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-11
   anchors_to: "derived: buyers can find lots"
   type: property
+  kind: behaviour
   property: "∀ region r: every lot in /browse?region=r has origin_region == r"
   generator: "fc.constantFrom('africa','americas','asia-pacific') × fixture catalogs of 0–200 lots"
   runs: 200
@@ -224,6 +236,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-12
   anchors_to: "derived: buyers can find lots"
   type: property
+  kind: behaviour
   property: "∀ process p: every lot in /browse?process=p has process == p"
   generator: "fc.constantFrom('washed','natural','honey','anaerobic') × fixture catalogs of 0–200 lots"
   runs: 200
@@ -232,6 +245,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-13
   anchors_to: "derived: browse ≤ 1s p95 on cellular"
   type: performance
+  kind: http
   check: browse-page p95 cold load on simulated 4G
   threshold: ≤ 1000ms
   tool: lighthouse --preset=mobile --only-categories=performance --url=https://beanline.example.com/browse
@@ -239,6 +253,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-14
   anchors_to: "derived: browse ≤ 1s p95 on cellular"
   type: performance
+  kind: http
   check: listing-detail p95 cold load on simulated 4G
   threshold: ≤ 1500ms
   tool: lighthouse --preset=mobile --only-categories=performance --url=https://beanline.example.com/lots/colombia-geisha-2026-q1
@@ -246,6 +261,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-15
   anchors_to: "derived: buyers can find lots"
   type: property
+  kind: behaviour
   property: "lot ∈ search(q) ⇔ lower(q) is a substring of lower(origin + process + tasting_notes)"
   generator: "random fixture lots × query terms drawn from their own fields, mixed case, plus random non-matching terms"
   runs: 1000
@@ -254,6 +270,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-16
   anchors_to: "derived: verified accounts need sign-in"
   type: unit-test
+  kind: behaviour
+  risk: high
   check: magic link is single-use and expires
   threshold: second use → 401; use after 15 min → 401
   tool: bun test test/auth.test.ts -t "magic link"
@@ -261,6 +279,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-17
   anchors_to: "derived: verified accounts need sign-in"
   type: bash
+  kind: http
+  risk: high
   check: Set-Cookie flags on callback
   threshold: HttpOnly, Secure, SameSite=Lax all present
   tool: curl -si "https://beanline.example.com/auth/callback?token=$TEST_TOKEN" | rg -i '^set-cookie:.*HttpOnly.*Secure.*SameSite=Lax'
@@ -268,6 +288,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-18
   anchors_to: literal
   type: unit-test
+  kind: behaviour
   check: role of a fresh account, before and after quality-lead approval
   threshold: buyer_unverified → buyer_verified only via the approval action
   tool: bun test test/roles.test.ts -t "verification gate"
@@ -275,6 +296,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-19
   anchors_to: literal
   type: property
+  kind: behaviour
   property: "∀ role ≠ roaster_verified: POST /listings → 403"
   generator: "fc.constantFrom(every role in the enum except roaster_verified) × valid listing bodies"
   runs: 200
@@ -283,6 +305,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-20
   anchors_to: literal
   type: bash
+  kind: http
   check: checkout as an unverified buyer
   threshold: 403 + body contains "verification required"
   tool: curl -s -w '\n%{http_code}' -X POST -b "session=$UNVERIFIED" https://beanline.example.com/checkout | rg -c 'verification required|^403$'
@@ -290,6 +313,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-21
   anchors_to: literal
   type: bash
+  kind: http
   check: payouts page for a verified roaster
   threshold: HTTP 200 + a connect.stripe.com onboarding link
   tool: curl -s -b "session=$ROASTER" https://beanline.example.com/account/payouts | rg -c 'connect\.stripe\.com'
@@ -297,6 +321,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-22
   anchors_to: literal
   type: bash
+  kind: behaviour
   check: payment intent created at checkout
   threshold: capture_method manual (funds held)
   tool: bun run scripts/checkout-test.ts --sandbox --lot-price=25000 | jq -r '.payment_intent.capture_method'
@@ -304,6 +329,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-23.1
   anchors_to: literal
   type: property
+  kind: behaviour
   property: "∀ lot price p ∈ [5kg × $4, 50kg × $40]: platform_fee(p) ≤ 0.051 × p"
   generator: "fc.integer over lot prices in cents across the 5–50kg range"
   runs: 10000
@@ -312,6 +338,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-23.2
   anchors_to: literal
   type: property
+  kind: behaviour
   property: "∀ lot price p: platform_fee(p) + stripe_fee(p) ≤ 0.08 × p"
   generator: "same price domain as ISC-23.1 — the fixed 30¢ Stripe fee makes the smallest lots the edge"
   runs: 10000
@@ -320,6 +347,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-24.1
   anchors_to: literal
   type: bash
+  kind: behaviour
   check: listing status after a replayed payment_intent.succeeded
   threshold: in_transit
   tool: stripe trigger payment_intent.succeeded --override payment_intent:metadata.listing=$LOT && bun run scripts/lot-status.ts $LOT
@@ -327,6 +355,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-24.2
   anchors_to: literal
   type: bash
+  kind: schema
+  risk: low — an email sent after the payment; no money moves in this claim
   check: handoff-card email in the roaster test inbox
   threshold: 1 message with a PDF attachment
   tool: bun run scripts/mailbox.ts --to roaster@test --subject 'Handoff card' --json | jq '[.[] | select(.attachments[]?.type=="application/pdf")] | length'
@@ -334,6 +364,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-25.1
   anchors_to: literal
   type: unit-test
+  kind: behaviour
   check: status after QR scan
   threshold: delivered
   tool: bun test test/handoff.test.ts -t "status"
@@ -341,6 +372,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-25.2
   anchors_to: literal
   type: bash
+  kind: schema
   check: QR handoff scan releases escrow
   threshold: a transfer.created event for the lot
   tool: bun run scripts/handoff-test.ts --sandbox | jq -e '.events[] | select(.type=="transfer.created")'
@@ -348,6 +380,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-25.3
   anchors_to: literal
   type: bash
+  kind: behaviour
   check: receipt email in the buyer test inbox
   threshold: 1 message
   tool: bun run scripts/mailbox.ts --to buyer@test --subject 'Receipt' --json | jq length
@@ -355,6 +388,8 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-26
   anchors_to: literal
   type: bash
+  kind: behaviour
+  risk: high
   check: auto-release on day 8
   threshold: transfer fires within 60s of the day-8 cron + 1 audit row
   tool: bun run scripts/auto-release-test.ts --simulate-day=8
@@ -362,6 +397,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-27
   anchors_to: "derived: Out of Scope — messaging is per-listing, no social graph"
   type: unit-test
+  kind: behaviour
   check: reading a thread with a different listing id
   threshold: 404
   tool: bun test test/messages.test.ts -t "listing scope"
@@ -369,6 +405,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-28
   anchors_to: "derived: Constraints — 12-month message retention"
   type: bash
+  kind: schema
   check: retention window configured on the messages table
   threshold: ≥ 365 days
   tool: wrangler d1 execute beanline --command "SELECT retention_days FROM retention_policy WHERE tbl='messages'" --json | jq '.[0].results[0].retention_days'
@@ -376,6 +413,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-29
   anchors_to: "derived: buyer trust — disputes have a path"
   type: unit-test
+  kind: behaviour
   check: dispute row + two notifications
   threshold: status open, 2 emails queued
   tool: bun test test/disputes.test.ts -t "open dispute"
@@ -383,6 +421,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-30
   anchors_to: "derived: buyer trust — only verified accounts transact"
   type: bash
+  kind: http
   check: protected endpoints without a session
   threshold: every one returns 401
   tool: for p in /checkout /messages /listings; do curl -s -o /dev/null -w '%{http_code}\n' -X POST https://beanline.example.com$p; done | sort -u
@@ -390,6 +429,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-31
   anchors_to: "derived: buyer trust — pending lots stay private"
   type: unit-test
+  kind: behaviour
   check: /account/listings for roaster A with roaster B's pending lot in the fixture
   threshold: all of A's lots listed, none of B's
   tool: bun test test/rbac.test.ts -t "own listings only"
@@ -397,6 +437,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-32
   anchors_to: "derived: admin tooling is gated"
   type: property
+  kind: behaviour
   property: "∀ role ≠ admin, ∀ path under /admin: request → 403"
   generator: "non-admin roles × every route registered under /admin"
   runs: 500
@@ -405,6 +446,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-33.1
   anchors_to: "derived: the marketplace is live on Cloudflare"
   type: bash
+  kind: http
   check: health payload keys
   threshold: jq exits 0
   tool: curl -s https://beanline.example.com/health | jq -e 'has("status") and has("version") and has("last_deploy_at")'
@@ -412,6 +454,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-33.2
   anchors_to: "derived: the marketplace is live on Cloudflare"
   type: bash
+  kind: http
   check: health latency over 100 requests
   threshold: p95 ≤ 50ms
   tool: hey -n 100 -c 5 https://beanline.example.com/health | rg '95% in'
@@ -419,6 +462,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-34
   anchors_to: "derived: Constraints — WebP only"
   type: bash
+  kind: behaviour
   check: content type of every image URL on the sitemap
   threshold: every line is image/webp
   tool: bash scripts/image-format-audit.sh | sort -u
@@ -426,6 +470,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-35
   anchors_to: "derived: Constraints — public API rate limit"
   type: bash
+  kind: http
   check: status of the 61st request in one minute
   threshold: "429"
   tool: for i in $(seq 61); do curl -s -o /dev/null -w '%{http_code}\n' https://beanline.example.com/api/lots; done | tail -1
@@ -433,6 +478,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-36
   anchors_to: "derived: Out of Scope — no social graph"
   type: bash
+  kind: regression
   check: social-graph endpoints don't exist
   threshold: every one returns 404
   tool: for p in follow dm friends; do curl -s -o /dev/null -w '%{http_code}\n' https://beanline.example.com/api/$p; done | sort -u
@@ -440,6 +486,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-37
   anchors_to: "derived: Constraints — no original JPEGs served"
   type: property
+  kind: regression
   property: "∀ uploaded image: every public URL for it answers Content-Type image/webp, never image/jpeg"
   generator: "fixture uploads: JPEG with EXIF GPS, PNG, HEIC, 1px–8000px"
   runs: 100
@@ -448,6 +495,7 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 - isc: ISC-38
   anchors_to: "derived: Principles — no third-party tracking in the user path"
   type: bash
+  kind: regression
   check: third-party hosts requested on first /browse load
   threshold: "0"
   tool: bunx playwright test e2e/third-party.spec.ts --reporter=json | jq '.stats.unexpected'
@@ -537,26 +585,26 @@ A small focused marketplace at `beanline.example.com` where a verified roaster l
 
 ## Verification
 
-- ISC-1: `bun run deploy` — `Deployed beanline (route: beanline.example.com/*)`
-- ISC-2: `bunx tsc --noEmit --strict` — exit 0, no output
-- ISC-3: `curl -i https://beanline.example.com` — `HTTP/2 200 / content-type: text/html; charset=utf-8`
-- ISC-4: HTML head shows `<meta name="version" content="a3b4c5d">` matching `git rev-parse --short HEAD` output `a3b4c5d`
-- ISC-5: Listing form integration test 2026-04-22 — submitted listing returned `id: lst_TestXXXX` + status `pending_review`
-- ISC-6: `curl … /listings/lst_TestPend01` (anonymous) — `404`
-- ISC-8: `curl -i https://beanline.example.com/lots/colombia-geisha-2026-q1` after approval — `HTTP/2 200`
-- ISC-10: `curl https://beanline.example.com/browse | rg "<article" | wc -l` — `20`
-- ISC-11: `bun test test/browse.property.test.ts -t "region filter"` — 200 runs, 0 failures
-- ISC-12: `bun test test/browse.property.test.ts -t "process filter"` — 200 runs, 0 failures
-- ISC-13: Lighthouse mobile run 2026-04-25 — `Performance 92 / FCP 624ms / LCP 891ms` on `/browse`
-- ISC-16: `bun test test/auth.test.ts -t "magic link"` — 4 pass (reuse → 401, 15m01s → 401)
-- ISC-17: callback `Set-Cookie: session=…; HttpOnly; Secure; SameSite=Lax; Path=/`
-- ISC-18: `bun test test/roles.test.ts -t "verification gate"` — 3 pass
-- ISC-21: `/account/payouts` as roaster — `200`, 1 `connect.stripe.com` link
-- ISC-22: Stripe-sandbox checkout test 2026-04-15 — `payment_intent_TestXXXX` created with `transfer_group: lst_TestYYY`
-- ISC-30: `curl -i https://beanline.example.com/checkout` (no session) — `HTTP/2 401`
-- ISC-36: `curl -i https://beanline.example.com/api/follow` — `HTTP/2 404`
-- ISC-37: Image-format audit 2026-04-22 — 100% of 247 image URLs returned `Content-Type: image/webp`
-- ISC-38: devtools network panel at `/browse` 2026-04-25 — 0 third-party requests on initial load
+- ISC-1: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun run deploy` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L2)
+- ISC-2: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bunx tsc --noEmit --strict` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L3)
+- ISC-3: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `curl -sI https://beanline.example.com | rg -i '^(HTTP/2 200|content-type: text/html)'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L4)
+- ISC-4: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `test "$(curl -s https://beanline.example.com | rg -o 'name="version" content="\K[0-9a-f]+')" = "$(git rev-parse --short HEAD)"` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L5)
+- ISC-5: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun test test/listings.test.ts -t "submit listing"` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L6)
+- ISC-6: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `curl -s -o /dev/null -w '%{http_code}' https://beanline.example.com/listings/$PENDING_ID` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L7)
+- ISC-8: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun run scripts/approve-and-poll.ts --sandbox --timeout=60` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L8)
+- ISC-10: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun test test/browse.test.ts -t "pagination"` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L9)
+- ISC-11: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun test test/browse.property.test.ts -t "region filter"` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L10)
+- ISC-12: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun test test/browse.property.test.ts -t "process filter"` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L11)
+- ISC-13: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `lighthouse --preset=mobile --only-categories=performance --url=https://beanline.example.com/browse` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L12)
+- ISC-16: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun test test/auth.test.ts -t "magic link"` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L13)
+- ISC-17: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `curl -si "https://beanline.example.com/auth/callback?token=$TEST_TOKEN" | rg -i '^set-cookie:.*HttpOnly.*Secure.*SameSite=Lax'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L14)
+- ISC-18: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun test test/roles.test.ts -t "verification gate"` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L15)
+- ISC-21: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `curl -s -b "session=$ROASTER" https://beanline.example.com/account/payouts | rg -c 'connect\.stripe\.com'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L16)
+- ISC-22: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun run scripts/checkout-test.ts --sandbox --lot-price=25000 | jq -r '.payment_intent.capture_method'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L17)
+- ISC-30: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `for p in /checkout /messages /listings; do curl -s -o /dev/null -w '%{http_code}\n' -X POST https://beanline.example.com$p; done | sort -u` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L18)
+- ISC-36: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `for p in follow dm friends; do curl -s -o /dev/null -w '%{http_code}\n' https://beanline.example.com/api/$p; done | sort -u` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L19)
+- ISC-37: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bun test test/images.property.test.ts` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L20)
+- ISC-38: verified 2026-04-25T03:14:00 — exit 0 in 0.3s — `bunx playwright test e2e/third-party.spec.ts --reporter=json | jq '.stats.unexpected'` (ledger: 20260201-090000_beanline-v1-08af71e8391a#L21)
 
 <!--
 Canonical showpiece. Marketplace pattern (auth + Stripe escrow + RBAC + listings + search + reviews + messaging) at E5 scale. Every section a standalone ISA can have is populated (all but Dependencies and Bridge Criteria, which need a hierarchy). It shows the verbatim `stated_goal` quoted as the Goal's first sentence, with every Test Strategy entry anchored to it (`literal`) or to a named derived claim, real-feeling Decisions with two ❌ DEAD ENDs and five refinements, four-piece C/R/L Changelog entries spanning the 4-month build. Anti-criteria (ISC-36, 37, 38) cover scope, privacy, and regression. Antecedents (none) — the goal is verifiable, not experiential, so antecedents aren't required at this gate. The delight prediction in Vision is falsifiable by the user but not gated as an ISC because the marketplace's success is measured by transactions completed, not by any single user's reaction.

@@ -58,7 +58,11 @@ class TestTable(unittest.TestCase):
         ], "read")
 
     def test_isa_redirect(self):
-        k, isa = classify.bash("cat > ~/.isa/dev-x/1_a/ISA.md <<'EOF'\nx\nEOF", CWD)
+        # SPEC-v2 § 3.3: an ISA.md is written with Write/Edit (checked against the engine-owned fields),
+        # never from a shell; other files in an ISA folder stay free
+        k, _ = classify.bash("cat > ~/.isa/dev-x/1_a/ISA.md <<'EOF'\nx\nEOF", CWD)
+        self.assertEqual(k, "isa-shell-edit")
+        k, isa = classify.bash("cat > ~/.isa/dev-x/1_a/notes.md <<'EOF'\nx\nEOF", CWD)
         self.assertEqual((k, len(isa)), ("read", 1))
 
     def test_tools(self):

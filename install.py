@@ -32,10 +32,13 @@ ISA_DIR = os.path.join(H, ".isa")
 
 
 TIMEOUT = 15  # every ISA hook is a quick file / ledger check; none runs probes
+# … except the prompt hook, which may wait for the gate's judge (ISA_JUDGE_TIMEOUT, 12 s by default):
+# the harness limit must exceed it, or the engine is killed and the session silently stays OFF
+TIMEOUTS = {"UserPromptSubmit": 20}
 
 
-def hook_entry(cmd):
-    return {"hooks": [{"type": "command", "command": cmd, "timeout": TIMEOUT}]}
+def hook_entry(cmd, ev=None):
+    return {"hooks": [{"type": "command", "command": cmd, "timeout": TIMEOUTS.get(ev, TIMEOUT)}]}
 
 
 def merge_settings(settings, cmd):
@@ -51,9 +54,9 @@ def merge_settings(settings, cmd):
         for g in groups:  # an existing ISA entry keeps its place but gets the current timeout
             for h in g.get("hooks", []):
                 if h.get("command") == cmd:
-                    h["timeout"] = TIMEOUT
+                    h["timeout"] = TIMEOUTS.get(ev, TIMEOUT)
         if not any(h.get("command") == cmd for g in groups for h in g.get("hooks", [])):
-            groups.append(hook_entry(cmd))
+            groups.append(hook_entry(cmd, ev))
     perms = s.setdefault("permissions", {})
     allow = perms.setdefault("allow", [])
     for p in PERMS:

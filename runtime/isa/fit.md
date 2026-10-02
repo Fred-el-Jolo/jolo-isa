@@ -1,18 +1,15 @@
-[ISA fit — what the ISA process solves]
-An ISA pays off when "done" could drift: the work has an outcome someone will rely on, several
-parts that could each be skipped, and an answer that can be checked against evidence. It fixes three
-failure modes: settling for an easier neighbour of what was asked, leaving parts silently uncovered,
-and claiming a result with no evidence behind it.
+[ISA gate — what the per-prompt question protects]
+The gate asks one question of every prompt (SPEC-v2 § 1.1):
 
-Fits (even with zero file changes): reviews and audits, investigations and root-cause analysis,
-comparisons and evaluations, research that must reach a conclusion, plans, designs and specs,
-migrations, anything asking for "all / every / complete / make sure".
-Doesn't fit: a single fact, an explanation, a lookup, a yes/no, a status check, small talk.
+  Is this a request for work with a checkable end state — something that will be either done or not
+  done — rather than a question or a conversation?
 
-How an ISA structures read-only work:
-- Goal = the conclusion the work must reach, quoted from the prompt when possible.
-- ISCs = the questions the answer must settle, one per part ("each module checked for X",
-  "the three options compared on cost"), plus one `Anti:` for the lazy answer
-  ("Anti: a finding is stated without a file:line or command output behind it").
-- Verification = the evidence per ISC (quoted lines, file:line, command output).
-- `Goal: yes` only when the answer delivers the conclusion that was asked for, not a nearby one.
+Yes → the session is ON and the work gets an ISA, whether or not it changes files (a review, an
+audit, a plan, a fix, an investigation of why the user's own system misbehaves). No → the session stays OFF and nothing from the ISA system reaches the model.
+
+An ISA pays off wherever "done" could drift: it fixes three failure modes — settling for an easier
+neighbour of what was asked, leaving parts silently uncovered, and claiming a result with no evidence
+behind it.
+
+fit.py's `prefilter` answers the obvious cases for free (greetings → no, work requests → yes); every
+other prompt goes to the judge (judge.py, template gate.md).

@@ -7,7 +7,7 @@ This folder is a port of the **ISA (Ideal State Artifact) skill** out of LifeOS,
 1. **Port the ISA skill.** One markdown file (`ISA.md`) per task states what "done" means as testable criteria. The model writes it at the start and keeps it updated as the work goes.
 2. **Keep the core ISA rules** (file shape, lifecycle, the five workflows) and the specs the skill directly depends on. Those specs are refined later.
 3. **Drop all LifeOS infrastructure:** the Pulse dashboard, voice notifications, the `PROJECTS.md` routing, the LifeOS status line, the router and nudge hooks, and the `MEMORY/WORK` paths.
-4. **Enforce it in every session.** A skill loads only when the model decides to, so hooks do the deciding: Claude Code hooks (user scope) and a pi extension call one shared engine that refuses mutations until an ISA exists and passes the gate, lints every ISA edit, and refuses once per prompt to end a turn that leaves a real ISA problem or an unproven `complete` claim. See § Enforcement.
+4. **Enforce it in every session.** A skill loads only when the model decides to, so hooks do the deciding: Claude Code hooks (user scope) and a pi extension call one shared engine. Every prompt is judged once (work with a checkable end state → the session is ON); while ON, changes wait for an ISA that passes the gate, the `isa` commands own the ISA's state (ticks, evidence lines, `progress`, `phase: complete`), and a turn can't end without an ISA or with an unproven claim. See § Enforcement and `future/SPEC-v2.md`.
 5. **Future, not built yet:**
    - A: memory. Learn from completed ISAs and reuse those learnings when scaffolding new ones, with the user approving each item. See `future/MEMORY.md`.
    - B: an "ISA status" status line. The data side is built (`isa status --json`, `runtime/isa/status.py`); the Claude Code renderer lives in `~/dev/progress-outline`. See `future/STATUSLINE.md`.
@@ -31,27 +31,35 @@ isa-skill-export/
 ├── runtime/                      ← the engine, installed to ~/.local/share/isa/runtime (Python stdlib only)
 │   ├── bin/isa                   ← CLI launcher, symlinked to ~/.local/bin/isa
 │   └── isa/
-│       ├── engine.py             ← harness-neutral decisions: session_start, prompt, pre_tool, post_tool, stop
-│       ├── classify.py           ← read / write / unknown for tool calls and Bash commands
-│       ├── lint.py               ← the gate (same checks as CheckCompleteness can decide mechanically)
+│       ├── engine.py             ← harness-neutral decisions: session_start, prompt (the gate), pre_tool, post_tool, stop
+│       ├── judge.py / gate.md    ← the gate's judge (claude / pi / api / heuristic backends) + its prompt template
+│       ├── judge/asks_extract.md ← the template `isa new` uses to extract the prompt's explicit asks
+│       ├── fit.py / fit.md       ← the gate's free pre-filter (yes / no / unsure) + what the gate protects
+│       ├── classify.py           ← read / isa-cmd / unknown / write / isa-shell-edit for tool calls and Bash commands
+│       ├── lint.py               ← the gate as a pure file check (tools/lint_isa.py uses it on the examples)
+│       ├── rules.py              ← lint rules that need the ledger or the prompt log (downgrades, waiver quotes, asks)
+│       ├── commands.py           ← `isa new | verify | close | lint`: the only writers of an ISA's engine-owned state
+│       ├── isafile.py            ← engine writes: ticks, generated Verification lines, progress, nested parents
+│       ├── evidence.py           ← the evidence ledger and proof status (proven / unproven / self-attested)
+│       ├── fingerprint.py        ← tree fingerprint of a probe root (temp-index `write-tree`, or a capped walk)
+│       ├── problems.py           ← the Stop problems as stable codes, and the `blocked` escalation in the ledger
 │       ├── state.py              ← ~/.isa layout, project keys, per-session state, prompt log
-│       ├── fit.py / fit.md       ← what the ISA process solves + the prompt check against it
 │       ├── yamlish.py            ← the YAML subset ISA files use (no PyYAML)
 │       ├── changes.py            ← did an `unknown` shell command change project files? (git status + mtimes)
-│       ├── evidence.py           ← `isa verify`, the evidence ledger, proven / pending / self-attested checks
-│       ├── status.py             ← read-only view of a session's bound ISA (`isa status`), for status lines
-│       ├── cli.py                ← `isa ls|new|where|lint|fit|verify|status|hook`; the Claude Code adapter lives here
-│       └── protocol.md           ← the text injected into every session
+│       ├── status.py             ← read-only view of a session's mode and bound ISA (`isa status`), for status lines
+│       ├── cli.py                ← `isa ls|new|where|lint|fit|verify|close|status|hook`; the Claude Code adapter lives here
+│       └── protocol.md           ← the ON block injected when a session turns ON
 ├── adapters/pi/isa.ts            ← pi extension → `isa hook pi` (installed to ~/.pi/agent/extensions/)
 ├── install.py                    ← install / --uninstall / --dry-run for both harnesses
-├── tests/                        ← unit + end-to-end tests of the hooks, classifier, installer, YAML, lint parity
+├── tests/                        ← unit + end-to-end tests of the hooks, gate, commands, fingerprint, lint rules, installer
 ├── tools/
 │   └── lint_isa.py               ← wrapper around runtime/isa/lint.py (repo convenience)
 └── future/
     ├── MEMORY.md                 ← Future A: how LifeOS learns from ISAs today + target design
     ├── STATUSLINE.md             ← Future B: data contract for an ISA status line
     ├── project-isa/              ← Future C: project ISA idea, what was removed, the Seed workflow
-    └── JEV.md                    ← Future D: where TypeSafe/Jev judgments plug into the skill
+    ├── JEV.md                    ← Future D: where TypeSafe/Jev judgments plug into the skill
+    └── SPEC-v2.md                ← the v2 design: gate, commands, evidence, rules (implemented M1–M7)
 ```
 
 ## Install on a fresh machine
@@ -64,7 +72,7 @@ python3 install.py --uninstall # remove everything except the ISAs in ~/.isa
 
 Needs `python3` (standard library only) and, for pi, the pi agent at `~/.pi/agent`. The installer copies the runtime and the skill, links `~/.local/bin/isa`, merges hook entries and permissions (`Bash(isa:*)`, `Read`/`Edit(~/.isa/**)`, `Read(~/.claude/skills/ISA/**)`, `additionalDirectories: ~/.isa`) into `~/.claude/settings.json` — keeping every other entry and backing the file up first — and copies the pi extension. New sessions are gated from the start; a running Claude Code session picks the hooks up live.
 
-The skill still loads from its description, and can be called directly (`Skill("ISA", "scaffold from prompt: <...> at tier E3")`), but nothing depends on that any more: the injected protocol tells the model to read `SKILL.md` whenever it writes an ISA.
+The skill still loads from its description, and can be called directly (`Skill("ISA", "scaffold from prompt: <...> at tier E3")`), but nothing depends on that any more: when a session turns ON, the ON block tells the model to read `SKILL.md` first.
 
 ## Where ISA files go
 
@@ -72,31 +80,43 @@ The skill still loads from its description, and can be called directly (`Skill("
 |------|------|
 | Task ISA | `~/.isa/<project>/{YYYYMMDD-HHMMSS_kebab-slug}/ISA.md` |
 | Ephemeral slice | `~/.isa/<project>/{slug}/_ephemeral/<feature>.md` |
-| Hook state | `~/.isa/_state/` (sessions, raw prompt log, `errors.log`) |
+| Hook state | `~/.isa/_state/` (sessions, prompt log with cwd/project/context, `judge.jsonl` gate verdicts, the evidence ledger, `errors.log`) |
 
 `<project>` is the git work-tree root (or the directory) relative to `$HOME`, with `/` → `-`: `~/dev/jolo-isa` → `dev-jolo-isa`; `$HOME` itself is `_home`. Only `_state` is reserved. `isa ls` lists the current project's ISAs, `isa ls --all` every project's. This replaces LifeOS's `~/.claude/LIFEOS/MEMORY/WORK/{slug}/ISA.md`. The first export used `~/.claude/isa/`, but Claude Code treats everything under `~/.claude/` as sensitive and blocks writes there, so the home moved out. Override with `ISA_HOME`.
 
 ## Enforcement
 
-One engine (`runtime/isa/engine.py`), two thin adapters. Every decision is deterministic code — no model calls in hooks. Each hook runs in about 40–70 ms (`tests/bench_hooks.py`); none of them runs probes.
+One engine (`runtime/isa/engine.py`), two thin adapters. Every hook decision is deterministic code except one: the per-prompt gate, which may ask a cheap model (`judge.py`). Hooks never run probes and never write an ISA; the `isa` commands do both. Design and rationale: `future/SPEC-v2.md`.
+
+**The gate and the session mode.** Each prompt is answered once: *is this a request for work with a checkable end state — something that will be either done or not done — rather than a question or a conversation?* A free pre-filter (`fit.py`) answers the obvious cases (greetings → no, work verbs → yes; a short "go" is unsure because it means what it approves); every other prompt goes to the judge, with the tail of the previous assistant message as context. `ISA_JUDGE` picks the backend: `auto` (default: `claude` in Claude Code, `pi` in pi, `heuristic` if that CLI is missing — never `api`), `claude[:model]` (Haiku 4.5 by default, run with no settings, tools, skills or MCP), `pi[:model]` (`ISA_JUDGE_PI_MODEL`), `api[:model]` (opt-in, Messages API over `urllib`), `heuristic` (unsure → yes). A timeout (`ISA_JUDGE_TIMEOUT`, 12 s), an error or a garbled answer means yes — if the gate can't decide, the session is ON. The judge's own session runs no hook (`ISA_JUDGE_CHILD=1`). Every verdict is logged in `~/.isa/_state/judge.jsonl`.
+
+A session starts OFF. It turns ON for good on a yes, on a `write` call (refused: the change waits for an ISA), on an `unknown` shell command that turns out to have changed project files, or when an ISA is bound. OFF sessions get nothing from the engine; the user sees `ISA: OFF — <reason>` / `ISA: ON — <reason>`. While the bound ISA is `complete`, new prompts are judged again, and a yes needs a new ISA (or a reopen) before the turn ends. `ISA_MODE=off|on` is the user's override (off: every hook silent; on: ON from the first prompt). A v1 session file reads ON exactly when it has an open bound ISA.
 
 | Step | Claude Code hook | pi event | What the engine does |
 |------|------------------|----------|----------------------|
-| Protocol known | `SessionStart` (every source) | `before_agent_start`, first run | Injects `protocol.md` (~20 lines), the session's bound ISA and this project's open ISAs. After compaction it re-injects the Goal and open ISCs. |
-| Verbatim goal | `UserPromptSubmit` | `before_agent_start` | Logs the raw prompt. `stated_goal` must be a substring of a logged prompt (checked once, then remembered next to the ISA). |
-| Read-only work that fits | `UserPromptSubmit` | `before_agent_start` | Scores the prompt against `fit.md` (what the ISA process solves) with `fit.py`. On `strong`/`maybe` it adds an `ISA fit:` note telling the model to structure even read-only work (reviews, audits, investigations) with an ISA. Advice only — never a deny or a Stop block. `isa fit "<text>"` shows the verdict. Jev replaces the heuristic later (`future/JEV.md` § 4b). |
-| Done written first | `PreToolUse` (all tools) | `tool_call` → `block` | Refuses any `write`/`unknown` call until an ISA is bound **and** passes the articulation lint. Reads, ISA-folder writes, and temp-dir writes outside the project always pass. |
-| Binding | `PostToolUse` | `tool_result` | Writing/editing `~/.isa/**/ISA.md` binds it to the session (no session id reaches the model). |
-| Projects touched | `PreToolUse` / `PostToolUse` | `tool_call` / `tool_result` | The session id picks the ISA; file paths pick the projects. Each counted change adds its project (by file path; by cwd for shell commands) to `<ISA folder>/.projects.json`, and the ISA folder is linked into every other project's folder (`~/.isa/<key>/<slug>` → symlink), so `isa ls` there lists it ("filed in …"). An unbound refusal suggests the ISA path in the changed file's project. Shell change detection skips a non-git temp cwd. |
-| ISA kept true | `PostToolUse` | `tool_result` → appended text | Lints every ISA edit and feeds the errors back. A shell edit of the bound ISA (heredoc, `sed -i`, a script) counts as an ISA edit too: the engine keeps the ISA's mtime in the session state and treats any tool call that moved it as an ISA edit, not a project change. Also nudges every 5 project changes without an ISA update; nudges on failed commands. |
-| Proven ticks | `PreToolUse` / `PostToolUse` / `Stop` | `tool_call` / `tool_result` / `agent_before_settle` | `isa verify <ISA> [ISC-N…]` runs Test Strategy probes (exit 0 = pass) and appends the results to an engine-owned ledger (`~/.isa/_state/evidence/`, `runtime/isa/evidence.py`); tool writes aimed at it are refused. An Edit/Write that ticks a mechanical ISC is refused unless its latest run passed, used the probe as written now, and is newer than the last project change (the proposed text is computed before the edit; shell edits are caught after it, in lint feedback and at Stop). Project changes are refused while a passed ISC is unticked, so ISAs advance one proven step at a time. Closing needs every mechanical tick re-proven after the last change; a clean close lists self-attested ISCs (`manual`/`screenshot`/`eval`/no probe) to the user. Features tick in dependency order: an ISC whose Feature `depends_on` a Feature with open ISCs is refused (judged on the file before the edit); a passed-but-blocked ISC doesn't trigger the pending-tick block; lint rejects unknown `depends_on` names and cycles. |
-| No false "done" | `Stop` (exit 2) | `agent_before_settle` → `continue: true` (completed runs only — never after an abort or an error; prompt ids carry a per-process prefix so a resumed session's "once per prompt" memory can't collide) | Checks only turns where something happened (a change or an ISA edit after the prompt), and only reads the ISA, the evidence ledger and session state — it never runs a probe and never writes the ISA. It blocks once per prompt on a problem the method defines: changes with no ISA, lint errors, a passed ISC left unticked, a tick without a passing run or out of dependency order, a `complete` claim whose passes predate the last change ("run `isa verify`" — Close rule 4 keeps that the model's explicit last step), or every criterion ticked while the ISA is still open ("close it, or add what is missing"). The second time it lets the turn end with a visible warning. There is deliberately no "you changed files, now touch the ISA" rule: any edit satisfied it, so it forced busywork. Folding discoveries in is required by the method but not decidable by a script — the protocol asks for it and a model-only nudge fires every 5 changes (a real check is a Jev candidate). A finished bound ISA is never re-gated against newer rules: a change then gets "new task → new ISA, or reopen it". |
+| ON block | `SessionStart` (when ON) / `UserPromptSubmit` (on the OFF → ON switch) | `before_agent_start` | Injects `protocol.md`: read SKILL.md, then `isa new`, write the content, `isa lint`, `isa verify --red`, `isa verify`, `isa close`. On resume or after compaction: also the bound ISA, its Goal and open ISCs, and the items still `blocked`. |
+| The gate | `UserPromptSubmit` (timeout 20 s) | `before_agent_start` (`ISA_PROMPT_TIMEOUT_MS`, 20 s) | Logs the prompt (with cwd, project, previous assistant message), runs the gate while OFF or after a closed ISA, records the mode. |
+| Done written first | `PreToolUse` | `tool_call` → `block` | While ON: refuses `write` / `unknown` calls until an ISA is bound and passes the articulation lint. `isa new|lint|verify|close` (`isa-cmd`) always pass. |
+| Ownership | `PreToolUse` | `tool_call` | Refuses a model Write/Edit of an ISA that ticks a box, adds or changes a generated Verification line, sets `phase: complete`, changes `root`, or writes a wrong `progress` (unticking is allowed). Refuses a shell command writing onto an ISA.md (`isa-shell-edit`). The ledger is never written by a tool. |
+| Binding | `PostToolUse` | `tool_result` | `isa new` (the path it printed) or a Write/Edit of `~/.isa/**/ISA.md` binds the ISA and switches the session ON. |
+| ISA kept true | `PostToolUse` | `tool_result` → appended text | Lints every ISA edit (on the text the commands would leave — `progress` and orphaned lines are recomputed, never reported) plus the ledger-aware rules; nudges every 5 project changes without an ISA edit; a failed `isa verify` asks "claim wrong or code wrong?". |
+| No false "done" | `Stop` (exit 2) | `agent_before_settle` → `continue: true` (completed runs only) | While ON: no bound ISA → refuse, even on a turn that changed nothing (a review is work too; the clarify-first scaffold — Goal + questions + `context_sufficient: false` — ends the turn that created it only). Then, on turns where something happened: lint errors, a tick without a passing `isa verify` (or `--attest`) row, a tick out of dependency order, a `complete` ISA not written by `isa close`, every criterion ticked while still open. Once per prompt; the second time the turn ends with a warning and the open problems become `blocked`. |
 
-Classification (`classify.py`): file tools are judged by path (project / temp / ISA folder); Bash commands are tokenized and each segment judged — an allowlist of read-only commands and read-only `git`/`gh` subcommands, known mutators (`rm`, `git commit`, `npm install`, redirects to project files, `sed -i`, …), and everything else `unknown` (gated before an ISA exists). An `unknown` shell command — a heredoc script, `node -e`, a build — counts as a project change when it actually changed project files: the engine snapshots `git status --porcelain` before it and compares after (set changed, or a dirty/untracked path modified since), or walks the project with a cap outside git (`runtime/isa/changes.py`). Gitignored files never count. MCP tools are judged by verb in the tool name. A project that lives under `/tmp` is still a project. The agent's own memory folder (`~/.claude/projects/*/memory/`) is agent state, like the ISA folder: never gated and never counted as a change, even when the project is `~/.claude` itself.
+**The commands own the state.** `isa new <slug> --goal "<span>"` scaffolds the frontmatter (`root`, `stated_goal` checked against the project's logged prompts with Scaffold's minimum-content rule, `asks` extracted by the judge) and the hook binds it. `isa verify` runs probes from `root` (or an entry's `cwd:` / `root:`), records each run in the evidence ledger (`~/.isa/_state/evidence/`), ticks what passed (Feature dependency order applied within the run), unticks what regressed, and writes the generated Verification line; `--attest "<evidence>"` ticks a self-attested ISC; `--red` records the failing baseline. `isa close` re-runs every probe and writes `phase: complete` only when all pass without changing the tree and `lint --close` holds — that re-run is what makes a close fresh, so no hook tracks freshness. `isa lint` recomputes `progress`, nested parents and orphaned lines first. All of them refuse to run probes before the ISA passes articulation.
 
-Failure policy: a hook that crashes fails **open** with a user-visible message and a line in `~/.isa/_state/errors.log` (a gate bug must not stop all work on the machine). pi blocks tools when a `tool_call` handler throws, so the extension catches its own errors.
+**Advice (never blocks).** `isa lint` asks the judge once per (ISC, probe) whether the probe would fail if the claim were false, batching every uncached probe into one call and caching the answers as `advice` rows in the ledger. A doubt is a warning. `isa close` records the judge's `goal_met` and, when there are asks, `asks_met`, and prints them under its summary. A judge failure is a one-line note; `ISA_ADVICE=off` or the `heuristic` backend skips advice.
 
-There is no self-exemption: the model can't switch the gate off. A trivial change costs an E1 ISA (`## Goal` + `## Criteria` with one `Anti:`).
+**Evidence.** Each ledger row carries the tree's fingerprint (`fingerprint.py`: a temp-index `git write-tree` — content only, ignored files out, the real index untouched — or a capped walk outside git). A batch that changes the tree is reported, recorded as `changed`, and refused by `isa close`. Red-then-green: a behaviour/http/schema ISC at E2+ ticks plainly only after a failed red run of the same probe text on a different tree; otherwise it is marked `(no red baseline)` and listed at close — never blocked. When Stop lets a turn end with problems open, they are appended to the ledger as `blocked` keys (`no-isa` lives in the session); `isa verify` / `isa lint` append `unblocked` once a key no longer holds, and `isa close` refuses while one is open.
+
+**Lint rules (spec § 6).** `kind:` on every Test Strategy entry from E2, and the probe types each kind refuses (a `behaviour` claim can't be proven by `manual` or by a grep-only probe); a `risk:` declaration on entries that mention secrets, auth, money, deploys…; `risk: high` can't be self-attested and needs a `second-look:` row at close (as does E4+); a probe downgrade after the first `isa verify` needs a `refined: ISC-N probe downgraded` row; `waived:` quotes the user, checked against the ISA's sessions; one `- Ask N:` line per ask at close; `class-sweep:` for `class:` entries; `context_sufficient` set from E2. ISAs started before 2026-10-02 get warnings, not errors, for these.
+
+Classification (`classify.py`): file tools are judged by path (project / temp / ISA folder); Bash commands are tokenized and each segment judged — an allowlist of read-only commands and read-only `git`/`gh` subcommands, `isa new|lint|verify|close` (`isa-cmd`), shell writes onto an ISA.md (`isa-shell-edit`), known mutators (`rm`, `git commit`, `npm install`, redirects to project files, `sed -i`, …), and everything else `unknown`. An `unknown` shell command counts as a project change when it actually changed project files (`changes.py`: `git status --porcelain` before and after, or a capped walk outside git). Gitignored files never count. MCP tools are judged by verb in the tool name. A project that lives under `/tmp` is still a project. The agent's own memory folder (`~/.claude/projects/*/memory/`) is agent state: never gated and never counted.
+
+Failure policy: a hook that crashes fails **open** with a user-visible message and a line in `~/.isa/_state/errors.log` (a gate bug must not stop all work on the machine); a judge failure counts as ON. pi blocks tools when a `tool_call` handler throws, so the extension catches its own errors.
+
+There is no self-exemption: the model can't switch the gate off — only the user can (`ISA_MODE=off`). A trivial change costs an E1 ISA (`## Goal` + `## Criteria` with one `Anti:`).
+
+**Rule 6 and `context_sufficient`.** SPEC-v2 § 2 words rule 6 as "requires `context_sufficient: true`"; lint requires the field to be *set* (true or false), because `false` keeps its v1 meaning — a reasoned default accepted via `proceed` (Scaffold Step 3.5) — and SKILL.md, IsaFormat and the workflows say so.
 
 ## What was kept, changed, dropped
 
@@ -207,7 +227,8 @@ Exported 2026-09-22 from a LifeOS 7.1.1 install:
 ## Working rules for this folder
 
 - What installs: `skill/ISA/`, `runtime/`, `adapters/pi/isa.ts` (via `install.py`). `future/` and this file are design notes.
-- Run the tests before installing: `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install tests.test_fit tests.test_status tests.test_evidence tests.test_shell_changes tests.test_feature_order tests.test_home_and_complete tests.test_seamless_projects` and `node --test adapters/pi/test/extension.test.ts`. With PyYAML on `PYTHONPATH`, also `tests/test_yamlish.py` and `tests/test_lint_parity.py`.
+- Run the tests before installing: `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install tests.test_fit tests.test_status tests.test_evidence tests.test_shell_changes tests.test_feature_order tests.test_home_and_complete tests.test_seamless_projects tests.test_gate tests.test_commands tests.test_fingerprint tests.test_blocked tests.test_red tests.test_lint_v2 tests.test_advice tests.flow.test_isa_flow` and `node --test adapters/pi/test/extension.test.ts`. No unit test calls a model: `HookCase` runs with `ISA_JUDGE=heuristic`, and the judge tests use fake `claude` / `pi` CLIs and a fake API server. With PyYAML on `PYTHONPATH`, also `tests/test_yamlish.py` and `tests/test_lint_parity.py`.
+- The whole-flow test (`tests/flow/test_isa_flow.py`, SPEC-v2 § 9) is live and paid (two Sonnet 5.5 sessions, about $0.30): `ISA_FLOW_LIVE=1 python3 -m unittest tests.flow.test_isa_flow`. It writes `flow/<stamp>/` (articulation and final ISA, timeline, verdict, transcripts, sandbox state) into the `eval-results` worktree at `tests/evals/results/` and commits it there. A run that dies on an API error is neither graded nor committed. Without the switch it is skipped.
 - Keep `runtime/` standard-library only (`python3 tests/check_stdlib.py runtime/`).
 - Keep it free of LifeOS: no `LIFEOS/` paths, no `localhost:31337`, no personal data. Check with `rg -n -i 'lifeos|31337|MEMORY/WORK|\btelos\b|\bpulse\b' skill/`. Expected: zero hits. Provenance lives only in this file (§ Source provenance), never inside `skill/`.
 - When the skill's prose and `References/IsaFormat.md` disagree, fix both on purpose and note it here.

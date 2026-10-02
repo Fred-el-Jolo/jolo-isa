@@ -1,6 +1,6 @@
 # ISA v2 — design spec
 
-Status: **draft for approval, not implemented.** It comes out of the 2026-10-01 eval session: batch
+Status: **implemented (M1–M7, 2026-10-02)** on branch `spec-v2-review`; the live whole-flow run `flow/20261002-125119` on `eval-results` passed 14/14 stages. It comes out of the 2026-10-01 eval session: batch
 `20261001-202941` on branch `eval-results`, and the reviews of runs A (review, no ISA) and B (bug fix,
 closed ISA). Each section says what changes, the exact behaviour, where it lives (hook / engine /
 command / skill), how it fails, and how it is tested. § Milestones orders the work.
@@ -40,9 +40,10 @@ Answer: `yes` or `no`, plus a one-line reason. Examples:
 | "Review utils.py for bugs and list each one with its line number." | yes (done = every function checked, every bug listed) |
 | "test_dates.py is failing. Fix the bug…" | yes |
 | "make the report faster" | yes (ambiguous scope, still an end state) |
+| "why is the build slow?" / "find out why test_dates fails" | yes (an investigation of the user's own system: done = cause found with evidence) |
 | "what does `is_leap` do?" | no |
 | "thanks, looks good" / "hi" | no |
-| "explain the difference between X and Y" | no |
+| "explain the difference between X and Y" / "how does git rebase work?" | no (general knowledge, or code explained as written) |
 | "write a plan for X" / "compare A and B and recommend one" | yes (the deliverable can be checked) |
 
 ### 1.2 Judge pipeline (UserPromptSubmit / pi `before_agent_start`)
@@ -95,8 +96,15 @@ it, or the harness kills the engine and the session silently stays OFF:
   20000); every other event keeps `ISA_HOOK_TIMEOUT_MS` (default 5000). The call is synchronous
   (`spawnSync`), so pi's UI waits for the judge; `ms` in `judge.jsonl` measures that cost.
 
-Running the judge in the background (verdict read at PreToolUse / Stop) is deferred to M7, decided on
-the `ms` data: the synchronous verdict is what puts the ON block on the prompt, which fixes run A.
+**Background gate — decided at M7: stay synchronous.** Times measured on 2026-10-02 from the `ms` field of `judge.jsonl` (`claude` backend, Haiku 4.5):
+
+| Prompts | How the gate answered | Time |
+|---|---|---|
+| Clear work requests, e.g. the flow's YES prompt ("Add two things to todo.py…") or "review utils.py for bugs" | pre-filter | 0 ms |
+| "go" (with context), "sounds good", "why is the build slow?", "can you compare … and pick one?", "what does cmd_list print?" | judge, 5 direct calls | 4.1–7.6 s, median 6.2 s |
+| The flow's NO question | judge, live flow runs | 6.9 s and 4.2 s |
+
+The wait happens only on prompts the pre-filter can't settle, which are mostly questions and short approvals, and it stays well under the 12 s judge timeout and the 20 s hook limit. A background judge would save that wait, but its verdict would arrive after the prompt. On a `yes` the ON block would then reach the model only at its first PreToolUse refusal or at Stop, which is exactly the run-A failure this spec fixes (a review that never sees the protocol). Revisit if the median rises above about 8 s, or if a cheaper backend (`api`) becomes the default.
 
 ### 1.3 State machine
 

@@ -1,6 +1,6 @@
 ---
 name: ISA
-version: 1.0.13-export.1
+version: 1.1.0-export.1
 description: "Owns the Ideal State Artifact — one markdown file (ISA.md) holding a task's articulated ideal state; scaffolds, interviews, scores completeness, reconciles feature excerpts to master, and appends decisions/changelog/verification across a locked fourteen-section order. USE WHEN ISA, ISC, ideal state, ideal state criteria, task specification, hill-climb, articulating done, definition of done, spec this, what does done look like."
 effort: medium
 ---
@@ -25,9 +25,23 @@ The ISA is a single markdown file with YAML frontmatter and a locked fourteen-se
 
 ## Where ISA files live
 
-Every ISA is a **task ISA**: `~/.isa/<project>/{slug}/ISA.md`, with `slug = YYYYMMDD-HHMMSS_kebab-description`. It is created at the start of a piece of work and closed at `phase: complete`. Ephemeral feature slices live beside it at `~/.isa/<project>/{slug}/_ephemeral/<feature>.md`. `<project>` is the project key — the git work-tree root (or the directory) as a path relative to `$HOME` with `/` → `-` (`~/dev/app` → `dev-app`); `isa where` prints it, `isa ls` lists that project's ISAs, `isa new <slug>` prints a fresh path.
+Every ISA is a **task ISA**: `~/.isa/<project>/{slug}/ISA.md`, with `slug = YYYYMMDD-HHMMSS_kebab-description`. It is created at the start of a piece of work and closed at `phase: complete`. Ephemeral feature slices live beside it at `~/.isa/<project>/{slug}/_ephemeral/<feature>.md`. `<project>` is the project key — the git work-tree root (or the directory) as a path relative to `$HOME` with `/` → `-` (`~/dev/app` → `dev-app`); `isa where` prints it, `isa ls` lists that project's ISAs, `isa new <slug>` creates a fresh one and prints its path.
 
-When the ISA hooks are installed (see the repo's `install.py`), the harness enforces this loop in every session: mutating tool calls are refused until an ISA is bound and passes the articulation gate, every ISA edit is linted, and a turn can't end (once per prompt) while the ISA is stale or a `complete` claim fails the close gate. Writing or editing an `ISA.md` under `~/.isa/` is what binds it to the session.
+When the ISA hooks are installed (see the repo's `install.py`), the harness enforces this loop. Every prompt is judged once: work with a checkable end state turns the session **ON** (a review counts — nothing has to change on disk), a question or a conversation leaves it **OFF**, and a misjudged OFF turns ON the moment a change is attempted. While ON, changes are refused until an ISA is bound and passes the articulation gate, every ISA edit is linted, and a turn can't end without a bound ISA or with an unproven claim. `isa new` (or writing/editing an `ISA.md` under `~/.isa/`) binds an ISA to the session.
+
+**You write the content; the `isa` commands write the state.**
+
+| Step | Command | What it does |
+|------|---------|--------------|
+| Start | `isa new <slug> --goal "<verbatim span of the prompt>"` | Creates the ISA with frontmatter, `stated_goal`, `asks` and `root` filled, and binds it |
+| Write | Write/Edit | Goal, Criteria, Test Strategy, Decisions… — never a shell command on an ISA.md |
+| Check | `isa lint <ISA>` | Recomputes `progress`, then the gate; changes are refused until it is clean |
+| Red | `isa verify --red <ISA>` | Before building: records each behaviour/http/schema probe failing (the baseline) |
+| Prove | `isa verify <ISA> [ISC-N…]` | Runs the probes from `root`, ticks what passed, unticks what regressed, writes the Verification lines |
+| Attest | `isa verify <ISA> ISC-N --attest "<evidence>"` | Ticks a `manual` / `screenshot` / `eval` criterion with your evidence |
+| Close | `isa close <ISA>` | Re-runs every probe; sets `phase: complete` only when all pass and the close gate holds; prints the summary your final answer quotes |
+
+You never tick a box or write a generated Verification line, `progress`, or `phase: complete` yourself — the hooks refuse it and name the command.
 
 (A long-lived per-repo "project ISA" is not supported — it is a possible future feature, not part of this skill.)
 
@@ -41,10 +55,12 @@ task: "8 word task description"          # imperative, ≤60 chars, the delivera
 slug: YYYYMMDD-HHMMSS_kebab-description
 project: <name>                          # optional label: which codebase this task is about
 effort: E3                               # E1..E5 — drives the completeness gate
-phase: observe                           # observe|think|plan|build|execute|verify|learn|complete
-progress: 0/12                           # checked / total leaf ISCs, dropped & waived excluded — always true
+phase: observe                           # observe|think|plan|build|execute|verify|learn|complete (complete: `isa close` only)
+progress: 0/12                           # engine-owned: checked / total leaf ISCs, dropped & waived excluded
 started: <ISO-8601>                      # set once
 updated: <ISO-8601>                      # every edit
+root: /home/me/dev/app                   # engine-owned: the project every probe runs in
+asks: ["<verbatim span>", ...]           # the prompt's explicit asks; each needs a `- Ask N:` line at close
 # optional
 iteration: 2                             # set when a completed ISA is reopened
 resumed_at: <ISO-8601>                   # when the last reopen happened
@@ -58,7 +74,38 @@ children: [<slug>, ...]
 ---
 ```
 
-`phase` and `progress` are the machine-readable status surface — anything that displays ISA state (a status line, a dashboard) reads them. Keep them true: set `phase` at the start, whenever it genuinely changes, and to `complete` at close; recompute `progress` the moment an ISC flips.
+`phase` and `progress` are the machine-readable status surface — anything that displays ISA state (a status line, a dashboard) reads them. Set `phase` at the start and whenever it genuinely changes; `isa close` sets `complete`. `progress` is recomputed by every `isa` command (status readers count the criteria themselves in between).
+
+---
+
+## Completion rules
+
+A run is complete when all fifteen hold. Each rule says how it is enforced — its **teeth**:
+
+- **HOOK** — refused mechanically by a hook or a command;
+- **CHECK** — a gate a command runs and records, on facts it can verify;
+- **SHAPE** — a command requires a row in the right format, but can't check that it is true;
+- **SELF** — honest self-attestation, listed to the user at close.
+
+| # | The run is complete when… | Teeth |
+|---|---------------------------|-------|
+| 1 | **The stated goal survives verbatim** in `stated_goal` (immutable unless the user revises it; `null` only when the literal is contentless), every claim traces to it or to a named derived claim, and at close `- Goal: yes — <evidence>` confirms the result delivers its *intent*, not its surface. `no` blocks the close. | HOOK (`isa new --goal` and lint check the span) + CHECK (`isa close` needs `Goal: yes`) |
+| 2 | **Done existed in writing before building** — the ISA passes its articulation gate before the first change. | HOOK (changes refused until it does) |
+| 3 | **What must not happen is written down** — at least one `Anti:` criterion. | HOOK (lint) |
+| 4 | **Experiential goals name an antecedent** — at least one `Antecedent:` criterion. | SELF |
+| 5 | **External prerequisites were probed before execution** — tokens, logins, service config, deploy targets; a missing one blocked or was deferred in Decisions. | SELF |
+| 6 | **Material ambiguity was resolved before building** — up to 3 targeted questions, or a stated reasoned default; `context_sufficient` set. A whole-response `proceed` accepts the defaults. | CHECK (lint at articulation) |
+| 7 | **A reported bug was reproduced before its suspect code was read**, and the fix went upstream when one fix kills the class. Not reproduced → a `repro-bypass: pure-additive \| non-isolable \| repro would cause damage — <why>` row. | SELF + SHAPE |
+| 8 | **No claim closed without tool evidence of the right type** — file → read it, code → run it, command → its checked output, HTTP → `curl -i`, web/UI → a real browser or HTTP probe, appearance → an image actually looked at, motion → a frame scrub, schema → a query, config → read-back. The entry's `kind:` sets the minimum probe type; "should work" never closes anything. | HOOK (only `isa verify` ticks) + CHECK (`kind:` table, downgrades); choosing `kind:` is SELF |
+| 9 | **A defect that is one instance of a class** closed only after one search enumerated every sibling — each fixed and verified, or tombstoned: `class-sweep: <class> — N siblings via <probe>; M fixed, K tombstoned` (required by close for a Test Strategy `class:`). | SHAPE + SELF |
+| 10 | **Every explicit ask was met, skipped with a reason, or surfaced** — one `- Ask N:` line per entry of `asks`; scope narrowed only where the user ratified it; no claim passed because its wording was softened mid-run. A depth directive ("go deep", "quick pass") is an ask. | SHAPE (`isa close`: a missing line is unmet) + SELF |
+| 11 | **The builder never rubber-stamped its own build** — work with a `risk: high` ISC, or at E4+, got an independent second look or a row saying why not (`second-look:`); contradictions surfaced (two re-calls, then escalate to the user); every finding dispositioned (`finding: … — adopted / rebutted / deferred`). | SHAPE + SELF |
+| 12 | **The run left its trail in the ISA** — decisions including dead ends; conjectured / refuted-by / learned / criterion-now entries when understanding changed; evidence per claim. | SHAPE (lint, E4+) + SELF |
+| 13 | **State was observable without asking** — `phase` and `progress` true. | HOOK (the engine writes `progress` and `complete`) |
+| 14 | **The ISA at close is not the ISA at open** — every discovery (corrections, failed probes, new constraints, implied wants) was folded in as it arrived: criteria added, split, tightened, or killed. Falsifier: failed probes or user corrections in the transcript with no ISA edit after them. | SELF + nudge (a failed probe asks "claim wrong or code wrong?") |
+| 15 | **The spend matched the task** — depth, parallelism and time scaled to what the work revealed; breaks either way surfaced. A depth directive with no visible effect is a break. | SELF |
+
+**Close contract.** Your final answer quotes the `isa close` summary — which claims closed on what evidence, which are self-attested or have no red baseline, what was waived, deferred, or asked — instead of paraphrasing it.
 
 ---
 
@@ -77,11 +124,11 @@ Every ISA may have up to fourteen body sections. The tier completeness gate deci
 | 7 | `## Goal` | The hard-to-vary spine — 1–3 sentences naming verifiable done | OBSERVE |
 | 8 | `## Criteria` | Atomic ISCs (Ideal State Criteria) — one binary tool probe each, including derived `Anti:` ISCs | OBSERVE → EXECUTE |
 | 9 | `## Bridge Criteria` | Cross-ISA integration ISCs (`Bridge:` prefix) verified across the seam as a distinct VERIFY pass — only when the ISA has siblings | OBSERVE → EXECUTE |
-| 10 | `## Test Strategy` | Per-ISC verification — one YAML entry per leaf ISC (`isc`, `anchors_to`, `type`, `check`, `threshold`, `tool`); shape in `References/IsaFormat.md` | OBSERVE/PLAN |
+| 10 | `## Test Strategy` | Per-ISC verification — one YAML entry per leaf ISC (`isc`, `anchors_to`, `type`, `kind`, `check`, `threshold`, `tool`, and `risk` when the ISC touches secrets, auth, money or deploys); shape in `References/IsaFormat.md` | OBSERVE/PLAN |
 | 11 | `## Features` | Work breakdown — one YAML entry per vertical slice (`name`, `description`, `satisfies`, `depends_on`, `parallelizable`); shape in `References/IsaFormat.md` | PLAN |
 | 12 | `## Decisions` | Timestamped decision log including dead ends; `refined:` prefix for Goal/ISC restructures | any phase |
 | 13 | `## Changelog` | Conjecture / refuted-by / learned / criterion-now entries — Deutsch error-correction trail | LEARN |
-| 14 | `## Verification` | Evidence that each ISC passed — quoted command output, file content, screenshot path | VERIFY |
+| 14 | `## Verification` | Evidence per ISC — generated by `isa verify` from its ledger — plus your `- Ask N:`, `[DEFERRED-VERIFY]` and `- Goal:` lines | VERIFY |
 
 `## Dependencies` and `## Bridge Criteria` are **conditional-required**: mandatory when the ISA has any `parent:`/`children:`/cross-ISA relationship, omitted (like any empty section) for a standalone single-ISA task. Multi-ISA trees are rare — full mechanics in `References/IsaHierarchy.md`.
 
@@ -138,16 +185,16 @@ The tier can change mid-run when the work reveals more (or less) than expected: 
 
 - **Done exists in writing before building.** For any non-trivial task, the ISA (Goal + Criteria at minimum) is written before the first build step.
 - **Fold discoveries in as they arrive.** Corrections from the user, failed probes, new constraints, implied wants → add, split, tighten, or kill ISCs right away. The ISA at close is not the ISA at open; an ISA untouched after a surprising discovery is stale.
-- **Check ISCs immediately.** Run a mechanical ISC's probe through `isa verify <ISA> ISC-N`; the moment it passes, flip `[ ]`→`[x]`, paste the Verification line it prints, and recompute `progress`. Don't batch at VERIFY. The hooks enforce this: a tick without a fresh passing `isa verify` run is refused, and so is any other project change while a passed ISC waits to be ticked (IsaFormat § Test Strategy). Features tick in dependency order: an ISC whose Feature `depends_on` an unfinished Feature can't be ticked yet (IsaFormat § Features).
-- **No ISC closes without tool evidence of the right modality:** file→Read, code→Grep, command→its checked output, HTTP→`curl -i`, appearance→an image actually viewed, schema→a query, config→read-back. "Should work" never closes an ISC.
-- **Reopen after complete.** Editing the body of a `phase: complete` ISA means the work resumed: set `phase: learn`, increment `iteration` (start at 2), add `resumed_at: <ISO-8601>`, and append a Decisions row `refined: reopened after complete — <why>`. `frozen: true` opts out (the edit is a pure correction).
-- **Continuation vs new task.** A follow-up that continues the same task edits the existing ISA; a genuinely new task gets a new slug.
-- **Waive or defer, never fudge.** A probe that genuinely can't run yet gets a `- ISC-N: [DEFERRED-VERIFY] — <why> — follow-up: <what>` Verification line; the ISC stays `[ ]`. Only the user can waive an ISC (`waived: ISC-N — <reason>` in Decisions); waived ISCs leave the `progress` denominator.
-- **Close.** `phase: complete` only when all three hold:
-  1. Every non-dropped leaf ISC is `[x]` with a Verification entry, or waived by the user. (A nested parent is ticked once all its leaves are.)
-  2. A `- Goal: yes — <evidence>` line confirms the finished result delivers the verbatim goal's intent. This is the frame-drift check: all ISCs passing doesn't prove the ISC set still covers what was asked.
-  3. CheckCompleteness passes at the ISA's tier with `moment: close`.
-  4. Every mechanical tick is re-proven after the last project change: run `isa verify <ISA>` (all probes) last, then close. Self-attested ticks (`manual`, `screenshot`, `eval`, no probe) are listed to the user.
+- **Prove ISCs as you go.** For a behaviour/http/schema criterion, write its test first and run `isa verify --red <ISA>` before building (the probe must fail — that red baseline is what makes the later pass mean something). Then build, and run `isa verify <ISA> [ISC-N…]`: it runs each probe from the ISA's `root`, ticks what passes, unticks what regressed, and writes the Verification line. Don't batch at VERIFY. Self-attested criteria (`manual`, `screenshot`, `eval`) are ticked with `isa verify <ISA> ISC-N --attest "<evidence>"`. Features tick in dependency order: a criterion whose Feature `depends_on` an unfinished Feature passes but waits, and a later run ticks it (IsaFormat § Features).
+- **No ISC closes without tool evidence of the right type** — see completion rule 8 and the `kind:` table in IsaFormat § Test Strategy. "Should work" never closes an ISC.
+- **Reopen after complete.** Editing the body of a `phase: complete` ISA means the work resumed: set `phase: learn`, increment `iteration` (start at 2), add `resumed_at: <ISO-8601>`, and append a Decisions row `refined: reopened after complete — <why>`. `frozen: true` opts out (the edit is a pure correction). It closes again only through `isa close`.
+- **Continuation vs new task.** A follow-up that continues the same task edits the existing ISA; a genuinely new task gets a new ISA (`isa new`).
+- **Waive or defer, never fudge.** A probe that genuinely can't run yet gets a `- ISC-N: [DEFERRED-VERIFY] — <why> — follow-up: <what>` Verification line; the ISC stays `[ ]`. Only the user can waive an ISC, and the row quotes them: `waived: ISC-N — "<their words>"`; waived ISCs leave the `progress` denominator.
+- **Close.** `isa close <ISA>` sets `phase: complete` only when all four hold:
+  1. Every non-dropped leaf ISC is ticked (by `isa verify`) or waived by the user. (The engine ticks a nested parent once all its leaves are.)
+  2. A `- Goal: yes — <evidence>` line confirms the finished result delivers the verbatim goal's intent — the frame-drift check: all ISCs passing doesn't prove the ISC set still covers what was asked. One `- Ask N:` line answers each ask.
+  3. The close gate holds at the ISA's tier (CheckCompleteness with `moment: close`), including the `second-look:` / `class-sweep:` rows the rules call for, and no item is still blocked from an earlier turn.
+  4. `isa close` succeeded: it re-runs every mechanical probe, and every one passes without changing the tree. Self-attested ticks and ticks with no red baseline are listed to the user.
 
 ---
 
@@ -161,7 +208,7 @@ Match the verb in the request to a workflow. When ambiguous, default to Scaffold
 | "interview me", "fill in the ISA", "deepen", "ask me questions" | **Interview** | `Workflows/Interview.md` |
 | "check", "audit", "score this ISA", "is it complete?" | **CheckCompleteness** | `Workflows/CheckCompleteness.md` |
 | "reconcile", "merge feature file back", "ephemeral → master" | **Reconcile** | `Workflows/Reconcile.md` |
-| "append decision", "append changelog", "append verification", "record C/R/L entry" | **Append** | `Workflows/Append.md` |
+| "append decision", "append changelog", "append goal line", "answer the asks", "record C/R/L entry" | **Append** | `Workflows/Append.md` (ISC evidence lines come from `isa verify`, not from Append) |
 
 ---
 
@@ -222,7 +269,7 @@ Skill("ISA", "extract feature <name> as ephemeral file from <master-isa-path>")
 
 `Scaffold` (ephemeral mode) produces a derived view containing only the slice relevant to that feature: the Vision and Goal as read-only context, the relevant Constraints, the ISCs in the feature's `satisfies:` list with stable IDs, and the matching Test Strategy entries. (No Verification section yet — it appears with the worker's first entry.)
 
-A fresh-context agent operates against the ephemeral file alone. At completion, `Reconcile` deterministically merges ISC checkmarks, Verification evidence, Decisions entries, and any new Changelog entries back to master, then archives the ephemeral file under `_ephemeral/.archive/`.
+A fresh-context agent operates against the ephemeral file alone. At completion, `Reconcile` merges its Decisions, Changelog entries and `[DEFERRED-VERIFY]` lines back to master, then runs `isa verify <master>` on the slice's ISCs — the engine ticks what passes there (a worker's checkmarks are never copied over) — and archives the ephemeral file under `_ephemeral/.archive/`.
 
 **Ephemeral files are derived views. They are never sources of truth. They are never hand-edited as policy. The master ISA is what persists.**
 
@@ -232,8 +279,9 @@ A fresh-context agent operates against the ephemeral file alone. At completion, 
 
 The skill owns the artifact, not the work loop. The loop that uses it — articulate done, build, verify each claim on tool evidence, fold what was learned back in — is summarized in `References/IsaLoop.md`. Typical call points:
 
-- Start of work: `Skill("ISA", "scaffold from prompt at tier T")` → returns the ISA path.
-- End of articulation and before closing: `Skill("ISA", "check completeness of <path> at tier T")` → pass/fail + gap report.
+- Start of work: `isa new <slug> --goal "<span>"`, then `Skill("ISA", "scaffold from prompt at tier T")` fills the body.
+- End of articulation: `isa lint <ISA>`; for the judgment parts, `Skill("ISA", "check completeness of <path> at tier T")`.
+- While building: `isa verify --red <ISA>` before the change, `isa verify <ISA>` after it; `isa close <ISA>` to finish.
 - Planning parallel work: `Skill("ISA", "extract feature <name> as ephemeral file from <master-isa-path>")`.
 - After a worker finishes: `Skill("ISA", "reconcile <ephemeral-path> → <master-path>")`.
 - Any time: `Skill("ISA", "append decision|changelog|verification to <path>: ...")`.
@@ -245,4 +293,4 @@ The skill is invocation-agnostic — it works the same whether called from a loo
 - `References/IsaFormat.md` — the file-shape contract (frontmatter fields, section schemas, ISC grammar, probe-type vocabulary).
 - `References/IsaSystem.md` — the conceptual frame (five identities, three guardrails).
 - `References/IsaHierarchy.md` — multi-ISA trees, Dependencies, Bridge Criteria. Load only when an ISA has `parent:`/`children:`.
-- `References/IsaLoop.md` — the work loop around the ISA and what "a run is complete" means.
+- `References/IsaLoop.md` — the work loop around the ISA: phases, standing questions, resume (the completion rules are in this file, § Completion rules).

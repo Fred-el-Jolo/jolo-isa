@@ -122,72 +122,84 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
 ```yaml
 - isc: ISC-1
   type: bash
+  kind: behaviour
   check: distinct Logic project files in sketches/
   threshold: ≥ 30 by 2025-12-15
   tool: ls sketches/*.logicx | wc -l
 
 - isc: ISC-2
   type: bash
+  kind: behaviour
   check: sketch notes with all four fields
   threshold: every sketch has title, tempo, key, intent
   tool: for n in sketches/*/notes.md; do rg -c '^(Title|Tempo|Key|Intent):' "$n"; done | sort -u
 
 - isc: ISC-3
   type: bash
+  kind: behaviour
   check: candidate list size and commit date
   threshold: 14 entries, committed ≤ 2025-12-31
   tool: rg -c '^- ' candidate-list.md && git log --diff-filter=A --format=%as -- candidate-list.md
 
 - isc: ISC-4
   type: manual
+  kind: doc
   check: end-to-end listen of 14 candidates triggers ≤ 2 skip impulses
   threshold: artist self-reported, logged in project notes
   tool: listening session 2025-12-30 with timer + skip-impulse tally
 
 - isc: ISC-5
   type: manual
+  kind: doc
   check: track-1 candidate duration and opening
   threshold: ≤ 4:00; no transient above −20 dBFS in the first 2 seconds
   tool: soxi -d on the bounce + listen to the first 30 seconds
 
 - isc: ISC-6
   type: bash
+  kind: behaviour
   check: track-12 duration and tail decay
   threshold: ≤ 6:00; ≥ 8s from last onset to −60 dBFS
   tool: soxi -d bounces/12.wav && python3 scripts/tail-decay.py bounces/12.wav
 
 - isc: ISC-7
   type: bash
+  kind: behaviour
   check: hours and locations of field recordings, format
   threshold: ≥ 8h, ≥ 4 locations, all 24-bit/48kHz
   tool: python3 scripts/field-audit.py field-recordings/
 
 - isc: ISC-8
   type: bash
+  kind: behaviour
   check: slate metadata on every field recording
   threshold: 0 files missing any of location, date, time, weather, source
   tool: python3 scripts/field-audit.py field-recordings/ --missing-slate
 
 - isc: ISC-9
   type: manual
+  kind: doc
   check: ≥ 6 final tracks contain a field recording as load-bearing element
   threshold: 6 of 12
   tool: per-track audit of stems against field-recordings/ folder
 
 - isc: ISC-10
   type: bash
+  kind: behaviour
   check: synth tracks with both MIDI and committed audio stems
   threshold: 0 synth tracks missing either
   tool: python3 scripts/stem-audit.py --synth --require midi,audio
 
 - isc: ISC-11
   type: bash
+  kind: behaviour
   check: guitar tracks with both DI and amp stems
   threshold: 0 guitar tracks missing either
   tool: python3 scripts/stem-audit.py --guitar --require di,amp
 
 - isc: ISC-12
   type: bash
+  kind: behaviour
   check: arrangement maps with bar-numbered sections
   threshold: 12 tracks × 4 sections
   tool: |-
@@ -195,150 +207,177 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
 
 - isc: ISC-13
   type: bash
+  kind: behaviour
   check: first-arrangement vs final duration for tracks 4, 7, 10
   threshold: each cut ≥ 60s
   tool: python3 scripts/duration-deltas.py 4 7 10
 
 - isc: ISC-14
   type: bash
+  kind: behaviour
   check: sequence lock date
   threshold: tag sequence-lock on or before 2026-02-15
   tool: git log -1 --format=%as sequence-lock
 
 - isc: ISC-15
   type: bash
+  kind: behaviour
   check: total runtime of locked sequence
   threshold: 42:00 ≤ runtime ≤ 54:00
   tool: python3 scripts/runtime.py bounces/sequence-manifest.json
 
 - isc: ISC-16
   type: manual
+  kind: doc
   check: every transition has a designed gap or crossfade in the sequence session
   threshold: 11/11 transitions annotated with a chosen length (1–4s or hard cut)
   tool: review the transition markers in the sequencing session
 
 - isc: ISC-17
   type: bash
+  kind: behaviour
   check: open mix notes
   threshold: 0 items tagged TODO or PENDING in mix-notes.md
   tool: rg -c 'TODO|PENDING' mix-notes.md
 
 - isc: ISC-18
   type: bash
+  kind: behaviour
   check: A/B log entries per track
   threshold: 12 tracks × 4 systems (monitors, car, AirPods, laptop)
   tool: python3 scripts/ab-log-audit.py mix-notes.md --systems monitors,car,airpods,laptop
 
 - isc: ISC-19
   type: bash
+  kind: behaviour
   check: mix bus plugin chain across all 12 projects
   threshold: one distinct chain, no limiter
   tool: python3 scripts/logic-bus-chain.py projects/*.logicx | sort -u
 
 - isc: ISC-20
   type: bash
+  kind: behaviour
   check: sub-bass correlation and ambience width per track
   threshold: < 120 Hz correlation ≥ 0.9; reverb returns side/mid ≥ 0.4
   tool: python3 scripts/stereo-audit.py bounces/mix/*.wav
 
 - isc: ISC-21
   type: bash
+  kind: behaviour
   check: bit depth, sample rate and peak level of each mix bounce
   threshold: 24-bit, 48kHz, peak ≤ −6 dBFS
   tool: for f in bounces/mix/*.wav; do soxi -b -r "$f"; sox "$f" -n stats 2>&1 | rg 'Pk lev dB'; done
 
 - isc: ISC-22
   type: manual
+  kind: doc
   check: signed contract and deposit receipt
   threshold: both dated ≤ 2026-03-15
   tool: contracts/mastering/ folder
 
 - isc: ISC-23
   type: bash
+  kind: behaviour
   check: mastered deliverable sets
   threshold: 12 × 16/44.1 WAV, 12 × 24/48 WAV, 1 DDP image, received ≤ 2026-04-15
   tool: python3 scripts/deliverables-audit.py mastered/
 
 - isc: ISC-24
   type: bash
+  kind: behaviour
   check: integrated LUFS and true-peak per mastered track
   threshold: −14 LUFS ± 1 LU; true-peak ≤ −1 dBTP
   tool: for f in mastered/24-48/*.wav; do ffmpeg -nostats -i "$f" -filter_complex ebur128=peak=true -f null - 2>&1 | rg 'I:|Peak:'; done
 
 - isc: ISC-25
   type: bash
+  kind: behaviour
   check: max loudness delta between adjacent tracks
   threshold: ≤ 2 LU
   tool: python3 scripts/loudness-deltas.py mastered/24-48/
 
 - isc: ISC-26
   type: manual
+  kind: doc
   check: artist has listened end-to-end across 3 playback systems
   threshold: signed sign-off note with date and system list
   tool: mastered/SIGNOFF.md
 
 - isc: ISC-27
   type: bash
+  kind: http
   check: Bandcamp page fields
   threshold: 200, 12 track titles, cover image, credits block
   tool: curl -s https://bandcamp.example.com/marinerfrequencies | python3 scripts/bandcamp-check.py
 
 - isc: ISC-28
   type: screenshot
+  kind: visual
+  risk: low — a music release on streaming platforms, not a software deploy
   check: DistroKid submission status
   threshold: '"Live on Spotify" by 2026-05-15'
   tool: DistroKid dashboard screenshot
 
 - isc: ISC-29
   type: bash
+  kind: behaviour
   check: ISRC tag per delivered file
   threshold: 12 unique ISRCs
   tool: for f in mastered/16-44/*.wav; do ffprobe -v quiet -show_entries format_tags=ISRC -of csv=p=0 "$f"; done | sort -u | wc -l
 
 - isc: ISC-30
   type: bash
+  kind: behaviour
   check: metadata on the two platforms
   threshold: empty diff
   tool: diff <(python3 scripts/meta.py bandcamp) <(python3 scripts/meta.py distrokid)
 
 - isc: ISC-31
   type: bash
+  kind: behaviour
   check: cover art formats and sizes
   threshold: 3000x3000 JPEG and 1500x1500 PNG
   tool: identify -format '%m %wx%h\n' art/cover-3000.jpg art/cover-1500.png
 
 - isc: ISC-32
   type: bash
+  kind: behaviour
+  risk: low — a promotional audio clip for the album release
   check: trailer clip duration
   threshold: 60s ± 1s
   tool: soxi -D promo/trailer-60s.wav
 
 - isc: ISC-33
   type: bash
+  kind: regression
   check: final sequence track count
   threshold: "12"
   tool: jq '.tracks | length' bounces/sequence-manifest.json
 
 - isc: ISC-34
   type: bash
+  kind: regression
   check: simultaneous audio tracks at densest bar per project
   threshold: ≤ 24 per track
   tool: python3 scripts/logic-density.py projects/*.logicx --max
 
 - isc: ISC-35
   type: manual
+  kind: doc
   check: keep-test answer on 2026-02-10 + listener ranking
   threshold: artist says keep; track 7 not ranked last by the listener panel
   tool: project notes entry + listener-test results sheet
 
 - isc: ISC-36
   type: bash
+  kind: regression
   check: final sequence runtime
   threshold: ≤ 55:00
   tool: python3 scripts/runtime.py bounces/sequence-manifest.json
 
 - isc: ISC-37
   type: bash
+  kind: regression
   check: integrated LUFS per mastered track
   threshold: ≥ −16 LUFS
   tool: |-
@@ -346,18 +385,22 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
 
 - isc: ISC-38
   type: manual
+  kind: doc
   check: project loads on fresh Logic install
   threshold: zero "missing plugin" warnings
   tool: load each .logicx on a clean Logic install, capture warnings
 
 - isc: ISC-39
   type: bash
+  kind: regression
   check: arrangement-map edits after sequence lock
   threshold: empty diff
   tool: git diff --stat sequence-lock..HEAD -- arrangement-maps.md projects/*/arrangement.json
 
 - isc: ISC-40
   type: bash
+  kind: regression
+  risk: low — the album's release date, not a software release
   check: cover art final commit date
   threshold: ≤ 2026-04-10
   tool: git log -1 --format=%as -- art/cover-3000.jpg
@@ -465,19 +508,19 @@ Produce, mix, master, and release a 12-track instrumental album titled `Mariner 
 
 ## Verification
 
-- ISC-1: `ls sketches/*.logicx | wc -l` on 2025-12-15 — 33 projects (exceeded threshold of 30)
-- ISC-2: sketch-notes field audit 2025-12-15 — all 33 sketches carry Title / Tempo / Key / Intent
-- ISC-3: candidate-list.md committed 2025-12-31 with 14 working titles + key/tempo/duration estimates
-- ISC-4: listening-session-notes-2025-12-30.md — "skipped impulse on candidates 9 and 14; 12 stuck"
-- ISC-5: `soxi -d bounces/01.wav` — 3:41; first 30s listened, opens on a −31 dBFS pad swell, no transient
-- ISC-6: `soxi -d bounces/12.wav` — 5:52; `tail-decay.py` — 11.4s from last onset to −60 dBFS
-- ISC-7: `find field-recordings/ -name '*.wav' | xargs soxi -d | awk '{...}'` — 9 hours 23 minutes archived across 4 locations
-- ISC-8: `field-audit.py --missing-slate` — 0 files missing slate fields (41 files checked)
-- ISC-9: per-track stem audit 2026-02-15 — 7 of 12 final tracks contain field recording as structural element (exceeded threshold)
-- ISC-10: `stem-audit.py --synth --require midi,audio` — 0 missing across 38 synth tracks
-- ISC-11: `stem-audit.py --guitar --require di,amp` — 0 missing across 9 guitar tracks
-- ISC-12: arrangement-maps.md committed 2026-02-04 — all 12 tracks with bar-numbered intro/development/climax/decay markers
-- ISC-13: tracks 4, 7, 10 cut by 78s, 92s, 64s respectively; before/after durations logged in mix-notes.md
-- ISC-14: `git log -1 --format=%as sequence-lock` — 2026-02-15
-- ISC-15: locked sequence runtime 2026-02-15 — 47:42 total (within 42–54 window)
-- ISC-33: `jq '.tracks | length' bounces/sequence-manifest.json` — 12
+- ISC-1: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `ls sketches/*.logicx | wc -l` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L2)
+- ISC-2: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `for n in sketches/*/notes.md; do rg -c '^(Title|Tempo|Key|Intent):' "$n"; done | sort -u` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L3)
+- ISC-3: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `rg -c '^- ' candidate-list.md && git log --diff-filter=A --format=%as -- candidate-list.md` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L4)
+- ISC-4: attested 2026-04-25T19:00:00 — listening-session-notes-2025-12-30.md — "skipped impulse on candidates 9 and 14; 12 stuck" (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L5)
+- ISC-5: attested 2026-04-25T19:00:00 — `soxi -d bounces/01.wav` — 3:41; first 30s listened, opens on a −31 dBFS pad swell, no transient (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L6)
+- ISC-6: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `soxi -d bounces/12.wav && python3 scripts/tail-decay.py bounces/12.wav` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L7)
+- ISC-7: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `python3 scripts/field-audit.py field-recordings/` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L8)
+- ISC-8: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `python3 scripts/field-audit.py field-recordings/ --missing-slate` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L9)
+- ISC-9: attested 2026-04-25T19:00:00 — per-track stem audit 2026-02-15 — 7 of 12 final tracks contain field recording as structural element (exceeded threshold) (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L10)
+- ISC-10: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `python3 scripts/stem-audit.py --synth --require midi,audio` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L11)
+- ISC-11: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `python3 scripts/stem-audit.py --guitar --require di,amp` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L12)
+- ISC-12: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `rg -c '^\s*(intro|development|climax|decay): bars [0-9]+–[0-9]+' arrangement-maps.md` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L13)
+- ISC-13: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `python3 scripts/duration-deltas.py 4 7 10` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L14)
+- ISC-14: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `git log -1 --format=%as sequence-lock` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L15)
+- ISC-15: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `python3 scripts/runtime.py bounces/sequence-manifest.json` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L16)
+- ISC-33: verified 2026-04-25T19:00:00 — exit 0 in 0.3s — `jq '.tracks | length' bounces/sequence-manifest.json` (ledger: 20251101-080000_mariner-frequencies-album-247e46e214e7#L17)

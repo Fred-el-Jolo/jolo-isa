@@ -1,9 +1,13 @@
 """Is a tool call a read or a mutation? Harness-neutral, standard library only.
 
-Three answers:
-    "read"     never gated (reading, searching, asking, planning)
-    "write"    a known mutation — gated, and counts toward "ISA is stale"
-    "unknown"  can't tell — gated before an ISA exists (fail closed), not counted as stale
+Five answers:
+    "read"            never gated (reading, searching, asking, planning)
+    "isa-cmd"         `isa new|lint|verify|close`: the commands that write an ISA's engine-owned state —
+                      always allowed, never a project change (they are how the model gets out of a refusal)
+    "unknown"         can't tell — gated before an ISA exists (fail closed), not counted as stale
+    "write"           a known mutation — gated, and counts toward "ISA is stale"
+    "isa-shell-edit"  a shell command writing onto an ISA.md (`sed -i`, `tee`, `>`, `cp`/`mv` onto it) —
+                      refused: an ISA is edited with Write/Edit, so its engine-owned fields can be checked
 
 Paths decide first: anything inside an ISA folder is "isa" (always allowed, and an
 edit of an ISA.md binds it); anything under a temp dir is "temp" (allowed, not counted).
@@ -210,9 +214,19 @@ def _drop_heredoc_bodies(cmd):
     return "\n".join(out)
 
 
+ORDER = {"read": 0, "isa-cmd": 1, "unknown": 2, "write": 3, "isa-shell-edit": 4}
+ISA_CMDS = {"new", "lint", "verify", "close"}
+
+
 def _worse(a, b):
-    order = {"read": 0, "unknown": 1, "write": 2}
-    return a if order[a] >= order[b] else b
+    return a if ORDER[a] >= ORDER[b] else b
+
+
+def _master_isa(path, cwd):
+    p = os.path.expanduser(path)
+    if not os.path.isabs(p):
+        p = os.path.join(cwd or os.getcwd(), p)
+    return state.is_master_isa(p)
 
 
 def _segment(words, cwd, temp_dirs):
@@ -227,10 +241,12 @@ def _segment(words, cwd, temp_dirs):
                 pass
             else:
                 pk = path_kind(target, cwd, temp_dirs)
-                if pk == "isa":
+                if pk == "isa" and _master_isa(target, cwd):
+                    kind = "isa-shell-edit"
+                elif pk == "isa":
                     isa.append(target)
                 elif pk == "project":
-                    kind = "write"
+                    kind = _worse(kind, "write")
             i += 2
             continue
         if re.match(r"^\d$", w) and i + 1 < len(words) and words[i + 1] in REDIRECTS | {">", ">>"}:
@@ -257,6 +273,9 @@ def _command(words, cwd=None, temp_dirs=(), isa=None):
         paths = [a for a in args if not a.startswith("-")]
         if cmd in ("chmod", "chown", "chgrp") and paths:
             paths = paths[1:]  # mode / owner
+        onto = paths[-1:] if cmd in ("cp", "mv", "install", "rsync", "ln") else paths if cmd in ("tee", "truncate") else []
+        if any(_master_isa(p, cwd) for p in onto):
+            return "isa-shell-edit"
         kinds = [path_kind(p, cwd, temp_dirs) for p in paths]
         if paths and all(k in ("temp", "isa") for k in kinds):
             if isa is not None:
@@ -266,7 +285,9 @@ def _command(words, cwd=None, temp_dirs=(), isa=None):
     if cmd in WRITE_CMDS:
         return "write"
     if cmd == "sed":
-        return "write" if any(a == "-i" or a.startswith("-i") or a.startswith("--in-place") for a in args) else "read"
+        if not any(a == "-i" or a.startswith("-i") or a.startswith("--in-place") for a in args):
+            return "read"
+        return "isa-shell-edit" if any(_master_isa(a, cwd) for a in args if not a.startswith("-")) else "write"
     if cmd == "find":
         return "write" if any(a in ("-delete", "-exec", "-execdir", "-ok", "-okdir") or a.startswith("-fprint")
                               or a == "-fls" for a in args) else "read"
@@ -277,7 +298,7 @@ def _command(words, cwd=None, temp_dirs=(), isa=None):
     if cmd == "gh":
         return _gh(args)
     if cmd == "isa":
-        return "read"
+        return "isa-cmd" if args and args[0] in ISA_CMDS else "read"
     if cmd in READ_CMDS:
         return "read"
     if cmd in ("curl", "http", "https"):
