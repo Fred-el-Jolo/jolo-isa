@@ -1,9 +1,13 @@
 """Is a tool call a read or a mutation? Harness-neutral, standard library only.
 
-Three answers:
-    "read"     never gated (reading, searching, asking, planning)
-    "write"    a known mutation — gated, and counts toward "ISA is stale"
-    "unknown"  can't tell — gated before an ISA exists (fail closed), not counted as stale
+Five answers:
+    "read"            never gated (reading, searching, asking, planning)
+    "isa-cmd"         `isa new|lint|verify|close`: the commands that write an ISA's engine-owned state —
+                      always allowed, never a project change (they are how the model gets out of a refusal)
+    "unknown"         can't tell — gated before an ISA exists (fail closed), not counted as stale
+    "write"           a known mutation — gated, and counts toward "ISA is stale"
+    "isa-shell-edit"  a shell command writing onto an ISA.md (`sed -i`, `tee`, `>`, `cp`/`mv` onto it) —
+                      refused: an ISA is edited with Write/Edit, so its engine-owned fields can be checked
 
 Paths decide first: anything inside an ISA folder is "isa" (always allowed, and an
 edit of an ISA.md binds it); anything under a temp dir is "temp" (allowed, not counted).
@@ -147,7 +151,8 @@ def bash(cmd, cwd, temp_dirs=()):
     if ">(" in cmd:
         return "unknown", []
     cmd = cmd.replace("<(", " ; ")  # process substitution: judge the inner command on its own
-    if "$(" in cmd or "`" in cmd:
+    outside = _without_single_quoted(cmd)  # inside '…' a backtick or $( is plain text
+    if "$(" in outside or "`" in outside:
         # command substitution can hide anything; judge the visible parts, never better than unknown
         visible = re.sub(r"\$\([^)]*\)|`[^`]*`", "X", cmd)
         k, isa = bash(visible, cwd, temp_dirs) if visible != cmd else ("unknown", [])
@@ -170,6 +175,29 @@ def bash(cmd, cwd, temp_dirs=()):
     return worst, isa
 
 
+def _without_single_quoted(cmd):
+    """`cmd` with the contents of single-quoted spans removed. Double quotes are kept: the shell
+    still expands `…` and $( inside them. A backslash outside quotes escapes the next character."""
+    out, i, n, dq = [], 0, len(cmd), False
+    while i < n:
+        c = cmd[i]
+        if c == "\\" and i + 1 < n:
+            out.append(cmd[i:i + 2])
+            i += 2
+            continue
+        if c == '"':
+            dq = not dq
+        elif c == "'" and not dq:
+            j = cmd.find("'", i + 1)
+            if j < 0:
+                return cmd  # unbalanced: leave it to the tokenizer, which reports it
+            i = j + 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
 
@@ -186,9 +214,19 @@ def _drop_heredoc_bodies(cmd):
     return "\n".join(out)
 
 
+ORDER = {"read": 0, "isa-cmd": 1, "unknown": 2, "write": 3, "isa-shell-edit": 4}
+ISA_CMDS = {"new", "lint", "verify", "close"}
+
+
 def _worse(a, b):
-    order = {"read": 0, "unknown": 1, "write": 2}
-    return a if order[a] >= order[b] else b
+    return a if ORDER[a] >= ORDER[b] else b
+
+
+def _master_isa(path, cwd):
+    p = os.path.expanduser(path)
+    if not os.path.isabs(p):
+        p = os.path.join(cwd or os.getcwd(), p)
+    return state.is_master_isa(p)
 
 
 def _segment(words, cwd, temp_dirs):
@@ -203,10 +241,12 @@ def _segment(words, cwd, temp_dirs):
                 pass
             else:
                 pk = path_kind(target, cwd, temp_dirs)
-                if pk == "isa":
+                if pk == "isa" and _master_isa(target, cwd):
+                    kind = "isa-shell-edit"
+                elif pk == "isa":
                     isa.append(target)
                 elif pk == "project":
-                    kind = "write"
+                    kind = _worse(kind, "write")
             i += 2
             continue
         if re.match(r"^\d$", w) and i + 1 < len(words) and words[i + 1] in REDIRECTS | {">", ">>"}:
@@ -233,6 +273,9 @@ def _command(words, cwd=None, temp_dirs=(), isa=None):
         paths = [a for a in args if not a.startswith("-")]
         if cmd in ("chmod", "chown", "chgrp") and paths:
             paths = paths[1:]  # mode / owner
+        onto = paths[-1:] if cmd in ("cp", "mv", "install", "rsync", "ln") else paths if cmd in ("tee", "truncate") else []
+        if any(_master_isa(p, cwd) for p in onto):
+            return "isa-shell-edit"
         kinds = [path_kind(p, cwd, temp_dirs) for p in paths]
         if paths and all(k in ("temp", "isa") for k in kinds):
             if isa is not None:
@@ -242,7 +285,9 @@ def _command(words, cwd=None, temp_dirs=(), isa=None):
     if cmd in WRITE_CMDS:
         return "write"
     if cmd == "sed":
-        return "write" if any(a == "-i" or a.startswith("-i") or a.startswith("--in-place") for a in args) else "read"
+        if not any(a == "-i" or a.startswith("-i") or a.startswith("--in-place") for a in args):
+            return "read"
+        return "isa-shell-edit" if any(_master_isa(a, cwd) for a in args if not a.startswith("-")) else "write"
     if cmd == "find":
         return "write" if any(a in ("-delete", "-exec", "-execdir", "-ok", "-okdir") or a.startswith("-fprint")
                               or a == "-fls" for a in args) else "read"
@@ -253,7 +298,7 @@ def _command(words, cwd=None, temp_dirs=(), isa=None):
     if cmd == "gh":
         return _gh(args)
     if cmd == "isa":
-        return "read"
+        return "isa-cmd" if args and args[0] in ISA_CMDS else "read"
     if cmd in READ_CMDS:
         return "read"
     if cmd in ("curl", "http", "https"):
@@ -307,3 +352,49 @@ def _gh(args):
     if words[:1] in (["auth"], ["status"], ["search"], ["browse"]):
         return "read"
     return "unknown"
+
+
+# ------------------------------------------------------------------ write targets (the ledger guard)
+
+ONTO_LAST = {"cp", "install", "rsync", "ln"}  # only the destination is written; `mv` also removes its sources
+
+
+def write_targets(cmd, cwd):
+    """Absolute paths a shell command visibly writes or removes: redirect targets, and the path arguments
+    of file commands (`rm`, `mv`, `tee`, the destination of `cp` …). What a script writes is not visible
+    here; engine.py compares the ledger before and after such a command instead (SPEC-v2 § 12.9)."""
+    try:
+        toks = _tokens(_drop_heredoc_bodies(cmd or "").replace("\\\n", " ").replace("\n", " ; "))
+    except ValueError:
+        return []
+    out, seg = [], []
+    for t in toks + [";"]:
+        if t in SEPARATORS or all(c in ";&|()" for c in t):
+            out += _segment_targets(seg)
+            seg = []
+        else:
+            seg.append(t)
+    base = cwd or os.getcwd()
+    return [os.path.join(base, os.path.expanduser(p)) if not os.path.isabs(os.path.expanduser(p))
+            else os.path.expanduser(p) for p in out]
+
+
+def _segment_targets(words):
+    targets, clean, i = [], [], 0
+    while i < len(words):
+        w = words[i]
+        if (w in REDIRECTS or re.match(r"^\d*(>>?|>\|)$", w)) and i + 1 < len(words):
+            if not re.match(r"^&?\d+$", words[i + 1]):
+                targets.append(words[i + 1])
+            i += 2
+            continue
+        clean.append(w)
+        i += 1
+    while clean and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", clean[0]):
+        clean = clean[1:]
+    while clean and os.path.basename(clean[0]) in WRAPPERS:
+        clean = [a for a in clean[1:] if not a.startswith("-")]
+    if clean and os.path.basename(clean[0]) in PATH_CMDS:
+        paths = [a for a in clean[1:] if not a.startswith("-")]
+        targets += paths[-1:] if os.path.basename(clean[0]) in ONTO_LAST else paths
+    return targets

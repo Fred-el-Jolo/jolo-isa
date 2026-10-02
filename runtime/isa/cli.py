@@ -1,22 +1,35 @@
 """`isa` command line. Standard library only.
 
     isa ls [--all]               ISAs of the current project (or every project)
-    isa new <slug>               create a fresh ISA folder for this project, print the ISA.md path
+    isa new <slug> [--tier E3] [--goal "<verbatim span>"] [--path-only]
+                                 create the task ISA (frontmatter: root, stated_goal, asks) and print
+                                 its path — the hooks bind it to the session
     isa where                    project key and ISA folder for the current directory
-    isa lint [--moment M] FILE…  mechanical gate check (same engine the hooks use)
-    isa fit "<prompt>"           would an ISA structure this work? (strong | maybe | none + reasons)
-    isa verify ISA [ISC-N…]      run the ISCs' Test Strategy probes (default: all mechanical ones) and
-                                 record the results — the only evidence a tick can rest on
+    isa lint [--close] FILE…     recompute progress / nested parents / orphaned generated lines, then
+                                 the mechanical gate check (same engine the hooks use)
+    isa verify [--red] ISA [ISC-N…] [--attest "<evidence>"]
+                                 run the probes (cwd = the ISA's root), record them, tick what passed and
+                                 untick what regressed; --attest ticks a self-attested ISC; --red records
+                                 the failing baseline before the change and ticks nothing
+    isa close ISA                re-run every probe; close the ISA only when all pass and lint --close is clean
     isa status --session ID [--harness H] [--json]
                                  the session's bound ISA: tier, phase, progress, open ISCs (read-only)
+    isa current [--session ID] [--harness H] [--json]
+                                 the session's bound ISA for a skill: path, task, tier, phase, progress,
+                                 open criteria. The session defaults to $CLAUDE_CODE_SESSION_ID (Claude
+                                 Code) or $PI_SESSION_ID (pi); exit 1 when no ISA is bound
+    isa purge-logs [--days N] [--dry-run]
+                                 delete debug log day files (~/.isa/_state/logs) older than N days (7);
+                                 never touches the evidence ledger, sessions, prompts or ISAs
     isa hook <harness>           hook entry point: event JSON on stdin, harness JSON on stdout
 """
 import json
 import os
 import sys
+import time
 import traceback
 
-from . import engine, evidence, fit, lint, state, status
+from . import commands, engine, evidence, logs, state, status
 
 
 def main(argv=None):
@@ -25,26 +38,49 @@ def main(argv=None):
         print(__doc__.strip())
         return 0
     cmd, args = argv[0], argv[1:]
+    if cmd in LOGGED:
+        t0 = time.time()
+        logs.take_note()
+        rc = 2
+        try:
+            rc = _dispatch(cmd, args)
+            return rc
+        finally:
+            row = {"step": "cmd", "cmd": cmd, "exit": rc, "ms": int((time.time() - t0) * 1000), "cwd": os.getcwd()}
+            isa = next((os.path.expanduser(a) for a in args if a.endswith("ISA.md")), None)
+            if isa:
+                row["isa"] = isa
+            row.update(logs.take_note())
+            if cmd != "purge-logs" or os.path.isdir(logs.log_dir()):  # a purge never creates the folder
+                logs.write(row)
+    return _dispatch(cmd, args)
+
+
+LOGGED = {"new", "lint", "verify", "close", "purge-logs"}
+
+
+def _dispatch(cmd, args):
     if cmd == "hook":
         return hook(args[0] if args else "claude")
     if cmd == "lint":
-        return lint.main(args)
+        return commands.lint_cmd(args)
     if cmd == "ls":
         return _ls(args)
     if cmd == "new":
-        p = state.new_isa_path(os.getcwd(), " ".join(args) or "task")
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        print(p)
-        return 0
-    if cmd == "fit":
-        text = " ".join(args) if args else sys.stdin.read()
-        level, reasons = fit.score(text)
-        print(level + ("".join(f"\n  - {r}" for r in reasons)))
-        return 0
+        return commands.new(args)
+    if cmd == "close":
+        if len(args) != 1:
+            print("usage: isa close ISA.md", file=sys.stderr)
+            return 2
+        return commands.close(os.path.expanduser(args[0]))
     if cmd == "verify":
         return _verify(args)
     if cmd == "status":
         return _status(args)
+    if cmd == "current":
+        return _current(args)
+    if cmd == "purge-logs":
+        return logs.purge_cmd(args)
     if cmd == "where":
         print(f"project key: {state.project_key(os.getcwd())}\nISA folder:  {state.project_dir(os.getcwd())}")
         return 0
@@ -64,8 +100,9 @@ def _ls(args):
         for p, fm in rows:
             n += 1
             linked = os.path.islink(os.path.dirname(p))
+            label = evidence.pause_label(p) if fm.get("phase") != "complete" else None
             print(f"  {os.path.basename(os.path.dirname(p)):<52} {str(fm.get('effort', '?')):<3} "
-                  f"{str(fm.get('phase', '?')):<9} {str(fm.get('progress', '?')):<7} {fm.get('task', '')}"
+                  f"{str(label or fm.get('phase', '?')):<10} {str(fm.get('progress', '?')):<7} {fm.get('task', '')}"
                   + (f"  (filed in {state.isa_home_key(p)})" if linked else ""))
     if not n:
         print(f"no ISAs under {state.project_dir(os.getcwd())}")
@@ -73,14 +110,26 @@ def _ls(args):
 
 
 def _verify(args):
-    timeout = 600
-    if "--timeout" in args:
-        i = args.index("--timeout")
-        timeout, args = int(args[i + 1]), args[:i] + args[i + 2:]
+    timeout, attest, red = 600, None, False
+    args = list(args)
+    for flag in ("--timeout", "--attest"):
+        if flag in args:
+            i = args.index(flag)
+            if i + 1 >= len(args):
+                print(f"isa verify: {flag} needs a value", file=sys.stderr)
+                return 2
+            val, args = args[i + 1], args[:i] + args[i + 2:]
+            if flag == "--timeout":
+                timeout = int(val)
+            else:
+                attest = val
+    if "--red" in args:
+        red, args = True, [a for a in args if a != "--red"]
     if not args:
-        print("usage: isa verify ISA.md [ISC-N…] [--timeout SECONDS]", file=sys.stderr)
+        print('usage: isa verify [--red] ISA.md [ISC-N…] [--attest "<evidence>"] [--timeout SECONDS]',
+              file=sys.stderr)
         return 2
-    return evidence.run(os.path.expanduser(args[0]), args[1:], timeout=timeout)
+    return commands.verify(os.path.expanduser(args[0]), args[1:], red=red, attest=attest, timeout=timeout)
 
 
 def _status(args):
@@ -97,6 +146,35 @@ def _status(args):
     v = status.view(opts["--harness"], opts["--session"])
     print(json.dumps(v) if "--json" in args else status.line(v))
     return 0
+
+
+def _current(args):
+    opts, i = {"--harness": None, "--session": None}, 0
+    while i < len(args):
+        if args[i] in opts and i + 1 < len(args):
+            opts[args[i]] = args[i + 1]
+            i += 2
+        else:
+            i += 1
+    sid, harness = opts["--session"], opts["--harness"]
+    if not sid:
+        for var, h in (("CLAUDE_CODE_SESSION_ID", "claude"), ("PI_SESSION_ID", "pi")):
+            if os.environ.get(var):
+                sid, harness = os.environ[var], harness or h
+                break
+    if not sid:
+        print("isa current: no session — pass --session ID, or run it from a Claude Code or pi shell "
+              "($CLAUDE_CODE_SESSION_ID / $PI_SESSION_ID)", file=sys.stderr)
+        return 2
+    v = status.current(harness or "claude", sid)
+    if "--json" in args:
+        print(json.dumps(v))
+    elif v["path"]:
+        print(f"{v['path']}\n{v['tier']} {v['phase']} {v['progress']}" + (f" ({v['label']})" if v["label"] else "")
+              + f" — {v['task']}" + "".join(f"\n  open {o['id']}: {o['text']}" for o in v["open"]))
+    else:
+        print(f"no ISA bound to session {sid}")
+    return 0 if v["path"] else 1
 
 
 # ------------------------------------------------------------------ hook adapters
@@ -142,8 +220,18 @@ def _claude_in(d):
         "prompt_id": d.get("prompt_id"), "source": d.get("source"), "prompt": d.get("prompt"),
         "tool": d.get("tool_name"), "tool_input": d.get("tool_input"), "tool_use_id": d.get("tool_use_id"),
         "temp_dirs": [d["scratchpad_dir"]] if d.get("scratchpad_dir") else [],
-        "retried": bool(d.get("stop_hook_active")), "_name": name,
+        "retried": bool(d.get("stop_hook_active")), "transcript_path": d.get("transcript_path"),
+        "tool_output": _tool_output(d.get("tool_response")), "tool_response": d.get("tool_response"), "_name": name,
+        # Stop: the final answer, when the harness passes it (the transcript is read otherwise)
+        "context": d.get("last_assistant_message") if name == "Stop" else None,
     }
+
+
+def _tool_output(resp):
+    """The text a tool printed (Bash: stdout), as far as the hook input carries it."""
+    if isinstance(resp, dict):
+        return str(resp.get("stdout") or resp.get("output") or resp.get("content") or "")
+    return "" if resp is None else str(resp)
 
 
 def _claude_out(ev, res):

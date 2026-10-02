@@ -1,12 +1,15 @@
 # Append Workflow
 
-Canonical writer for the three append-only sections of an ISA: `## Decisions`, `## Changelog`, `## Verification`. The Deutsch conjecture/refutation/learning Changelog format is novel and easy to mangle with free-form editing — this workflow owns the canonical entry shape so it doesn't degrade across projects.
+Canonical writer for the model-owned entries of the three record sections of an ISA: `## Decisions`, `## Changelog`, and the `- Goal:`, `- Ask N:` and `[DEFERRED-VERIFY]` lines of `## Verification`. The Deutsch conjecture/refutation/learning Changelog format is novel and easy to mangle with free-form editing — this workflow owns the canonical entry shape so it doesn't degrade across projects.
+
+**Not Append's job: ISC evidence.** The `- ISC-N:` lines that prove a criterion (`verified` / `attested` / `regressed`) are written by `isa verify` from its ledger, together with the tick and `progress` — never by hand (the hooks refuse it). When an ISC can pass, run `isa verify <ISA> ISC-N` (or `isa verify <ISA> ISC-N --attest "<evidence>"` for a manual / screenshot / eval criterion).
 
 ## When to invoke
 
 - The work loop at any phase when a non-obvious decision is made: `Skill("ISA", "append decision to <isa-path>: <text>")`
 - The work loop at LEARN when understanding evolved: `Skill("ISA", "append changelog to <isa-path>: <conjecture> / <refutation> / <learning>")`
-- The work loop at EXECUTE/VERIFY when an ISC passes: `Skill("ISA", "append verification to <isa-path>: <ISC-N> <evidence>")`
+- Before `isa close`: `Skill("ISA", "append goal line to <isa-path>: yes|no — <evidence>")` and one Ask line per entry of `asks`
+- When a probe genuinely can't run yet: `Skill("ISA", "append deferred to <isa-path>: ISC-N — <why> — <follow-up>")`
 - User directly when adding an entry by hand.
 
 ## Entry types
@@ -21,13 +24,20 @@ Timestamped log line. Use the `refined:` prefix when the decision changes the Go
 - YYYY-MM-DD HH:MM: <decision text>
 - YYYY-MM-DD HH:MM: refined: <what was refined and why>
 - YYYY-MM-DD HH:MM: ❌ DEAD END: Tried <X> — failed because <Y> (don't retry)
-- YYYY-MM-DD HH:MM: waived: ISC-N — <the user's reason>
+- YYYY-MM-DD HH:MM: waived: ISC-N — "<the user's words, verbatim>"
+- YYYY-MM-DD HH:MM: refined: ISC-N probe downgraded — <why>
+- YYYY-MM-DD HH:MM: second-look: <who/what reviewed, where its findings are> | skipped — <why>
+- YYYY-MM-DD HH:MM: finding: <text> — adopted (<diff/ISC>) | rebutted (<reason>) | deferred (<task>)
+- YYYY-MM-DD HH:MM: class-sweep: <class> — N siblings via <probe>; M fixed, K tombstoned
+- YYYY-MM-DD HH:MM: repro-bypass: pure-additive | non-isolable | repro would cause damage — <why>
 - YYYY-MM-DD HH:MM: no belief refuted this run
 ```
 
-**Inputs:** `text` (required), `kind` (optional: `decision` | `refined` | `dead-end` | `waived` | `no-refutation`)
+**Inputs:** `text` (required), `kind` (optional: `decision` | `refined` | `dead-end` | `waived` | `downgrade` | `second-look` | `finding` | `class-sweep` | `repro-bypass` | `no-refutation`)
 
-- `waived` — only on the user's explicit say-so; the model never waives its own criteria. A waived ISC stays `[ ]` and no longer blocks close.
+- `waived` — only on the user's explicit say-so; the model never waives its own criteria. The row quotes the user byte-for-byte (lint checks the quote against the prompts of the ISA's sessions). A waived ISC stays `[ ]`, leaves the `progress` denominator, and no longer blocks close.
+- `downgrade` — required when a probe is weakened after the first `isa verify` (runnable → self-attested, a weaker `kind:`, a `tool:` removed, or self-attesting an ISC whose probe failed).
+- `second-look` / `class-sweep` — `isa close` requires them when a `risk: high` ISC or E4+ (second-look) or a Test Strategy `class:` (class-sweep) calls for them. The command checks the shape, not the truth: write what actually happened.
 - `no-refutation` — written at close when understanding never changed, so an E4+ ISA can close without inventing a Changelog entry.
 
 ### Type 2 — Changelog (the Deutsch C/R/L entry)
@@ -47,21 +57,13 @@ Structured entry capturing how thinking evolved.
 
 **Format invariant:** The four-line shape is non-negotiable. If any of the four pieces is missing, this is a Decision entry, not a Changelog entry. Refuse to write a partial C/R/L; surface the missing piece and ask.
 
-### Type 3 — Verification
+### Type 3 — Verification lines the model writes
 
-ISC-keyed evidence line. Used at VERIFY phase to record how each ISC was probed.
+**Goal line (once per iteration, at close):** `- Goal: yes|no — <evidence the finished result delivers the intent of the verbatim goal>`. Takes `verdict` (`yes`/`no`) + `evidence`; refuse if evidence is empty. Written after the last ISC passes. See `References/IsaFormat.md` § Verification.
 
-**Schema:**
+**Ask lines (at close, one per entry of the frontmatter `asks`, in order):** `- Ask N: met — <evidence>`, `- Ask N: skipped — <why>`, or `- Ask N: surfaced — <what was raised with the user>`. A missing line counts as unmet and `isa close` refuses.
 
-```
-- ISC-N: <probe type> — <one-line evidence, quoted command output or file content>
-```
-
-**Inputs:** `isc_id` (required, must exist in master), `probe_type` (required), `evidence` (required, quoted verbatim from tool output).
-
-**Goal line (once per iteration, at close):** `- Goal: yes|no — <evidence the finished result delivers the intent of the verbatim goal>`. Takes `verdict` (`yes`/`no`) + `evidence` instead of `isc_id`/`probe_type`; refuse if evidence is empty. Written after the last ISC closes; it does not flip any checkbox. See `References/IsaFormat.md` § Verification.
-
-**Deferred line:** `- ISC-N: [DEFERRED-VERIFY] — <why it can't be probed now> — follow-up: <what, when>`. Used when the probe genuinely can't run yet (e.g., needs a production deploy that hasn't happened). It does **not** flip the checkbox; the ISC blocks close until it is probed or the user waives it.
+**Deferred line:** `- ISC-N: [DEFERRED-VERIFY] — <why it can't be probed now> — follow-up: <what, when>`. Used when the probe genuinely can't run yet (e.g., needs a production deploy that hasn't happened). The ISC stays `[ ]` and blocks close until `isa verify` proves it or the user waives it.
 
 ## Procedure
 
@@ -74,11 +76,13 @@ Read the ISA at `isa_path`. Find the target section (`## Decisions` | `## Change
 | Type | Required pieces | Refuse if... |
 |------|-----------------|--------------|
 | Decision | text + timestamp | text is empty |
+| Decision — `waived` | isc_id + the user's verbatim words | the user didn't explicitly ask for the waiver |
+| Decision — shape rows | the schema above | the row doesn't match its schema |
 | Changelog | conjectured + refuted_by + learned + criterion_now + date | any of the four C/R/L pieces is missing |
-| Verification | isc_id + probe_type + evidence | isc_id doesn't exist in `## Criteria` or `## Bridge Criteria`, or evidence is empty |
 | Verification — Goal line | verdict (`yes`/`no`) + evidence | evidence is empty, or a non-dropped, non-waived ISC is still `[ ]` |
+| Verification — Ask line | N + status (+ reason for `skipped`) | N is not an entry of `asks` |
 | Verification — Deferred line | isc_id + reason + follow-up | isc_id doesn't exist, or reason/follow-up is empty |
-| Decision — `waived` | isc_id + the user's reason | the user didn't explicitly ask for the waiver |
+| Verification — an `- ISC-N:` evidence line | — | always: run `isa verify` instead |
 
 **Refuse mode:** If validation fails, do not write. Surface the missing piece. The whole point of Append is to keep these sections clean — silently writing partial entries defeats it.
 
@@ -88,13 +92,9 @@ Use the schemas above verbatim. Prefer single-line entries over multi-line where
 
 ### Step 5 — Append to the section
 
-Edit the ISA: append the entry to the end of the target section, preserving prior entries. Update frontmatter `updated: <ISO-8601>`.
+Edit the ISA with Edit/Write (never a shell command): append the entry to the end of the target section, preserving prior entries. You may set `updated: <ISO-8601>`; leave `progress` to the engine (`isa lint` recomputes it, e.g. after a waiver).
 
-**On an ephemeral slice** (file carries the `<!-- EPHEMERAL FEATURE FILE … -->` header and no frontmatter): skip every frontmatter update here and in Step 6 — flip checkboxes only. Reconcile recomputes the master's `progress`, `updated`, and `phase` at merge time.
-
-### Step 6 — Update progress
-
-When appending an ISC Verification entry (not a Goal or Deferred line) that corresponds to a previously-`[ ]` ISC, also flip that ISC to `[x]` where it lives (`## Criteria` or `## Bridge Criteria`) and recompute `progress: M/N` in frontmatter. If that was the last open leaf under a nested parent, tick the parent too. When appending a `waived` Decision, recompute `progress` too (waived ISCs leave the denominator — see `References/IsaFormat.md` § Field Rules).
+**On an ephemeral slice** (file carries the `<!-- EPHEMERAL FEATURE FILE … -->` header and no frontmatter): skip every frontmatter update. Reconcile merges the slice's Decisions, Changelog and Deferred lines into master.
 
 ### Step 7 — Return the appended block
 
@@ -108,14 +108,14 @@ The Deutsch C/R/L Changelog format is the most opinionated piece of the ISA doct
 2. **Half-entries:** `conjectured` + `criterion now` without the refutation evidence in between.
 3. **Format drift:** different projects evolve different conventions, breaking cross-project search and tooling.
 
-Append is the gate. Every C/R/L entry passes through here. Every Verification entry passes through here. Every Decisions entry passes through here. The skill that owns the artifact owns the canonical way to extend it.
+Append is the gate for every model-written record entry. The evidence for each criterion has a stricter gate still: only `isa verify` writes it, from a probe it ran.
 
 ## Interaction with Reconcile
 
-The Reconcile workflow (merging an ephemeral feature file back to master) calls Append internally for each Decisions, Changelog, and Verification entry it stages. This means Reconcile's output passes the same shape validation as direct Append calls — the merge cannot smuggle in malformed entries.
+The Reconcile workflow (merging an ephemeral feature file back to master) calls Append internally for each Decisions, Changelog, and Deferred entry it stages. This means Reconcile's output passes the same shape validation as direct Append calls — the merge cannot smuggle in malformed entries.
 
 ## Failure modes
 
-- **Concurrent edits:** Append reads the ISA, decides where to insert, then writes. If the file is edited mid-flight, the second write may insert at a stale offset. Treat Append as best-effort under contention; structural edits to ISAs should be serialized.
+- **Concurrent edits:** Append reads the ISA, decides where to insert, then writes. If the file is edited mid-flight (an `isa verify` run rewrites it too), the second write may meet stale text — re-read the ISA and retry.
 - **Section header missing:** Append creates the section if absent, in canonical position. If the canonical position is ambiguous (file is malformed), abort and surface the structural problem.
-- **ISC ID mismatch on Verification:** the ISC must exist. Refuse to write Verification for an ID that isn't in `## Criteria` or `## Bridge Criteria` — this is the same ID-stability contract Reconcile relies on.
+- **ISC ID mismatch on a Deferred line:** the ISC must exist. Refuse to write a line for an ID that isn't in `## Criteria` or `## Bridge Criteria` — this is the same ID-stability contract Reconcile relies on.

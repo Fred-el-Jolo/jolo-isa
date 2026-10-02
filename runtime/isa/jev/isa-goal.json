@@ -1,0 +1,15 @@
+{
+  "name": "isa-goal",
+  "version": 1,
+  "description": "ISA close: does the evidence show the result delivers the stated goal?",
+  "model": "jev-1.13.0",
+  "state": {
+    "template": "The user's words (verbatim, may be empty):\n{{stated_goal}}\n\nThe goal as the ISA states it:\n{{goal}}\n\nThe criteria and their evidence at close:\n{{evidence}}"
+  },
+  "questions": {
+    "delivered": {
+      "type": "noul",
+      "instructions": "Does the evidence show that the finished result delivers what the user asked for (the user's words, or the stated goal when they are empty), and not an easier neighbour of it? Answer low when a part of the request has no criterion or no evidence, or when the evidence only shows that something exists rather than that it works."
+    }
+  }
+}

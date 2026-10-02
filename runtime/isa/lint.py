@@ -33,12 +33,40 @@ TIER_ARTICULATION = {
 CORE = ["task", "slug", "effort", "phase", "progress", "started", "updated"]
 PHASES = {"observe", "think", "plan", "build", "execute", "verify", "learn", "complete"}
 TS_KEYS = {"isc", "anchors_to", "type", "check", "threshold", "tool",
-           "property", "generator", "runs"}
+           "property", "generator", "runs", "cwd", "risk", "root", "kind", "red", "class", "fails-when"}
 FEATURE_KEYS = {"name", "description", "satisfies", "depends_on", "parallelizable"}
 # Test Strategy types a machine can't run: their ticks are self-attested (evidence.py)
 SELF_ATTESTED = {"manual", "screenshot", "eval"}
-# a probe that still holds a placeholder can't be run as written: `<session-id>`, `…`
+# a probe that still holds a placeholder can't be run as written: `<session-id>`, `…` — outside quoted
+# strings only: a literal `…` inside an expected string is text (SPEC-v2 § 12.9)
 PLACEHOLDER = re.compile(r"<[A-Za-z_][\w -]*>|…")
+QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
+
+
+def placeholder(tool):
+    """The first placeholder in a probe outside its quoted strings, or None."""
+    m = PLACEHOLDER.search(QUOTED.sub("''", tool))
+    return m.group(0) if m else None
+
+# ISAs started before this date follow the v1 rules where SPEC-v2 § 8 softens a new rule for them
+V2_SINCE = "2026-10-02"
+
+# SPEC-v2 § 6.1: an entry's `kind:` sets the minimum probe type
+KINDS = {"behaviour", "behavior", "http", "visual", "file", "config", "schema", "doc", "decision", "regression"}
+KIND_REFUSES = {  # kind → (refused types, grep-only refused)
+    "behaviour": ({"manual", "screenshot", "eval"}, True), "behavior": ({"manual", "screenshot", "eval"}, True),
+    "http": ({"manual", "screenshot", "eval"}, True), "visual": (set(), True), "file": (set(), False),
+    "config": ({"manual"}, False), "schema": ({"manual"}, True), "doc": (set(), False),
+    "decision": (set(), False), "regression": ({"manual", "screenshot", "eval"}, False),
+}
+GREP_ONLY = {"grep", "egrep", "fgrep", "rg", "test", "[", "cat", "head", "tail", "wc"}
+# SPEC-v2 § 6.2: these words in an ISC or its probe force a `risk:` declaration (they also match ordinary code)
+RISK_WORDS = re.compile(r"\b(secret|token|credential|password|auth|login|permission|payment|billing|money|invoice|"
+                        r"deploy|prod|production|publish|release|push)\b", re.I)
+SHAPE_ROWS = {
+    "finding": re.compile(r"finding: .+ — (adopted|rebutted|deferred) \(.+\)"),
+    "repro-bypass": re.compile(r"repro-bypass: (pure-additive|non-isolable|repro would cause damage) — \S"),
+}
 
 ISC_RE = re.compile(r"^\s*- \[( |x|X)\] (ISC-\d+(?:\.\d+)*): ?(.*)$")
 SLUG_RE = re.compile(r"^\d{8}-\d{6}_[a-z0-9-]+$")
@@ -136,6 +164,40 @@ def parse(text, path="<text>"):
             "features": [f for f in feats if isinstance(f, dict)]}
 
 
+def grep_only(tool):
+    """Every command of the probe only reads text (grep, test -f, cat …): it can't run the code it claims
+    about. A pipeline or `&&` chain counts only when all of its commands are such readers."""
+    tool = str(tool or "")
+    # a command substitution runs its own commands: `test "$(./app --help | wc -l)" -le 12` runs the app;
+    # unwrap them innermost first, so a nested `$(… $(cat ids) …)` is judged level by level
+    while True:
+        subs = re.findall(r"\$\(([^()]*)\)|`([^`]*)`", tool)
+        if not subs:
+            break
+        if any(not grep_only(a or b) for a, b in subs):
+            return False
+        tool = re.sub(r"\$\([^()]*\)|`[^`]*`", "X", tool)
+    segs = [s.strip() for s in re.split(r"\|\||&&|\||;", tool) if s.strip()]
+    if not segs:
+        return False
+    for seg in segs:
+        words = seg.split()
+        while words and re.match(r"^[A-Za-z_]\w*=", words[0]):
+            words = words[1:]
+        if words and words[0] in ("!", "cd"):
+            if words[0] == "cd":
+                continue
+            words = words[1:]
+        if not words or words[0].split("/")[-1] not in GREP_ONLY:
+            return False
+    return True
+
+
+def is_v2(fm):
+    """Started on or after V2_SINCE (SPEC-v2 § 8: older open ISAs get warnings, not errors, for new rules)."""
+    return str(fm.get("started") or "")[:10] >= V2_SINCE
+
+
 def dependency_cycle(features):
     """The first `depends_on` cycle among Features, as [A, B, …, A], or None."""
     deps = {f.get("name"): [d for d in f.get("depends_on") or []] for f in features if isinstance(f, dict)}
@@ -206,6 +268,9 @@ def lint(path, moment="auto", text=None, prompts=None):
         if not any(goal in p for p in prompts):
             r.err("frontmatter: stated_goal is not a verbatim substring of any logged user prompt "
                   "— copy it byte-for-byte from the prompt, or set it to null and log the candidate in Decisions")
+    if tier != "E1" and "context_sufficient" not in fm:  # rule 6: the ambiguity check left its outcome
+        _sev(r, fm)("frontmatter: `context_sufficient` not set — record the ambiguity check's outcome (true, or false "
+                    "when a reasoned default was accepted via `proceed`)")
     if moment == "auto":
         moment = "close" if phase == "complete" else "articulation"
     linked = bool(fm.get("parent") or fm.get("children"))
@@ -291,9 +356,13 @@ def lint(path, moment="auto", text=None, prompts=None):
                 if k not in e:
                     r.err(f"Test Strategy: {e['isc']} missing `{k}`")
             tool = e.get("tool")
-            if e.get("type") not in SELF_ATTESTED and isinstance(tool, str) and PLACEHOLDER.search(tool):
+            if e.get("type") not in SELF_ATTESTED and isinstance(tool, str) and placeholder(tool):
                 r.err(f"Test Strategy: {e['isc']} `tool:` holds a placeholder "
-                      f"(`{PLACEHOLDER.search(tool).group(0)}`) — write the exact command `isa verify` will run")
+                      f"(`{placeholder(tool)}`) — write the exact command `isa verify` will run")
+            _v2_entry_rules(r, e, fm, tier, iscs, content)
+            if isinstance(tool, str) and re.match(r"\s*cd\s+/", tool):
+                r.warn(f"Test Strategy: {e['isc']} starts with `cd /…` — probes run from the ISA's `root:`; "
+                       "use `cwd:` (relative to root) or `root:` (another project) instead")
             if fm.get("stated_goal") and "anchors_to" not in e:
                 r.err(f"Test Strategy: {e['isc']} missing `anchors_to` (stated_goal is set)")
             if iscs.get(e["isc"], (None, ""))[1].startswith("Bridge:") and \
@@ -334,6 +403,16 @@ def lint(path, moment="auto", text=None, prompts=None):
                     r.err(f"Changelog: entry missing `{part}`: {entry.splitlines()[0][:60]}")
                     break
 
+    # --- shape rows (any moment): `finding:` and `repro-bypass:` rows must be well formed
+    for line in content.get("Decisions", "").splitlines():
+        for key, pat in SHAPE_ROWS.items():
+            if f"{key}:" in line and not pat.search(line):
+                r.err(f"Decisions: malformed `{key}:` row — expected "
+                      + ("`finding: <text> — adopted (<diff/ISC>) | rebutted (<reason>) | deferred (<task>)`"
+                         if key == "finding" else
+                         "`repro-bypass: pure-additive | non-isolable | repro would cause damage — <why>`")
+                      + f": {line.strip()[:80]}")
+
     # --- ticks vs evidence (any moment, once Verification exists)
     ver = content.get("Verification", "")
     if ver:
@@ -352,6 +431,7 @@ def lint(path, moment="auto", text=None, prompts=None):
                 r.err(f"close: leaf {i} still open and not waived")
             elif not re.search(rf"^- {re.escape(i)}:", ver, re.M):
                 r.err(f"close: {i} has no Verification entry")
+        _close_shape_rules(r, fm, tier, content, ver)
         goal_lines = re.findall(r"^- Goal: (yes|no)\b", ver, re.M)
         if not goal_lines:
             r.err("close: no `- Goal: yes|no — …` line in Verification")
@@ -362,10 +442,98 @@ def lint(path, moment="auto", text=None, prompts=None):
     return r
 
 
+def _sev(r, fm, strict=True):
+    """Error for ISAs started under v2, warning for older ones (SPEC-v2 § 8)."""
+    return r.err if strict and is_v2(fm) else r.warn
+
+
+RED_KINDS = {"behaviour", "behavior", "http", "schema"}
+
+
+def red_exempt_why(isc_text, entry):
+    """Why an ISC can't get a red baseline from its Test Strategy entry alone (None when it can):
+    an Anti ISC, a kind without the red step, or `red: exempt …`. (commands.red_exempt adds E1.)"""
+    entry = entry or {}
+    if str(isc_text).lstrip().startswith("Anti:"):
+        return "Anti"
+    kind = str(entry.get("kind") or "").strip().lower()
+    if kind == "regression":
+        return "regression"
+    if kind and kind not in RED_KINDS:
+        return f"kind {kind}"
+    red = str(entry.get("red") or "").strip()
+    if red.lower().startswith("exempt"):
+        return red
+    return None
+
+
+def _v2_entry_rules(r, e, fm, tier, iscs, content):
+    i = e["isc"]
+    kind = str(e.get("kind") or "").strip().lower()
+    typ = str(e.get("type") or "").strip().lower()
+    say = _sev(r, fm, strict=tier != "E1")
+    if not kind:
+        say(f"Test Strategy: {i} missing `kind:` (one of {', '.join(sorted(KINDS - {'behavior'}))}) — it sets "
+            "which probe types can prove the ISC")
+    elif kind not in KINDS:
+        say(f"Test Strategy: {i} `kind: {kind}` is not one of {', '.join(sorted(KINDS - {'behavior'}))}")
+    else:
+        refused, no_grep = KIND_REFUSES[kind]
+        if typ in refused:
+            say(f"Test Strategy: {i} `kind: {kind}` can't be proven by a `{typ}` probe — run the thing it claims")
+        elif no_grep and typ not in SELF_ATTESTED and grep_only(e.get("tool")):
+            say(f"Test Strategy: {i} `kind: {kind}` can't be proven by a grep-only probe (it reads text, it doesn't "
+                "run the code) — run it")
+    if tier != "E1" and str(e.get("tool") or "").strip() and typ not in SELF_ATTESTED \
+            and not str(e.get("fails-when") or "").strip() and red_exempt_why(iscs.get(i, (False, ""))[1], e):
+        say(f"Test Strategy: {i} can't get a red baseline ({red_exempt_why(iscs.get(i, (False, ''))[1], e)}) — "
+            "add `fails-when: \"<what the probe sees when the claim is false>\"`")
+    risk = str(e.get("risk") or "").strip()
+    text = iscs.get(i, (False, ""))[1] + " " + str(e.get("tool") or "")
+    if not risk and RISK_WORDS.search(text):
+        _sev(r, fm, strict=tier not in ("E1", "E2"))(
+            f"Test Strategy: {i} mentions `{RISK_WORDS.search(text).group(0)}` — declare `risk: high` or "
+            "`risk: low — <why>`")
+    elif risk:
+        low = risk.lower()
+        if low.startswith("low"):
+            if not re.match(r"low\s*[—-]+\s*\S", risk, re.I):
+                _sev(r, fm)(f"Test Strategy: {i} `risk: low` needs its reason: `risk: low — <why>`")
+        elif low != "high":
+            _sev(r, fm)(f"Test Strategy: {i} `risk:` must be `high` or `low — <why>`, got `{risk}`")
+        elif typ in SELF_ATTESTED and i not in set(re.findall(r"waived: (ISC-\d+(?:\.\d+)*)",
+                                                              content.get("Decisions", ""))):
+            r.err(f"Test Strategy: {i} is `risk: high` — a `{typ}` probe can't prove it: write a mechanical probe, "
+                  "or the user waives the ISC")
+
+
+def _close_shape_rules(r, fm, tier, content, ver):
+    dec = content.get("Decisions", "")
+    asks = fm.get("asks") if isinstance(fm.get("asks"), list) else []
+    for n, ask in enumerate(asks, 1):
+        m = re.search(rf"^- Ask {n}: (\S+)(.*)$", ver, re.M)
+        if not m:
+            r.err(f"close: ask {n} (\"{str(ask)[:60]}\") has no `- Ask {n}: met | skipped — <why> | surfaced` line")
+        elif m.group(1).rstrip("—-,:") not in ("met", "skipped", "surfaced"):
+            r.err(f"close: `- Ask {n}:` must say met, skipped — <why>, or surfaced (got `{m.group(1)}`)")
+        elif m.group(1).startswith("skipped") and not re.search(r"—\s*\S", m.group(2)):
+            r.err(f"close: `- Ask {n}: skipped` needs its reason (`— <why>`)")
+    risky = re.search(r"^\s*risk:\s*high\b", content.get("Test Strategy", ""), re.M | re.I)
+    if (risky or tier in ("E4", "E5")) and "second-look:" not in dec:
+        _sev(r, fm)("close: no `second-look: <who/what reviewed, where its findings are> | skipped — <why>` row in "
+                    "Decisions (" + ("a `risk: high` ISC" if risky else f"tier {tier}") + ")")
+    for cls in sorted(set(re.findall(r"^\s*class:\s*(.+?)\s*$", content.get("Test Strategy", ""), re.M))):
+        if not re.search(rf"class-sweep: {re.escape(cls)} — ", dec):
+            r.err(f"close: `class: {cls}` needs a `class-sweep: {cls} — N siblings via <probe>; M fixed, K "
+                  "tombstoned` row in Decisions")
+
+
 def main(argv):
     moment = "auto"
     if argv[:1] == ["--moment"]:
         moment, argv = argv[1], argv[2:]
+    elif argv[:1] == ["--close"]:
+        moment, argv = "close", argv[1:]
     total = 0
     for p in argv:
         r = lint(p, moment)

@@ -1,5 +1,5 @@
 ---
-version: 2.13.0-export.1
+version: 2.14.0-export.1
 ---
 
 # ISA Format Specification
@@ -8,7 +8,7 @@ version: 2.13.0-export.1
 
 This file is the file-shape contract. `IsaSystem.md` is the conceptual frame; `SKILL.md` holds the workflows. On contradiction, this file wins.
 
-The model is the only writer of an ISA (Write/Edit or the ISA skill workflows). Anything else — a status line, a dashboard, a hook — only reads it.
+**Who writes what.** The model writes the content with Write/Edit (or the ISA skill workflows): every section, every criterion's text, the Test Strategy, Decisions, Changelog, and the `- Goal:`, `- Ask N:` and `[DEFERRED-VERIFY]` lines. The engine — the `isa` commands — writes the *state*: checkbox ticks, the generated Verification lines (`verified` / `attested` / `regressed`), `progress`, `phase: complete`, and `root`. The hooks refuse a model edit that would touch an engine-owned part and name the command to use; a shell command writing onto an ISA.md is refused too (edit it with Write/Edit). Anything else — a status line, a dashboard, a hook — only reads it.
 
 ## What an ISA Is
 
@@ -40,7 +40,7 @@ Load-bearing: - [ ] ISC-N: Email arrives in primary inbox (not Promotions/Spam) 
 
 ## Filename and Location
 
-- **ISA:** `~/.isa/<project>/{slug}/ISA.md` — one per piece of work (a long-lived per-repo project ISA is not supported; possible future feature). Created at the start of the work (`mkdir -p`), closed at `phase: complete`.
+- **ISA:** `~/.isa/<project>/{slug}/ISA.md` — one per piece of work (a long-lived per-repo project ISA is not supported; possible future feature). Created at the start of the work with `isa new <slug> --goal "<verbatim span>"` (it writes the frontmatter and binds the ISA to the session), closed by `isa close <ISA>` (`phase: complete`).
 - **Ephemeral feature slices:** `~/.isa/<project>/{slug}/_ephemeral/<feature>.md`. Archived to `_ephemeral/.archive/<feature>-<YYYY-MM-DD>.md` after Reconcile.
 
 ## Frontmatter (YAML)
@@ -53,12 +53,16 @@ task: "8 word task description"           # What this work is
 slug: YYYYMMDD-HHMMSS_kebab-task          # Unique ID, directory name
 project: <name>                           # Optional label: which codebase this task is about
 effort: E3                                # E1|E2|E3|E4|E5 — completeness-gate tier
-phase: observe                            # observe|think|plan|build|execute|verify|learn|complete
-progress: 0/8                             # checked criteria / total criteria
+phase: observe                            # observe|think|plan|build|execute|verify|learn|complete (complete: `isa close` only)
+progress: 0/8                             # checked / counted leaf criteria — engine-owned, recomputed by every `isa` command
 started: 2026-02-24T02:00:00Z             # Creation timestamp (ISO 8601)
 updated: 2026-02-24T02:00:00Z             # Last modification timestamp (ISO 8601)
+root: /home/me/dev/app                    # engine-owned: the project every probe runs in (written by `isa new`)
+asks: ["list each one with its line number", "don't change any files"]   # the prompt's explicit asks
 ---
 ```
+
+`asks` holds every explicit ask of the user's prompt as a verbatim span. You write it — `isa new` leaves `[]` and calls no model. Lint checks each entry is a byte-for-byte span of a prompt of the ISA's sessions (an error under v2). The first `isa verify` snapshots the list; removing an ask after that needs a `refined:` Decisions row. At close, each needs a `- Ask N:` line in Verification (see § Verification).
 
 Optional — continuation:
 
@@ -122,8 +126,9 @@ Unknown keys are tolerated by readers; never fail on them.
 - `task`: Imperative mood, max 60 chars. Describes the deliverable, not the process.
 - `slug`: `YYYYMMDD-HHMMSS_kebab-description`.
 - `effort`: The completeness-gate tier (see below).
-- `phase`: Set at the start, whenever it genuinely changes, and to `complete` when done.
-- `progress`: `M/N`, counted over **leaf** ISCs in `## Criteria` and `## Bridge Criteria`. A parent with nested children (`ISC-7` over `ISC-7.1`, `ISC-7.2`) is not counted — it passes when all its leaves pass. N excludes tombstoned (dropped) and waived ISCs; M = checked leaves. Updated the moment a criterion flips or is waived — don't wait for VERIFY.
+- `phase`: Set at the start and whenever it genuinely changes; `complete` is written only by `isa close`, after it re-runs every probe.
+- `progress`: `M/N`, counted over **leaf** ISCs in `## Criteria` and `## Bridge Criteria`. A parent with nested children (`ISC-7` over `ISC-7.1`, `ISC-7.2`) is not counted — the engine ticks it when all its leaves are ticked or waived. N excludes tombstoned (dropped) and waived ISCs; M = checked leaves. Engine-owned: `isa lint`, `isa verify` and `isa close` recompute it, so it can lag between commands — status readers count the criteria themselves. Leave it alone (writing the right number is harmless; a wrong one is refused).
+- `root`: Engine-owned. Every probe runs with this as its cwd (a Test Strategy entry may add `cwd:` relative to it, or its own `root:`).
 - `started`: Set once. Never modified.
 - `updated`: Set on every Edit/Write.
 
@@ -190,8 +195,8 @@ The hard-to-vary spine of the explanation — 1 to 3 sentences. If `stated_goal`
 - Binary testable: either true or false, no judgment required
 - **Atomic**: one verifiable thing per criterion — no compound statements
 - ID format `ISC-N`; all ISCs number sequentially in one pool; the `Anti:` / `Antecedent:` / `Bridge:` prose prefix carries the kind
-- Check (`- [x]`) immediately when satisfied — don't batch at VERIFY. A nested parent is ticked once all its leaves are ticked
-- Update frontmatter `progress` on every check change
+- Ticks (`- [x]`) are written by `isa verify`, which runs the probe and ticks what passed — never by hand (the hooks refuse it). Prove each criterion as soon as it can pass; don't batch at VERIFY. Unticking an ISC yourself is allowed (an honest regression)
+- The engine ticks a nested parent once all its leaves are ticked, and recomputes `progress`
 
 **The Splitting Test (apply to every criterion):**
 - Contains "and"/"with"/"including" joining two verifiable things? → split
@@ -229,18 +234,43 @@ One entry per leaf ISC, as a YAML list inside a fenced block (key order doesn't 
 |-----|---------|
 | `isc` | The ISC ID this entry verifies (must exist in `## Criteria` / `## Bridge Criteria`) |
 | `anchors_to` | What the ISC traces to: the verbatim goal (`literal`), a named derived sub-claim, or a sibling ISA for bridge ISCs |
-| `type` | Probe kind — prefer the vocabulary below |
+| `type` | Probe form — prefer the vocabulary below |
+| `kind` | What the ISC claims — sets the minimum probe type (table below). Required from E2 |
 | `check` | What is being checked, in words |
 | `threshold` | The pass condition — the value that makes it yes/no |
 | `tool` | The exact command, file, or procedure that runs the probe |
+| `risk` | `high`, or `low — <why>`. Required when the ISC or its probe mentions secrets, tokens, credentials, passwords, auth, logins, permissions, payments, billing, money, invoices, deploys, prod, publish, release or push |
+| `red` | `exempt — <why>`: this behaviour/http/schema probe can't be run red first (see red-then-green) |
+| `cwd` | Directory the probe runs in, relative to the ISA's `root` |
+| `root` | Another project (path relative to `$HOME`) the probe runs in — for an ISA spanning projects |
+| `class` | Tags the ISC as one instance of a defect class: close then needs a `class-sweep:` row |
+| `fails-when` | What the probe would see if the claim were false. Required from E2 on a mechanical probe whose ISC can't be seen failing first: an `Anti:` ISC, a `kind:` without the red step (config, doc, file, decision, visual, regression), or `red: exempt`. `isa close` lists it beside each ISC never seen failing |
 
-**Mechanical vs self-attested (enforced by the hooks).** Every type except `manual`, `screenshot` and `eval` is *mechanical*: its `tool` is a shell command that `isa verify <ISA> ISC-N` runs, and it **passes iff it exits 0** — so build any other threshold into the command (`test "$(… | wc -l)" -eq 12`). The `tool` must be runnable exactly as written: a placeholder (`<session-id>`, `…`) is a lint error. `isa verify` records each result in an engine-owned evidence ledger (`~/.isa/_state/evidence/`, never written by hand), and the hooks refuse:
+**Mechanical vs self-attested.** Every type except `manual`, `screenshot` and `eval` is *mechanical*: its `tool` is a shell command that `isa verify <ISA> ISC-N` runs from the ISA's `root`, and it **passes iff it exits 0** — so build any other threshold into the command (`test "$(… | wc -l)" -eq 12`). Write it relative to the project (no `cd /absolute/path`; use `cwd:`). The `tool` must be runnable exactly as written: a placeholder (`<session-id>`, `…`) is a lint error. `isa verify` records each result in an engine-owned evidence ledger (under `~/.isa/_state/`, never written by hand) together with a fingerprint of the project tree, then ticks what passed, unticks what regressed, and writes the Verification line. `isa close` re-runs every mechanical probe and closes only when all pass — that re-run is what makes the close fresh. A probe must only observe: one that changes the tree is reported, recorded, and refused at close.
 
-- a tick of a mechanical ISC without a passing `isa verify` run newer than the last project change;
-- any other project change while an ISC has passed `isa verify` but is not ticked yet (tick it first);
-- `phase: complete` while any mechanical tick's latest pass is older than the last project change — run `isa verify <ISA>` (every probe) after your last change, then close.
+`manual`, `screenshot` and `eval` ISCs — and ISCs with no Test Strategy entry (E1) — are *self-attested*: `isa verify <ISA> ISC-N --attest "<evidence>"` ticks them with your evidence, and the close summary lists them to the user as not machine-verified.
 
-`manual`, `screenshot` and `eval` ISCs — and ISCs with no Test Strategy entry (E1) — are *self-attested*: `isa verify` skips them, and a clean close lists them to the user to check.
+**`kind:` sets the minimum probe type** (errors for ISAs started under v2, warnings for older ones):
+
+| `kind` | The ISC claims | Refused |
+|--------|----------------|---------|
+| `behaviour` | code does X when run | `manual` / `screenshot` / `eval`, and a grep-only probe (it reads text, it doesn't run the code) |
+| `http` | an endpoint answers X | same as behaviour |
+| `schema` | data has shape X (query it) | `manual`, grep-only |
+| `regression` | something must stay true | `manual` / `screenshot` / `eval` |
+| `config` | a setting has value X (read it back) | `manual` |
+| `visual` | it looks like X | a grep-only probe (look at it: `screenshot`, `eval`) |
+| `file` | a file exists / contains X | — |
+| `doc` | a prose deliverable | — |
+| `decision` | a choice was made and recorded | — |
+
+"Grep-only" means every command of the probe only reads text (`grep`, `rg`, `test`, `cat`, `head`, `tail`, `wc`).
+
+**`risk: high`** ISCs can't be self-attested: a `manual` / `screenshot` / `eval` probe is a lint error (and `--attest` is refused) unless the user waives the ISC; and close needs a `second-look:` Decisions row. `risk: low — <why>` reasons are listed in the close summary.
+
+**Red-then-green** (behaviour / http / schema ISCs at E2+, except `Anti:`, `kind: regression` and `red: exempt — <why>`): write the test, run `isa verify --red <ISA>` before building (it records the failing baseline and ticks nothing), then build and `isa verify`. A green run ticks plainly only when an earlier *failed* red run of the same probe text saw a different tree; otherwise it is ticked `(no red baseline)` and the close lists it next to the self-attested ones, with the reason. A probe that passes its red run can't fail — `isa lint` warns that it proves nothing. Nothing is ever blocked for lack of a baseline. ISCs that can never get a red run carry `fails-when:` instead: the claim it would take to fail, written down, so a probe that can't fail shows itself to the writer and to the reader of the close summary.
+
+**Probe downgrades are visible.** Once the first `isa verify` has snapshotted the Test Strategy, turning a runnable probe into a self-attested one, weakening `kind:`, removing a `tool:`, or self-attesting an ISC whose probe failed needs a Decisions row `refined: ISC-N probe downgraded — <why>`; without it, lint fails.
 
 **Probe types.** Prefer these; a more specific label (`deploy-probe`, `parity-test`, …) is fine when none fits, as long as `tool` + `threshold` still make it binary.
 
@@ -303,7 +333,7 @@ One entry per leaf ISC, as a YAML list inside a fenced block (key order doesn't 
 
 **Anti-ISCs default to universal form at E3+.** "API_KEY isn't in env" becomes "∀ env-var-name in spawned env: name !~ /API_KEY|AUTH_TOKEN/i" — a property over the failure pattern, not one instance. Example form is fine when the input domain is small and finite.
 
-**Blast-radius probe strictness.** When an ISC touches high-blast surface — secrets, auth, personal data, money movement, a push to a public remote, a prod deploy — its Test Strategy entry must name a deterministic probe (`bash` / `unit-test` / `property`; never `manual`, and never a `screenshot` alone, since judging an image isn't deterministic), and the satisfying change should land as a small, line-readable diff. Low-blast ISCs can be verified empirically without a line-by-line read.
+**Blast-radius probe strictness.** When an ISC touches high-blast surface — secrets, auth, personal data, money movement, a push to a public remote, a prod deploy — mark it `risk: high`: its probe must be deterministic (`bash` / `unit-test` / `property`; never `manual`, and never a `screenshot` alone), the satisfying change should land as a small, line-readable diff, and the close needs a `second-look:` row. Low-blast ISCs can be verified empirically without a line-by-line read.
 
 ### Features
 
@@ -329,7 +359,7 @@ One YAML entry per vertical slice — an end-to-end, independently verifiable in
 
 `name` is what ephemeral mode looks up; `satisfies` lists the ISC IDs a slice worker receives; `depends_on` names other Features.
 
-**`depends_on` is enforced (dependency order).** A Feature is done when every counted leaf ISC it `satisfies` is ticked. The hooks refuse to tick an ISC of a Feature while a Feature it depends on still has open ISCs — judged on the file *before* the edit, so a dependency and its dependent are never closed in the same edit. A dependent ISC may be verified early (its pass is recorded and marked blocked, and it never freezes other work), but its pass must still be fresh when you tick it after the dependency is done. ISCs in no Feature, or in Features without `depends_on`, are unconstrained. An unknown `depends_on` name or a dependency cycle is a lint error.
+**`depends_on` is enforced (dependency order).** A Feature is done when every counted leaf ISC it `satisfies` is ticked. `isa verify` ticks in that order: within one run it ticks a dependency's ISCs before its dependents'; a dependent ISC whose dependency still has open ISCs passes but *waits* (its pass is recorded, it never freezes other work) and is ticked by a later run once the dependency is done. ISCs in no Feature, or in Features without `depends_on`, are unconstrained. An unknown `depends_on` name or a dependency cycle is a lint error.
 
 ### Decisions
 
@@ -340,11 +370,26 @@ Timestamped decision log, any phase. Include dead ends — failed approaches pre
 - 2026-02-24 02:30: ❌ DEAD END: Tried B — failed because C (don't retry)
 - 2026-02-24 03:00: refined: Goal sharpened — added "without breaking external API" after research surfaced consumer count
 - 2026-02-24 03:15: refined: ISC-7 split into ISC-7.1 / ISC-7.2 — Verify probe revealed two distinct failure modes
-- 2026-02-24 05:00: waived: ISC-12 — user: "load test can wait for the staging env next month"
+- 2026-02-24 05:00: waived: ISC-12 — "load test can wait for the staging env next month"
+- 2026-02-24 05:30: refined: ISC-9 probe downgraded — the vendor sandbox is gone, checked by hand against the dashboard
+- 2026-02-24 05:45: second-look: a fresh-context reviewer read the auth diff, findings below
+- 2026-02-24 05:50: finding: token logged at debug level — adopted (ISC-14)
+- 2026-02-24 05:55: class-sweep: unescaped SQL — 4 siblings via rg -n 'execute(f"'; 4 fixed, 0 tombstoned
+- 2026-02-24 05:58: repro-bypass: pure-additive — a new flag, no bug to reproduce
 - 2026-02-24 06:00: no belief refuted this run
 ```
 
-Use `refined:` whenever a decision changes the Goal or restructures the ISC set. `waived:` is written only on the user's explicit say-so; a waived ISC stays `[ ]`, leaves the `progress` denominator, and no longer blocks close. `no belief refuted this run` lets an E4+ ISA close without a Changelog when understanding genuinely never changed.
+Use `refined:` whenever a decision changes the Goal or restructures the ISC set. `waived:` is written only on the user's explicit say-so and **quotes the user verbatim** (`waived: ISC-N — "<their words>"`; lint checks the quote against the prompts of the ISA's sessions); a waived ISC stays `[ ]`, leaves the `progress` denominator, and no longer blocks close. `no belief refuted this run` lets an E4+ ISA close without a Changelog when understanding genuinely never changed.
+
+Rows the commands check by shape (they can't check that the row is true — that stays honest self-attestation):
+
+| Row | Required when | Shape |
+|-----|---------------|-------|
+| `second-look:` | close, with any `risk: high` ISC or `effort` E4+ | `second-look: <who/what reviewed, where its findings are> \| skipped — <why>` |
+| `finding:` | a review produced findings | `finding: <text> — adopted (<diff/ISC>) \| rebutted (<reason>) \| deferred (<task>)` |
+| `class-sweep:` | close, for each Test Strategy `class:` | `class-sweep: <class> — N siblings via <probe>; M fixed, K tombstoned` |
+| `repro-bypass:` | a reported bug was not reproduced first | `repro-bypass: pure-additive \| non-isolable \| repro would cause damage — <why>` |
+| `refined: ISC-N probe downgraded — <why>` | a probe was weakened (see Test Strategy) | — |
 
 ### Changelog
 
@@ -359,17 +404,22 @@ Deutsch error-correction trail. Four parts, always, in order (see `Workflows/App
 
 ### Verification
 
-Evidence for each criterion (leaf and bridge), quoted from tool output, plus a closing `Goal:` line — one per iteration; a reopened ISA adds a new one and only the latest counts.
+Evidence for each criterion (leaf and bridge), one `- Ask N:` line per ask, and a closing `Goal:` line — one per iteration; a reopened ISA adds a new one and only the latest counts.
 
-For mechanical ISCs, copy the line `isa verify` prints (`- ISC-N: \`isa verify\` PASS <time> — \`<tool>\``); the ledger, not this line, is what the hooks check.
+The ISC lines are **generated**: `isa verify` writes them from its ledger (`verified` for a passing probe, `attested` for `--attest`, `regressed` when a ticked probe fails again), with a `(ledger: …#L<n>)` reference a reader can check. You never write or edit those — the hooks refuse it. You write the `[DEFERRED-VERIFY]`, `- Ask N:` and `- Goal:` lines.
 
 ```markdown
-- ISC-1: screenshot — layout renders correctly (shot: /tmp/x.png, viewed)
-- ISC-2: unit-test — `bun test` passes, 14/14 green
-- ISC-3: bash — `rg -n 'SSN' out/` returns no matches
+- ISC-1: attested 2026-03-01T10:02:11 — layout renders correctly in /tmp/x.png, looked at (ledger: 20260301-090000_x-3f2a9c1d0e4b#L4)
+- ISC-2: verified 2026-03-01T10:03:40 — exit 0 in 2.1s — `bun test` (ledger: 20260301-090000_x-3f2a9c1d0e4b#L7)
+- ISC-3: verified 2026-03-01T10:03:40 — exit 0 in 0.2s — `! rg -n 'SSN' out/` (no red baseline) (ledger: 20260301-090000_x-3f2a9c1d0e4b#L8)
+- ISC-7: regressed (passed at 2026-03-01T09:40:02) — FAIL 2026-03-01T10:03:40 — exit 1 — `npm test -- -t "cap"`
 - ISC-12: [DEFERRED-VERIFY] — needs the staging env, not provisioned yet — follow-up: rerun k6 once staging is up
+- Ask 1: met — every endpoint listed with its check
+- Ask 2: skipped — the user dropped the load test (see the waiver)
 - Goal: yes — "get p95 latency under 200ms": load test over the full request mix (not a sample) reports p95 = 182 ms (k6 summary, run 2026-03-01)
 ```
+
+**`- Ask N:` lines** answer the frontmatter `asks` in order: `met`, `skipped — <why>`, or `surfaced` (raised with the user, not done). A missing line counts as unmet and `isa close` refuses.
 
 **`[DEFERRED-VERIFY]`** is a holding state for a probe that genuinely can't run yet. The ISC stays `[ ]` and blocks `complete` until it is probed or the user waives it (`waived:` Decision).
 
@@ -378,7 +428,7 @@ For mechanical ISCs, copy the line `isa verify` prints (`- ISC-N: \`isa verify\`
 ## Continuation / Rework
 
 - A follow-up that continues the same task edits the existing ISA; a genuinely new task gets a new slug.
-- Editing the body of a `phase: complete` ISA reopens it: `phase: learn`, `iteration` incremented (2 on the first reopen), `resumed_at` set, and a Decisions row naming why. `frozen: true` bypasses this (pure corrections).
+- Editing the body of a `phase: complete` ISA reopens it: `phase: learn`, `iteration` incremented (2 on the first reopen), `resumed_at` set, and a Decisions row naming why. `frozen: true` bypasses this (pure corrections). It closes again only through `isa close`.
 - After a context compaction or a new session: read the ISA, continue from its current state, never redo gates that already passed.
 
 ## Design Rationale

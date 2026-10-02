@@ -7,6 +7,7 @@ phase: execute
 progress: 5/36
 started: 2026-04-11T02:15:00Z
 updated: 2026-04-15T18:00:00Z
+context_sufficient: true
 ---
 
 <!-- Fictitious example. "duck" is a teaching placeholder for an existing CLI tool whose --help output we are redesigning. -->
@@ -130,216 +131,254 @@ Ship a redesigned `duck --help` template (≤ 100 lines, 80-col safe) that opens
 ```yaml
 - isc: ISC-1
   type: bash
+  kind: behaviour
   check: --help line count
   threshold: ≤ 100
   tool: duck --help | wc -l
 
 - isc: ISC-2
   type: bash
+  kind: behaviour
   check: lines longer than 80 columns
   threshold: "0"
   tool: duck --help | awk 'length>80' | wc -l
 
 - isc: ISC-3
   type: bash
+  kind: behaviour
   check: section rule lines
   threshold: "3"
   tool: duck --help | rg -c '^[═─]{10,}'
 
 - isc: ISC-4
   type: bash
+  kind: behaviour
   check: first non-blank line is one sentence ≤ 80 chars
   threshold: prints ok
   tool: duck --help | awk 'NF{print; exit}' | awk 'length<=80 && /\.$/ && gsub(/\. /,"&")==0 {print "ok"}'
 
 - isc: ISC-5
   type: bash
+  kind: behaviour
   check: invocation lines and gloss lines in the Examples block
   threshold: 2 lines starting with "$ duck", each followed by an indented gloss
   tool: duck --help | sed -n '/^Examples/,/^[═─]/p' | rg -c -A1 '^  \$ duck'
 
 - isc: ISC-6
   type: bash
+  kind: behaviour
   check: each example actually runs
   threshold: exit 0 on all
   tool: bash test/help-examples.sh
 
 - isc: ISC-7
   type: bash
+  kind: behaviour
   check: category header count in Flag Reference
   threshold: 1–4
   tool: duck --help | sed -n '/^Flag Reference/,/^See Also/p' | rg -c '^[A-Z][A-Za-z ]+:$'
 
 - isc: ISC-8
   type: unit-test
+  kind: behaviour
   check: every flag entry is signature line + one 4-space description line
   threshold: test passes
   tool: bun test test/help-layout.test.ts -t "two-line entries"
 
 - isc: ISC-9
   type: unit-test
+  kind: behaviour
   check: flag order inside each category
   threshold: equal to sorted order
   tool: bun test test/help-layout.test.ts -t "alphabetized"
 
 - isc: ISC-10
   type: bash
+  kind: behaviour
   check: every old flag is in new help
   threshold: empty diff
   tool: diff <(rg -o '^\s*--[a-z-]+' old-help.txt | tr -d ' ' | sort -u) <(rg -o '^\s*--[a-z-]+' new-help.txt | tr -d ' ' | sort -u)
 
 - isc: ISC-11
   type: bash
+  kind: http
   check: See Also footer lines
   threshold: 3 lines matching man / https / version patterns, in that order
   tool: duck --help | sed -n '/^See Also/,$p' | rg -c '^  (man duck|https://|duck v[0-9.]+ \([0-9a-f]{7}\))'
 
 - isc: ISC-12
   type: bash
+  kind: http
   check: footer URL line length
   threshold: ≤ 80
   tool: duck --help | rg '^  https://' | awk '{print length}'
 
 - isc: ISC-13
   type: bash
+  kind: behaviour
   check: existing per-flag grep
   threshold: exit 0
   tool: bash test/help-grep.sh
 
 - isc: ISC-14
   type: bash
+  kind: behaviour
   check: exit code
   threshold: "0"
   tool: duck --help >/dev/null; echo $?
 
 - isc: ISC-15
   type: bash
+  kind: behaviour
   check: man page reference and Examples-first output
   threshold: both greps exit 0
   tool: man duck | grep -q 'see `--help`' && duck --help | awk 'NF' | sed -n 3p | grep -q '^Examples'
 
 - isc: ISC-16
   type: manual
+  kind: doc
   check: median help-to-first-command time
   threshold: ≤ 30s median across 5 users
   tool: 5 user-test sessions, time-stamped recordings
 
 - isc: ISC-17
   type: bash
+  kind: behaviour
   check: render time
   threshold: mean < 50 ms
   tool: hyperfine --warmup 3 --export-json /tmp/h.json 'duck --help' && jq '.results[0].mean*1000' /tmp/h.json
 
 - isc: ISC-18
   type: manual
+  kind: doc
   check: 3 synonym-swapped paraphrases of line 1
   threshold: all 3 reviewers rate every paraphrase worse
   tool: review by 3 unfamiliar reviewers
 
 - isc: ISC-19
   type: bash
+  kind: behaviour
   check: top two invocations in the last 30 days of telemetry
   threshold: equal to the two example commands
   tool: diff <(duck-telemetry top-invocations --days 30 -n 2) <(duck --help | rg -o '^  \$ \K.*')
 
 - isc: ISC-20
   type: manual
+  kind: doc
   check: category-guess accuracy
   threshold: ≥ 70% across 5 users × 10 flags
   tool: structured user test with the four category names only
 
 - isc: ISC-21
   type: eval
+  kind: doc
   check: description length and imperative mood
   threshold: 100% of descriptions ≤ 80 chars and judged imperative
   tool: bun test test/help-voice.test.ts   # length check + LLM-judge rubric "starts with an imperative verb"
 
 - isc: ISC-22
   type: bash
+  kind: file
   check: "Note: preambles"
   threshold: zero matches (rg exits 1)
   tool: rg '^\s*Note:' new-help.txt
 
 - isc: ISC-23
   type: bash
+  kind: file
   check: the word please
   threshold: zero matches (rg exits 1)
   tool: rg -wi 'please' new-help.txt
 
 - isc: ISC-24
   type: bash
+  kind: regression
   check: flag count old vs new
   threshold: equal
   tool: test $(rg -c '^\s*--' old-help.txt) -eq $(rg -c '^\s*--' new-help.txt)
 
 - isc: ISC-25
   type: bash
+  kind: regression
   check: --help, -h and help all match
   threshold: both diffs empty
   tool: diff <(duck --help) <(duck -h) && diff <(duck --help) <(duck help)
 
 - isc: ISC-26
   type: bash
+  kind: regression
   check: placeholders in the template, no literal version
   threshold: 2 placeholders found, zero literal version strings
   tool: rg -c '\{\{(VERSION|SHA)\}\}' templates/help.txt && ! rg -q 'v[0-9]+\.[0-9]+\.[0-9]+' templates/help.txt
 
 - isc: ISC-27
   type: unit-test
+  kind: regression
   check: description lines per flag
   threshold: exactly 1 for every flag
   tool: bun test test/help-layout.test.ts -t "single-line descriptions"
 
 - isc: ISC-28
   type: bash
+  kind: file
   check: diff document exists and holds a diff
   threshold: ≥ 1 line starting with + or -
   tool: rg -c '^[+-]' docs/help-redesign-diff.md
 
 - isc: ISC-29
   type: bash
+  kind: file
+  risk: low — a release-note document, not a software release
   check: release note word count
   threshold: 1–300
   tool: wc -w < docs/release-notes/help-redesign.md
 
 - isc: ISC-30
   type: bash
+  kind: behaviour
   check: recording count
   threshold: "5"
   tool: ls research/user-tests/help-redesign-2026-04/*.mp4 | wc -l
 
 - isc: ISC-31
   type: unit-test
+  kind: behaviour
   check: lines per section
   threshold: every section 4–70
   tool: bun test test/help-layout.test.ts -t "section lengths"
 
 - isc: ISC-32
   type: bash
+  kind: behaviour
   check: combinations appendix
   threshold: zero matches (rg exits 1)
   tool: duck --help | rg -i 'combination|recipes|more examples'
 
 - isc: ISC-33
   type: bash
+  kind: behaviour
   check: commit message references the Decisions entry
   threshold: ≥ 1 match
   tool: git log -1 --format=%B -- templates/help.txt | rg -c 'Decisions 2026-04'
 
 - isc: ISC-34
   type: bash
+  kind: behaviour
+  risk: low — release-train timing of a build flag; the probe deploys nothing
   check: build flag introduced one release before it defaults on
   threshold: tag distance = 1
   tool: bash scripts/flag-release-distance.sh NEW_HELP
 
 - isc: ISC-35
   type: bash
+  kind: behaviour
   check: CI grep test against the new template
   threshold: exit 0
   tool: bash test/help-grep.sh templates/help.txt
 
 - isc: ISC-36
   type: bash
+  kind: behaviour
   check: day-30 median help-to-first-command time
   threshold: ≤ 30s
   tool: duck-telemetry help-to-first-command --since-ship 30d --stat median
@@ -393,3 +432,11 @@ E3 design ISA. Required sections: Problem, Vision, Out of Scope, Constraints, Go
 Optional Principles included — the design has experiential goals (first 30 seconds, recognition, intuition) and principles do real work in the design pass.
 Three Antecedent ISCs (ISC-18, 19, 20) carry the experiential contract: hard-to-vary one-sentence summary, telemetry-grounded examples, and intuitive categories. Anti-criteria (ISC-24, 25, 26, 27) cover scope, regression, drift, and density. The Decisions section shows two ❌ DEAD ENDs and three refinements — typical for a redesign where every aesthetic temptation needs to be tested against actual users.
 -->
+
+## Verification
+
+- ISC-1: verified 2026-04-15T18:00:00 — exit 0 in 0.3s — `duck --help | wc -l` (ledger: 20260411-191500_duck-help-redesign-3154461c6412#L2)
+- ISC-2: verified 2026-04-15T18:00:00 — exit 0 in 0.3s — `duck --help | awk 'length>80' | wc -l` (ledger: 20260411-191500_duck-help-redesign-3154461c6412#L3)
+- ISC-4: verified 2026-04-15T18:00:00 — exit 0 in 0.3s — `duck --help | awk 'NF{print; exit}' | awk 'length<=80 && /\.$/ && gsub(/\. /,"&")==0 {print "ok"}'` (ledger: 20260411-191500_duck-help-redesign-3154461c6412#L4)
+- ISC-13: verified 2026-04-15T18:00:00 — exit 0 in 0.3s — `bash test/help-grep.sh` (ledger: 20260411-191500_duck-help-redesign-3154461c6412#L5)
+- ISC-14: verified 2026-04-15T18:00:00 — exit 0 in 0.3s — `duck --help >/dev/null; echo $?` (ledger: 20260411-191500_duck-help-redesign-3154461c6412#L6)

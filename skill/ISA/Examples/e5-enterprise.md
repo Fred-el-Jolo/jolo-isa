@@ -181,12 +181,16 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 ```yaml
 - isc: ISC-1
   type: unit-test
+  kind: behaviour
+  risk: high
   check: magic-link issue, 10-minute expiry, session on callback
   threshold: link works at 9m59s, fails at 10m01s; callback sets a session
   tool: bun run scripts/auth-magic-link.ts
 
 - isc: ISC-2
   type: property
+  kind: behaviour
+  risk: high
   property: "∀ chart-data action a, ∀ patient session s without a fresh MFA step: a → 401 mfa_required"
   generator: "every chart-data route × sessions with no MFA, stale MFA, and each factor type"
   runs: 1000
@@ -194,42 +198,52 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 
 - isc: ISC-3
   type: bash
+  kind: behaviour
+  risk: high
   check: clinician SSO round-trip against the Okta test tenant
   threshold: session role clinician, npi claim equals the test user's NPI
   tool: bun run scripts/saml-roundtrip.ts --role clinician --expect-npi 1234567893
 
 - isc: ISC-4
   type: unit-test
+  kind: behaviour
+  risk: high
   check: admin/auditor session asking for a clinician route
   threshold: 401 reauth_required; no in-place promotion
   tool: bun test test/auth/role-separation.test.ts
 
 - isc: ISC-5
   type: bash
+  kind: behaviour
   check: cookie flags and cookie contents
   threshold: HttpOnly, Secure, SameSite=Lax; no refresh token in any cookie
   tool: bun run scripts/cookie-audit.ts --all-roles
 
 - isc: ISC-6
   type: bash
+  kind: behaviour
   check: idle timeouts per role + absolute lifetime
   threshold: clinician 401 at minute 16; patient 401 at minute 31; any role 401 at 12h01m
   tool: bun run scripts/session-idle-timeout.ts --role all --fake-clock
 
 - isc: ISC-7
   type: bash
+  kind: behaviour
+  risk: high
   check: request number that gets 429
   threshold: 11th patient-email attempt and 6th SSO-subject attempt within 5 minutes
   tool: bun run scripts/auth-rate-limit.ts
 
 - isc: ISC-8
   type: bash
+  kind: behaviour
   check: session store and cookie after logout
   threshold: session row gone ≤ 1s; Set-Cookie clears the cookie
   tool: bun run scripts/logout-probe.ts
 
 - isc: ISC-9
   type: property
+  kind: behaviour
   property: "∀ patients p ≠ q: a session for p reading any chart route for q → 403"
   generator: "random patient pairs from the synthetic population × every chart read route"
   runs: 5000
@@ -237,6 +251,7 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 
 - isc: ISC-10
   type: property
+  kind: behaviour
   property: "clinician c reads chart p ⇔ relationship(c, p) ∈ {encounter, appointment, referral} or a break-glass event exists"
   generator: "random clinician × patient pairs with random relationship sets, incl. expired ones"
   runs: 5000
@@ -244,6 +259,7 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 
 - isc: ISC-11
   type: property
+  kind: behaviour
   property: "∀ role ≠ admin, ∀ route under /admin: → 403"
   generator: "non-admin roles × every registered /admin route"
   runs: 1000
@@ -251,6 +267,7 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 
 - isc: ISC-12
   type: property
+  kind: behaviour
   property: "auditor sessions → 200 on /audit/*, 403 on every PHI route"
   generator: "every /audit route and every PHI route"
   runs: 500
@@ -258,24 +275,29 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 
 - isc: ISC-13
   type: unit-test
+  kind: behaviour
   check: break-glass with and without a reason
   threshold: no reason → 400; with reason → access + audit event priority=high, review=true
   tool: bun test test/rbac/break-glass.test.ts
 
 - isc: ISC-14
   type: unit-test
+  kind: behaviour
+  risk: high
   check: clinician+admin user switching surfaces in one session
   threshold: 401 reauth_required on the second surface
   tool: bun test test/auth/role-switch.test.ts
 
 - isc: ISC-15
   type: bash
+  kind: behaviour
   check: fixture patients resolve to one longitudinal id across regions
   threshold: 12/12 single ids, 0 false merges
   tool: bun run scripts/empi-cross-region-probe.ts --test-fixture mrn-set-A
 
 - isc: ISC-16
   type: property
+  kind: behaviour
   property: "eMPI confidence < 0.95 ⇒ no merge row written and the verify-identity flow is returned"
   generator: "match candidates with confidence drawn from [0, 1], weighted around 0.95"
   runs: 5000
@@ -283,48 +305,57 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 
 - isc: ISC-17
   type: unit-test
+  kind: behaviour
   check: cross-region link without, with partial, and with full challenge
   threshold: merge only after a complete challenge set
   tool: bun test test/identity/link-challenge.test.ts
 
 - isc: ISC-18
   type: load
+  kind: behaviour
   check: autocomplete p95 and candidate count
   threshold: p95 ≤ 250ms; ≥ 10 candidates
   tool: k6 run load/appointment-autocomplete.js --vus 200 --duration 5m
 
 - isc: ISC-19
   type: bash
+  kind: behaviour
   check: booking against the Epic sandbox
   threshold: 201 + confirmation id equal to the EHR Appointment.id
   tool: bun run scripts/fhir-book.ts --sandbox epic
 
 - isc: ISC-20
   type: unit-test
+  kind: behaviour
   check: booking with EHR rejection and with slot-taken responses
   threshold: recoverable error + 3 alternative slots in both cases
   tool: bun test test/scheduling/booking-failure.test.ts
 
 - isc: ISC-21
   type: bash
+  kind: behaviour
   check: cancellation propagation to the EHR sandbox
   threshold: EHR status cancelled ≤ 60s; portal shows cancelled on the next render
   tool: bun run scripts/fhir-cancel.ts --sandbox epic --timeout 60
 
 - isc: ISC-22
   type: unit-test
+  kind: behaviour
   check: PNW patient booking at a Cascade Care hospital
   threshold: booking allowed + region disclosure rendered
   tool: bun test test/scheduling/cross-region.test.ts
 
 - isc: ISC-23
   type: bash
+  kind: behaviour
   check: EHR-resulted → portal-visible latency over 7 days
   threshold: p95 ≤ 4h (internal SLA ≤ 1h)
   tool: bun run scripts/lab-latency-audit.ts --window 7d
 
 - isc: ISC-24
   type: property
+  kind: behaviour
+  risk: high
   property: "critical result ⇒ banner + notification on the preferred channel; the channel is never SMS when content is included"
   generator: "random results with critical flags × patient channel prefs (push, email, sms)"
   runs: 2000
@@ -332,6 +363,7 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 
 - isc: ISC-25
   type: property
+  kind: behaviour
   property: "timeline(p) is the union of all source-EHR encounters for p, sorted by clinical-effective date"
   generator: "synthetic patients with encounters split across 1–3 EHRs, clashing timestamps and time zones"
   runs: 1000
@@ -339,228 +371,270 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 
 - isc: ISC-26
   type: load
+  kind: behaviour
   check: 5-year CCD download
   threshold: p95 ≤ 8s; document validates against C-CDA R2.1
   tool: k6 run load/ccd-download.js && bun run scripts/ccda-validate.ts /tmp/ccd-sample.xml
 
 - isc: ISC-27
   type: bash
+  kind: behaviour
   check: patient message → EHR inbox latency
   threshold: ≤ 30s
   tool: bun run scripts/message-roundtrip.ts --direction to-ehr
 
 - isc: ISC-28
   type: bash
+  kind: behaviour
   check: clinician reply → portal inbox latency
   threshold: ≤ 60s
   tool: bun run scripts/message-roundtrip.ts --direction to-portal
 
 - isc: ISC-29
   type: bash
+  kind: behaviour
   check: stored message bodies + TLS on every hop
   threshold: 0 plaintext bodies in the store; TLS 1.2+ on all hops
   tool: bun run scripts/message-at-rest-audit.ts && bun run scripts/tls-hop-audit.ts messaging
 
 - isc: ISC-30
   type: bash
+  kind: schema
   check: messages older than 7 years in the portal store
   threshold: "0"
   tool: psql "$PORTAL_DB" -Atc "SELECT count(*) FROM messages WHERE created_at < now() - interval '7 years'"
 
 - isc: ISC-31
   type: bash
+  kind: schema
   check: signed transmission to the Surescripts sandbox + portal copy after 24h
   threshold: signature verifies; 0 portal rows older than 24h
   tool: bun run scripts/erx-handoff.ts --sandbox && psql "$PORTAL_DB" -Atc "SELECT count(*) FROM rx_handoff WHERE sent_at < now() - interval '24 hours'"
 
 - isc: ISC-32
   type: unit-test
+  kind: behaviour
   check: prescription view data source
   threshold: served from the EHR pharmacy API; no portal prescription table read
   tool: bun test test/rx/live-source.test.ts
 
 - isc: ISC-33
   type: bash
+  kind: behaviour
   check: refill request → EHR pharmacy queue latency
   threshold: ≤ 60s
   tool: bun run scripts/refill-roundtrip.ts --sandbox epic
 
 - isc: ISC-34
   type: bash
+  kind: schema
   check: PHI reads vs audit events per 1-minute bucket, 24h
   threshold: '|reads| == |audit_events| in every bucket'
   tool: psql "$AUDIT_DB" -f sql/audit-completeness.sql
 
 - isc: ISC-35
   type: bash
+  kind: behaviour
   check: hash chain over 30 days + injected tamper
   threshold: 0 breaks on clean data; tamper detected ≤ 1h
   tool: bun run scripts/audit-chain-verify.ts --window 30d && bun run scripts/audit-tamper-drill.ts
 
 - isc: ISC-36
   type: bash
+  kind: behaviour
   check: object-lock mode and retain-until on today's snapshot
   threshold: COMPLIANCE, ≥ 6 years out
   tool: aws s3api get-object-retention --bucket audit-logs --key $(date +%F).parquet
 
 - isc: ISC-37
   type: load
+  kind: behaviour
   check: auditor queries by patient, actor, time window (30 days)
   threshold: p95 ≤ 5s for each query type
   tool: k6 run load/audit-queries.js
 
 - isc: ISC-38
   type: bash
+  kind: behaviour
   check: last month's attestation report + signature
   threshold: file exists at the retrieval path; signature verifies
   tool: cosign verify-blob --key kms://audit-attest --signature reports/$(date -d 'last month' +%Y-%m).sig reports/$(date -d 'last month' +%Y-%m).pdf
 
 - isc: ISC-39
   type: bash
+  kind: behaviour
   check: single-region drill
   threshold: drain ≤ 5 min; 0 committed writes lost
   tool: bun run scripts/regional-outage-drill.ts --target us-west-2
 
 - isc: ISC-40
   type: load
+  kind: behaviour
   check: read p95 during the drill vs steady state
   threshold: ≤ 1.5×
   tool: k6 run load/read-mix.js --during-drill us-west-2
 
 - isc: ISC-41
   type: bash
+  kind: behaviour
   check: replication lag p99 per table class, 7 days
   threshold: compliance tables ≤ 60s; others ≤ 300s
   tool: bun run scripts/replication-lag.ts --window 7d --by-class
 
 - isc: ISC-42
   type: bash
+  kind: behaviour
   check: two-region outage drill
   threshold: writes → 503 + degraded page; reads OK; 0 PHI rows lost
   tool: bun run scripts/regional-outage-drill.ts --target us-west-2,us-east-1 --staging
 
 - isc: ISC-43
   type: bash
+  kind: behaviour
   check: correlation id end to end
   threshold: same id in edge log, app log, EHR adapter log, support tool
   tool: bun run scripts/trace-correlation.ts --sample 100
 
 - isc: ISC-44
   type: bash
+  kind: behaviour
+  risk: low — a monitoring dashboard listing login metrics
   check: dashboards by tag
   threshold: 5 dashboards (identity, authz, ehr-latency, audit, regional)
   tool: bun run scripts/dashboards.ts --tag portal --names
 
 - isc: ISC-45
   type: bash
+  kind: file
   check: runbooks with a false-positive section
   threshold: 12 alert runbooks, each with a "false positive when" heading
   tool: rg -l -i '^#+ .*false positive when' docs/runbooks/alerts/ | wc -l
 
 - isc: ISC-46
   type: bash
+  kind: behaviour
   check: ombudsman dashboard panels
   threshold: monthly availability vs 99.95% + a breach-narrative panel; ombudsman group has view
   tool: bun run scripts/dashboards.ts --name slo-ombudsman --panels --acl
 
 - isc: ISC-47
   type: bash
+  kind: behaviour
   check: Terraform drift + console-change alarm
   threshold: plan shows no changes; alarm rule enabled
   tool: terraform plan -detailed-exitcode && aws events describe-rule --name console-change-revert | jq -r .State
 
 - isc: ISC-48
   type: bash
+  kind: behaviour
   check: blue/green rollback drill per region
   threshold: ≤ 90s in every region
   tool: bun run scripts/rollback-drill.ts --all-regions
 
 - isc: ISC-49
   type: bash
+  kind: behaviour
   check: injected canary failure
   threshold: auto-rollback + page ≤ 60s
   tool: bun run scripts/canary-failure-injection.ts
 
 - isc: ISC-50
   type: bash
+  kind: behaviour
+  risk: high
   check: secret-looking values in image env, task defs and Terraform state
   threshold: zero matches
   tool: bash scripts/secret-surface-scan.sh images taskdefs tfstate
 
 - isc: ISC-51
   type: bash
+  kind: behaviour
+  risk: low — release notes generated from PR descriptions
   check: last 10 deploys each have generated notes on their change ticket
   threshold: 10/10
   tool: bun run scripts/change-ticket-audit.ts --last 10
 
 - isc: ISC-52
   type: bash
+  kind: http
   check: canary URL and its enabled scope
   threshold: 200; feature set = identity, rbac, chart-read (1 hospital), audit, observability
   tool: curl -s https://portal.beaconhealth.example.org/canary/_features | jq -r '.enabled | sort | join(",")'
 
 - isc: ISC-53
   type: bash
+  kind: behaviour
   check: soak window incidents + enrolled testers
   threshold: 0 P1 in 14 days; ≥ 200 testers
   tool: bun run scripts/soak-report.ts --from 2026-04-08 --to 2026-04-22
 
 - isc: ISC-54
   type: bash
+  kind: schema
   check: assessor findings export
   threshold: 0 open high-severity findings
   tool: jq '[.findings[] | select(.severity=="high" and .status=="open")] | length' compliance/hitrust-2026-04.json
 
 - isc: ISC-55
   type: bash
+  kind: schema
   check: MEDITECH-sourced chart entries for enrolled patients
   threshold: 14 hospitals live; ≥ 1,000 patients with both Epic and MEDITECH entries
   tool: psql "$PORTAL_DB" -f sql/phase2-unification.sql
 
 - isc: ISC-56
   type: manual
+  kind: doc
   check: signed cutover plan
   threshold: both CMIO signatures + a rollback-criteria section
   tool: open compliance/phase2-cutover-plan.pdf
 
 - isc: ISC-57
   type: bash
+  kind: behaviour
   check: legacy entry-point redirects + 90-day redirect uptime
   threshold: every legacy URL → 301 to the new portal; uptime ≥ 99.95%
   tool: bash scripts/legacy-redirects.sh && bun run scripts/uptime.ts legacy-redirects --days 90
 
 - isc: ISC-58
   type: bash
+  kind: schema
   check: access coverage + legacy DB state
   threshold: 100% of active patients enrolled; legacy DB read-only and snapshotted
   tool: psql "$PORTAL_DB" -Atc "SELECT round(100.0*enrolled/total,1) FROM coverage" && bash scripts/legacy-db-sealed.sh
 
 - isc: ISC-59
   type: bash
+  kind: schema
   check: Q4 assessor result
   threshold: status Certified; 0 MRSA findings
   tool: jq '.status, ([.findings[] | select(.type=="MRSA")] | length)' compliance/hitrust-2026-q4.json
 
 - isc: ISC-60
   type: bash
+  kind: regression
   check: PHI-shaped query parameters in edge and WAF logs, 7 days
   threshold: zero matches (rg exits 1)
   tool: rg "patient_id=|mrn=|dob=|ssn=" /var/log/cloudflare-edge/*.log /var/log/waf/*.log
 
 - isc: ISC-61
   type: bash
+  kind: regression
   check: oldest retained audit event
   threshold: ≥ 6 years − 7 days old (or the archive predates that window)
   tool: psql "$AUDIT_DB" -Atc "SELECT MIN(timestamp) <= now() - interval '6 years' + interval '7 days' OR MIN(timestamp) = (SELECT go_live FROM meta) FROM audit_log_archive"
 
 - isc: ISC-62
   type: bash
+  kind: regression
   check: vendors in data path vs vendors with a BAA
   threshold: '|vendors_in_data_path| == |vendors_with_baa_sha|, 0 unrecognized'
   tool: bun run scripts/baa-reconciliation.ts
 
 - isc: ISC-63
   type: property
+  kind: regression
+  risk: high
   property: "preflight(config) fails ⇔ idle_timeout(role) > 15 min for any of clinician/admin/auditor"
   generator: "random configs with per-role idle timeouts 1–120 min"
   runs: 1000
@@ -568,24 +642,29 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 
 - isc: ISC-64
   type: bash
+  kind: regression
   check: PHI-tagged resources outside US regions and non-BAA services
   threshold: "0"
   tool: bun run scripts/phi-residency-scan.ts --count
 
 - isc: ISC-65
   type: bash
+  kind: regression
   check: inter-region PHI flows over public hops, from VPC flow logs
   threshold: "0"
   tool: bun run scripts/flowlog-public-hops.ts --tag phi --window 7d --count
 
 - isc: ISC-66
   type: bash
+  kind: regression
+  risk: high
   check: password columns in the patient-identity DB
   threshold: 0 rows
   tool: psql "$IDENTITY_DB" -Atc "SELECT column_name FROM information_schema.columns WHERE column_name ~ 'password'"
 
 - isc: ISC-67
   type: bash
+  kind: regression
   check: static-analysis rule for in-process role mutation
   threshold: rule enabled; 0 violations
   tool: |-
@@ -593,6 +672,7 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 
 - isc: ISC-68
   type: bash
+  kind: regression
   check: UPDATE/DELETE on audit_log by the app role, 30 days
   threshold: 0 rows
   tool: psql "$AUDIT_DB" -Atc "SELECT count(*) FROM pg_stat_statements WHERE query ~ '(UPDATE|DELETE).+audit_log' AND userid = 'app_role'::regrole"
@@ -747,50 +827,50 @@ Deliver a multi-region active-active patient portal at `portal.beaconhealth.exam
 
 ## Verification
 
-- ISC-1: Auth integration test 2026-04-25 — magic-link arrives p95 ≤ 28s, callback creates session within 1.4s; link rejected at 10m01s
-- ISC-2: `bun test test/auth/step-up.property.test.ts` — 1000 runs, 0 failures
-- ISC-3: `saml-roundtrip.ts --role clinician` — role `clinician`, `npi=1234567893`
-- ISC-4: `bun test test/auth/role-separation.test.ts` — 4 passed
-- ISC-5: `cookie-audit.ts --all-roles` — 4 roles, flags OK, 0 refresh tokens in cookies
-- ISC-6: Session idle-timeout drill 2026-04-26 — clinician role: 16th-minute request returned `401 session-expired`; patient role: 31st-minute request returned `401 session-expired`; 12h01m absolute → `401`
-- ISC-7: `auth-rate-limit.ts` — `429` on patient attempt 11 and SSO attempt 6
-- ISC-8: `logout-probe.ts` — session row deleted in 0.3s; `Set-Cookie: session=; Max-Age=0`
-- ISC-9: `bun test test/rbac/patient-scope.property.test.ts` — 5000 runs, 0 failures
-- ISC-10: `bun test test/rbac/clinician-relationship.property.test.ts` — 5000 runs, 0 failures
-- ISC-11: `bun test test/rbac/admin.property.test.ts` — 1000 runs, 0 failures
-- ISC-12: `bun test test/rbac/auditor.property.test.ts` — 500 runs, 0 failures
-- ISC-13: `bun test test/rbac/break-glass.test.ts` — 3 passed
-- ISC-15: eMPI cross-region probe 2026-04-24 — 12 fixture patients each resolved to one longitudinal ID across 3 hospitals; zero false-merges
-- ISC-16: `bun test test/identity/merge-threshold.property.test.ts` — 5000 runs, 0 failures
-- ISC-18: k6 run 2026-04-27 — 200 vus / 5min — autocomplete p95 218ms across 50-hospital corpus, min 12 candidates
-- ISC-19: `fhir-book.ts --sandbox epic` — `201`, confirmation `appt-8841207` = EHR `Appointment.id`
-- ISC-20: `bun test test/scheduling/booking-failure.test.ts` — 2 passed
-- ISC-23: lab-latency-audit 2026-04-25 (7-day window) — p95 1h 47m, internal SLA met
-- ISC-24: `bun test test/labs/critical.property.test.ts` — 2000 runs, 0 failures
-- ISC-27: `message-roundtrip.ts --direction to-ehr` — 11s
-- ISC-28: `message-roundtrip.ts --direction to-portal` — 23s
-- ISC-29: at-rest audit — 0 plaintext bodies in 48,112 rows; TLS audit — TLS 1.3 on all 4 hops
-- ISC-34: audit-completeness check 2026-04-26 — `phi_reads = audit_events` per 1-min bucket over 24h, zero gaps
-- ISC-35: audit-chain-verify 2026-04-27 — 30-day window, zero chain breaks across all three regions; tamper drill detected at +38 min
-- ISC-36: `aws s3api get-object-retention --bucket audit-logs --key 2026-04-27.parquet` — `Mode: COMPLIANCE, RetainUntilDate: 2032-04-27T00:00:00Z`
-- ISC-37: `k6 run load/audit-queries.js` — p95 by patient 1.9s, by actor 2.4s, by window 3.8s
-- ISC-39: regional outage drill 2026-03-15 — drain time 4m 12s; data-loss events: 0
-- ISC-43: `trace-correlation.ts --sample 100` — 100/100 ids present in all four places
-- ISC-44: `dashboards.ts --tag portal --names` — `identity`, `authz`, `ehr-latency`, `audit`, `regional`
-- ISC-45: `rg -l -i … docs/runbooks/alerts/ | wc -l` — 12
-- ISC-47: `terraform plan -detailed-exitcode` — exit 0 (no changes); `console-change-revert` rule `ENABLED`
-- ISC-48: `rollback-drill.ts --all-regions` — 58s / 64s / 71s
-- ISC-49: canary-failure-injection 2026-04-23 — rollback completed in 71s; pager fired at +43s
-- ISC-50: `secret-surface-scan.sh images taskdefs tfstate` — 0 matches
-- ISC-52: Phase 1 canary live 2026-04-22 at `portal.beaconhealth.example.org/canary` — `_features` = `audit,chart-read,identity,observability,rbac`
-- ISC-53: Phase 1 14-day soak 2026-04-08 to 2026-04-22 — 0 P1 incidents, 211 enrolled testers
-- ISC-54: HITRUST validated-assessor report received 2026-04-29 — 0 high-severity findings, 2 medium with mitigation plans accepted
-- ISC-60: `rg "patient_id=|mrn=|dob=|ssn=" /var/log/cloudflare-edge/*.log /var/log/waf/*.log` 7-day rolling window 2026-04-21 through 2026-04-28 — 0 matches
-- ISC-61: oldest-retained check — `t` (archive begins at go-live 2026-04-22; alarm armed for the 6y − 7d mark)
-- ISC-62: `baa-reconciliation.ts` — 9 vendors in data path, 9 with BAA SHA, 0 unrecognized
-- ISC-63: `bun test test/preflight/idle-timeout.property.test.ts` — 1000 runs, 0 failures
-- ISC-64: `phi-residency-scan.ts --count` — 0
-- ISC-65: `flowlog-public-hops.ts --tag phi --window 7d --count` — 0
-- ISC-66: `SELECT column_name FROM information_schema.columns WHERE column_name ~ 'password'` against patient-identity DB — 0 rows
-- ISC-67: `eslint --rule 'beacon/no-role-mutation: error' src/` — 0 problems
-- ISC-68: `SELECT count(*) FROM pg_stat_statements WHERE query ~ '(UPDATE|DELETE).+audit_log' AND userid = app_role` — 0 over 30-day window
+- ISC-1: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/auth-magic-link.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L2)
+- ISC-2: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun test test/auth/step-up.property.test.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L3)
+- ISC-3: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/saml-roundtrip.ts --role clinician --expect-npi 1234567893` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L4)
+- ISC-4: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun test test/auth/role-separation.test.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L5)
+- ISC-5: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/cookie-audit.ts --all-roles` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L6)
+- ISC-6: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/session-idle-timeout.ts --role all --fake-clock` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L7)
+- ISC-7: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/auth-rate-limit.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L8)
+- ISC-8: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/logout-probe.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L9)
+- ISC-9: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun test test/rbac/patient-scope.property.test.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L10)
+- ISC-10: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun test test/rbac/clinician-relationship.property.test.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L11)
+- ISC-11: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun test test/rbac/admin.property.test.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L12)
+- ISC-12: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun test test/rbac/auditor.property.test.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L13)
+- ISC-13: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun test test/rbac/break-glass.test.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L14)
+- ISC-15: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/empi-cross-region-probe.ts --test-fixture mrn-set-A` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L15)
+- ISC-16: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun test test/identity/merge-threshold.property.test.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L16)
+- ISC-18: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `k6 run load/appointment-autocomplete.js --vus 200 --duration 5m` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L17)
+- ISC-19: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/fhir-book.ts --sandbox epic` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L18)
+- ISC-20: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun test test/scheduling/booking-failure.test.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L19)
+- ISC-23: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/lab-latency-audit.ts --window 7d` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L20)
+- ISC-24: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun test test/labs/critical.property.test.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L21)
+- ISC-27: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/message-roundtrip.ts --direction to-ehr` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L22)
+- ISC-28: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/message-roundtrip.ts --direction to-portal` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L23)
+- ISC-29: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/message-at-rest-audit.ts && bun run scripts/tls-hop-audit.ts messaging` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L24)
+- ISC-34: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `psql "$AUDIT_DB" -f sql/audit-completeness.sql` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L25)
+- ISC-35: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/audit-chain-verify.ts --window 30d && bun run scripts/audit-tamper-drill.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L26)
+- ISC-36: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `aws s3api get-object-retention --bucket audit-logs --key $(date +%F).parquet` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L27)
+- ISC-37: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `k6 run load/audit-queries.js` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L28)
+- ISC-39: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/regional-outage-drill.ts --target us-west-2` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L29)
+- ISC-43: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/trace-correlation.ts --sample 100` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L30)
+- ISC-44: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/dashboards.ts --tag portal --names` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L31)
+- ISC-45: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `rg -l -i '^#+ .*false positive when' docs/runbooks/alerts/ | wc -l` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L32)
+- ISC-47: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `terraform plan -detailed-exitcode && aws events describe-rule --name console-change-revert | jq -r .State` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L33)
+- ISC-48: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/rollback-drill.ts --all-regions` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L34)
+- ISC-49: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/canary-failure-injection.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L35)
+- ISC-50: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bash scripts/secret-surface-scan.sh images taskdefs tfstate` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L36)
+- ISC-52: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `curl -s https://portal.beaconhealth.example.org/canary/_features | jq -r '.enabled | sort | join(",")'` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L37)
+- ISC-53: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/soak-report.ts --from 2026-04-08 --to 2026-04-22` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L38)
+- ISC-54: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `jq '[.findings[] | select(.severity=="high" and .status=="open")] | length' compliance/hitrust-2026-04.json` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L39)
+- ISC-60: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `rg "patient_id=|mrn=|dob=|ssn=" /var/log/cloudflare-edge/*.log /var/log/waf/*.log` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L40)
+- ISC-61: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `psql "$AUDIT_DB" -Atc "SELECT MIN(timestamp) <= now() - interval '6 years' + interval '7 days' OR MIN(timestamp) = (SELECT go_live FROM meta) FROM audit_log_archive"` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L41)
+- ISC-62: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/baa-reconciliation.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L42)
+- ISC-63: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun test test/preflight/idle-timeout.property.test.ts` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L43)
+- ISC-64: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/phi-residency-scan.ts --count` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L44)
+- ISC-65: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bun run scripts/flowlog-public-hops.ts --tag phi --window 7d --count` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L45)
+- ISC-66: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `psql "$IDENTITY_DB" -Atc "SELECT column_name FROM information_schema.columns WHERE column_name ~ 'password'"` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L46)
+- ISC-67: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `bunx eslint --rule 'beacon/no-role-mutation: error' src/` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L47)
+- ISC-68: verified 2026-04-28T20:30:00 — exit 0 in 0.3s — `psql "$AUDIT_DB" -Atc "SELECT count(*) FROM pg_stat_statements WHERE query ~ '(UPDATE|DELETE).+audit_log' AND userid = 'app_role'::regrole"` (ledger: 20260108-070000_beaconhealth-portal-v1-82ecd4413037#L48)

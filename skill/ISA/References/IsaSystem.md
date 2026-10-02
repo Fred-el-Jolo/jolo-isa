@@ -53,8 +53,8 @@ ISC IDs never re-number on edit. Splits become `ISC-7.1`, `ISC-7.2` under a pres
 
 ## What reads the ISA
 
-Only the model writes the ISA. Everything else reads it:
+Two writers, split by part: the model writes the content (sections, criteria, Test Strategy, Decisions, Changelog, the Goal / Ask / Deferred lines); the `isa` commands write the state (ticks, generated evidence lines, `progress`, `phase: complete`, `root`) — see `IsaFormat.md`. Everything else reads it:
 
-- **The work loop** (`IsaLoop.md`) — scaffolds at the start, checks completeness before closing, reconciles and appends along the way.
+- **The work loop** (`IsaLoop.md`) — `isa new` at the start, `isa verify` as claims become provable, `isa close` at the end; scaffolds, reconciles and appends along the way.
 - **A status line** (planned, not built) — reads `task`, `phase`, `progress`, `effort` from the frontmatter.
 - **A memory system** (planned, not built) — harvests learnings from completed ISAs and feeds relevant past ones into new scaffolds.

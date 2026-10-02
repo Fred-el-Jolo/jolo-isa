@@ -1,11 +1,11 @@
 # CheckCompleteness Workflow
 
-Score an existing ISA against the tier completeness gate and return a structured pass/fail + gap report. The gate is HARD at every tier and runs at two moments: **articulation** (done is written down, nothing built yet) and **close** (about to set `phase: complete`). Some sections can only honestly exist at close, so each moment checks different things.
+Score an existing ISA against the tier completeness gate and return a structured pass/fail + gap report. The gate is HARD at every tier and runs at two moments: **articulation** (done is written down, nothing built yet) and **close** (right before `isa close`). Some sections can only honestly exist at close, so each moment checks different things.
 
 ## When to invoke
 
 - End of articulation — Scaffold Step 9, after an Interview, or the work loop before building: `moment: articulation`.
-- Before closing — the work loop right before `phase: complete`: `moment: close`.
+- Before closing — the work loop right before `isa close`: `moment: close`.
 - User directly: `Skill("ISA", "check completeness of <isa-path> at tier <tier>")` — moment inferred (see Inputs).
 
 ## Inputs
@@ -122,9 +122,18 @@ The **latest** `- Goal: …` line in `## Verification` must say `yes`, and must 
 
 ### Step 5d — Open, deferred, and waived ISCs (close only)
 
-- Every non-dropped leaf ISC is `[x]` with a Verification entry, **or** waived by a Decisions row `waived: ISC-N — <user's reason>` (only the user can waive).
+- Every non-dropped leaf ISC is ticked by `isa verify` (with its generated Verification line), **or** waived by a Decisions row `waived: ISC-N — "<the user's words>"` (only the user can waive; the quote is checked against the session's prompts).
 - A `- ISC-N: [DEFERRED-VERIFY] — …` Verification line keeps the ISC `[ ]`. At close, every deferred ISC must also be waived.
 - Any other non-dropped, non-waived ISC still `[ ]` → hard failure: "open criteria at close: ISC-…".
+
+### Step 5e — Asks and shape rows (close only)
+
+- One `- Ask N: met | skipped — <why> | surfaced` line per entry of the frontmatter `asks`, in order. A missing line is an unmet ask → hard failure.
+- A `second-look:` Decisions row when any Test Strategy entry is `risk: high` or the tier is E4+.
+- A `class-sweep: <class> — …` Decisions row for every Test Strategy `class:`.
+- `finding:` and `repro-bypass:` rows, wherever they appear, match their shape (`References/IsaFormat.md` § Decisions).
+
+These are what `isa lint --close` and `isa close` check mechanically; `isa close` also re-runs every probe and refuses while an item is still blocked from an earlier turn. This workflow is the judgment layer on top (granularity, coverage, artifact presence, the honesty of the Goal line) — it never sets `phase: complete` itself: `isa close` does.
 
 ### Step 6 — Compose the report
 
@@ -132,7 +141,7 @@ Emit the structured YAML output above. Set `status: pass` only when zero hard se
 
 ### Step 7 — Block on hard gaps
 
-At `moment: articulation`, hard gaps block building — fill them first. At `moment: close`, hard gaps block the `phase: complete` transition — the caller must fill them before declaring done.
+At `moment: articulation`, hard gaps block building — fill them first. At `moment: close`, hard gaps block the close — fill them, then run `isa close <ISA>`, which re-runs every probe and writes `phase: complete` only when everything holds.
 
 ## Severity table
 
@@ -161,8 +170,16 @@ At `moment: articulation`, hard gaps block building — fill them first. At `mom
 | Goal-literal violation (Step 5a) | articulation | hard | hard | hard | hard | hard |
 | `Goal:` line missing or `no` (Step 5c) | close | hard | hard | hard | hard | hard |
 | Open or unwaived-deferred ISC (Step 5d) | close | hard | hard | hard | hard | hard |
+| Ask without a `- Ask N:` line (Step 5e) | close | hard | hard | hard | hard | hard |
+| `second-look:` row missing (`risk: high`, or E4+) | close | hard* | hard* | hard* | hard | hard |
+| `class-sweep:` row missing for a `class:` entry | close | hard | hard | hard | hard | hard |
+| Test Strategy entry without `kind:` | both | soft | hard | hard | hard | hard |
+| Probe type the entry's `kind:` refuses (incl. grep-only behaviour) | both | hard | hard | hard | hard | hard |
+| Risk keyword without a `risk:` declaration | both | soft | soft | hard | hard | hard |
 | Artifact-presence violation | both | — | — | — | hard | hard |
 | `context_sufficient` missing | both | — | hard | hard | hard | hard |
+
+\* only when an entry is `risk: high`. ISAs started before v2 (2026-10-02) get the `kind:` / `risk:` / `second-look:` / quoted-waiver rows as warnings, not errors.
 
 ## Failure modes
 

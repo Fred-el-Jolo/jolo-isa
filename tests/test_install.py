@@ -60,6 +60,24 @@ class TestInstall(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "pi", "extensions", "isa.ts")))
         self.assertTrue(os.path.islink(os.path.join(self.tmp, "local", "bin", "isa")))
 
+    def test_one_limit_for_every_hook(self):
+        """SPEC-v2 § 11: no hook waits for a model, so every ISA hook gets the same 15 s, and an older
+        install's 20 s UserPromptSubmit limit is brought back to 15 on the next install."""
+        self.run_install()
+        s = json.load(open(self.settings))
+        for g in s["hooks"]["UserPromptSubmit"]:
+            for h in g["hooks"]:
+                if "isa hook claude" in h.get("command", ""):
+                    h["timeout"] = 20
+        with open(self.settings, "w") as f:
+            json.dump(s, f)
+        self.run_install()
+        after = json.load(open(self.settings))
+        limits = [h["timeout"] for gs in after["hooks"].values() for g in gs for h in g["hooks"]
+                  if "isa hook claude" in h.get("command", "")]
+        self.assertEqual(len(limits), 6)
+        self.assertEqual(set(limits), {15})
+
     def test_idempotent(self):
         self.run_install()
         first = open(self.settings, "rb").read()

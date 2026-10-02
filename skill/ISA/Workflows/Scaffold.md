@@ -137,22 +137,23 @@ When the user invokes `proceed` after seeing the questions:
 
 ### Step 4 — Write frontmatter
 
+Create the ISA with `isa new <slug> --goal "<verbatim span of the prompt>" --tier <E1..E5>` (omit `--goal` when Step 3a found no literal). It writes the frontmatter below — `slug`, `started`, `root` and `stated_goal` (checked against the logged prompts), with `asks: []` — and binds the ISA to the session. It calls no model. Then fill in `task`, `asks` (each explicit ask of the prompt, copied verbatim — lint checks it) and the ambiguity-check outcome with Edit:
+
 ```yaml
 ---
-task: "8 word task description"
-slug: YYYYMMDD-HHMMSS_kebab-description
-project: <name>            # optional label: which codebase this task is about
-effort: <tier>
+task: "8 word task description"          # you
+slug: YYYYMMDD-HHMMSS_kebab-description  # isa new
+project: <name>                          # optional label: which codebase this task is about
+effort: <tier>                           # isa new (--tier); change it with a `refined:` Decision
 phase: observe
-progress: 0/<leaf-isc-count>   # leaf ISCs only — see References/IsaFormat.md § Field Rules
-started: <ISO-8601>
+progress: 0/0                            # engine-owned — recomputed by every isa command
+started: <ISO-8601>                      # isa new
 updated: <ISO-8601>
-# only when goal-signal detection fired + min-content rule passed (Step 3a)
-stated_goal: "verbatim quote"
+root: /home/me/dev/app                   # isa new — engine-owned, every probe's cwd
+stated_goal: "verbatim quote"            # isa new --goal (null when no literal passed Step 3a)
 stated_goal_source: prompt
-stated_goal_signal: 2
-stated_goal_locked: <ISO-8601>
-# outcome of the ambiguity check (Step 3.5)
+asks: ["<verbatim span>", ...]           # you write them: each explicit ask, verbatim from the prompt
+# outcome of the ambiguity check (Step 3.5) — required from E2
 context_sufficient: true
 interview_invoked: false
 ---
@@ -169,6 +170,8 @@ Scaffold writes only the **articulation sections**. Decisions, Changelog, and Ve
 | E3 | Problem, Vision, Out of Scope, Constraints, Goal, Criteria, Features, Test Strategy |
 | E4 | All eleven articulation sections (Dependencies/Bridge Criteria only when cross-ISA links exist) |
 | E5 | Same as E4, then run the Interview workflow before BUILD |
+
+Each Test Strategy entry carries `kind:` (what the ISC claims — it sets the minimum probe type: a `behaviour` claim is proven by running the code, never by a grep or a manual look), and `risk: high` or `risk: low — <why>` whenever the ISC or its probe mentions secrets, tokens, credentials, auth, logins, permissions, money, deploys, prod, publish, release or push. Probes run from the ISA's `root`: write them relative to the project (`cwd:` for a sub-directory). From E2, a mechanical probe whose ISC can't be seen failing first (`Anti:`, a config/doc/file/decision/visual/regression kind, `red: exempt`) also carries `fails-when: "<what the probe sees when the claim is false>"`. See `References/IsaFormat.md` § Test Strategy.
 
 ### Step 6 — Apply the Splitting Test to every ISC
 
@@ -192,11 +195,13 @@ If the goal is experiential — art, design, content, anything that has to "land
 
 ### Step 9 — Run CheckCompleteness
 
-Before returning, invoke `Workflows/CheckCompleteness.md` against the new ISA at the requested tier with `moment: articulation`. If any required articulation section is missing, fill it before declaring the scaffold complete.
+Before returning, run `isa lint <ISA>` (the mechanical gate — changes are refused until it is clean), then `Workflows/CheckCompleteness.md` at the requested tier with `moment: articulation` for the judgment parts. If any required articulation section is missing, fill it before declaring the scaffold complete.
+
+For each behaviour / http / schema criterion, write its test now and run `isa verify --red <ISA>` before building: the red run is the baseline that makes the later pass mean something.
 
 ### Step 10 — Return the path
 
-Output the absolute path of the created ISA file. The caller consumes this path.
+Output the absolute path of the created ISA file (the path `isa new` printed). The caller consumes this path.
 
 ## Ephemeral feature mode
 

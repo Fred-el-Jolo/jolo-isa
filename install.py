@@ -31,10 +31,10 @@ PERMS = ["Bash(isa:*)", "Read(~/.isa/**)", "Edit(~/.isa/**)", "Read(~/.claude/sk
 ISA_DIR = os.path.join(H, ".isa")
 
 
-TIMEOUT = 15  # every ISA hook is a quick file / ledger check; none runs probes
+TIMEOUT = 15  # every ISA hook is a quick file / ledger check: no probe, no model call (SPEC-v2 § 11)
 
 
-def hook_entry(cmd):
+def hook_entry(cmd, ev=None):
     return {"hooks": [{"type": "command", "command": cmd, "timeout": TIMEOUT}]}
 
 
@@ -53,7 +53,7 @@ def merge_settings(settings, cmd):
                 if h.get("command") == cmd:
                     h["timeout"] = TIMEOUT
         if not any(h.get("command") == cmd for g in groups for h in g.get("hooks", [])):
-            groups.append(hook_entry(cmd))
+            groups.append(hook_entry(cmd, ev))
     perms = s.setdefault("permissions", {})
     allow = perms.setdefault("allow", [])
     for p in PERMS:

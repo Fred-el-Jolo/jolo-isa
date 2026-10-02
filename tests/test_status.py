@@ -80,15 +80,15 @@ class StatusCase(unittest.TestCase):
 
     def test_unknown_session_is_null_not_error(self):
         rc, out, _ = self.run_isa("--json", "--session", "nope")
-        self.assertEqual((rc, json.loads(out)), (0, {"bound": None}))
+        self.assertEqual((rc, json.loads(out)["bound"]), (0, None))
+        self.assertEqual(json.loads(out)["mode"], "off")  # SPEC-v2: status also shows the session's mode
 
     def test_bound_file_deleted_is_null(self):
         os.remove(self.isa)
-        self.assertEqual(json.loads(self.run_isa("--json", "--session", "s1")[1]), {"bound": None})
+        self.assertIsNone(json.loads(self.run_isa("--json", "--session", "s1")[1])["bound"])
 
     def test_harness_selects_session_file(self):
-        self.assertEqual(json.loads(self.run_isa("--json", "--harness", "pi", "--session", "s1")[1]),
-                         {"bound": None})
+        self.assertIsNone(json.loads(self.run_isa("--json", "--harness", "pi", "--session", "s1")[1])["bound"])
 
     def test_text_mode_and_missing_session(self):
         rc, out, _ = self.run_isa("--session", "s1")

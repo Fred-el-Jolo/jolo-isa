@@ -45,6 +45,12 @@ def project_root(cwd):
 
 
 def project_key(cwd):
+    # a cwd inside an ISA folder belongs to that ISA's project, not to a project named after ~/.isa
+    d, h_isa = os.path.realpath(cwd or os.getcwd()), os.path.realpath(home())
+    if (d + os.sep).startswith(h_isa + os.sep):
+        first = os.path.relpath(d, h_isa).split(os.sep)[0]
+        if first not in (".", "_state"):
+            return first
     root = project_root(cwd)
     h = os.path.realpath(os.path.expanduser("~"))
     if root == h:
@@ -205,9 +211,12 @@ def read_session(harness, session_id):
         return {}
 
 
-def log_prompt(harness, session_id, text, prompt_id=None):
+def log_prompt(harness, session_id, text, prompt_id=None, cwd=None, project=None, context=None):
+    """One row per user prompt. `cwd`/`project` make "this project's prompts" a lookup (`isa new`), and
+    `context` keeps the tail of the assistant message the prompt answers (a "go" means what it approves)."""
+    row = {"t": time.time(), "id": prompt_id, "text": text, "cwd": cwd, "project": project, "context": context or ""}
     with open(os.path.join(state_dir("prompts"), f"{_safe(harness)}-{_safe(session_id)}.jsonl"), "a") as f:
-        f.write(json.dumps({"t": time.time(), "id": prompt_id, "text": text}) + "\n")
+        f.write(json.dumps(row) + "\n")
 
 
 def prompts(harness, session_id):
@@ -221,3 +230,36 @@ def prompts(harness, session_id):
 def log_error(msg):
     with open(os.path.join(state_dir(), "errors.log"), "a") as f:
         f.write(time.strftime("%Y-%m-%dT%H:%M:%S ") + msg.replace("\n", "\n    ") + "\n")
+
+
+# ------------------------------------------------------------------ transcript
+
+CONTEXT_CHARS = 2000
+
+
+def last_assistant_text(transcript_path, limit=CONTEXT_CHARS):
+    """The tail of the last assistant text in a Claude Code transcript (JSONL); "" when unreadable."""
+    if not transcript_path:
+        return ""
+    try:
+        size = os.path.getsize(transcript_path)
+        with open(transcript_path, "rb") as f:
+            f.seek(max(0, size - 1_000_000))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        try:
+            m = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(m, dict) or m.get("type") != "assistant":
+            continue
+        content = (m.get("message") or {}).get("content")
+        if isinstance(content, str):
+            text = content
+        else:
+            text = "\n".join(c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text")
+        if text.strip():
+            return text[-limit:]
+    return ""

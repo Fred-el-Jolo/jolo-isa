@@ -31,6 +31,7 @@ UNKNOWN = [
     "python3 script.py", "node build.js", "./run.sh", "bash deploy.sh", "rg foo $(cat list)",
     "gh pr create --fill", "curl -X POST https://api.x/y", "gh api -X DELETE repos/o/r", "pytest",
     "some-new-tool --flag", "awk '{print > \"out\"}' f", "git fetch", "cat x | python3 -c 'print(1)'",
+    "echo `rm x`", "echo \"$(rm x)\"", "grep 'a' `cat list`", "ls \"`pwd`\"",
 ]
 
 
@@ -49,8 +50,19 @@ class TestTable(unittest.TestCase):
     def test_unknown(self):
         self.check(UNKNOWN, "unknown")
 
+    def test_quoted_substitution_is_text(self):
+        # inside single quotes `…` and $( are plain text, e.g. grepping markdown for `code`
+        self.check([
+            "grep -n 'no `root`' SPEC.md", "rg -n 'uses `isa verify`' docs/", "grep -c '$(' f",
+            "grep 'a `b`' f && grep -n 'x' g", "echo 'it''s `fine`'",
+        ], "read")
+
     def test_isa_redirect(self):
-        k, isa = classify.bash("cat > ~/.isa/dev-x/1_a/ISA.md <<'EOF'\nx\nEOF", CWD)
+        # SPEC-v2 § 3.3: an ISA.md is written with Write/Edit (checked against the engine-owned fields),
+        # never from a shell; other files in an ISA folder stay free
+        k, _ = classify.bash("cat > ~/.isa/dev-x/1_a/ISA.md <<'EOF'\nx\nEOF", CWD)
+        self.assertEqual(k, "isa-shell-edit")
+        k, isa = classify.bash("cat > ~/.isa/dev-x/1_a/notes.md <<'EOF'\nx\nEOF", CWD)
         self.assertEqual((k, len(isa)), ("read", 1))
 
     def test_tools(self):
