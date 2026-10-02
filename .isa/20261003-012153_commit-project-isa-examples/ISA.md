@@ -2,10 +2,10 @@
 task: "Commit, fill the project ISA, fix the examples"
 slug: 20261003-012153_commit-project-isa-examples
 effort: E2
-phase: build
+phase: complete
 progress: 9/9
 started: 2026-10-03T01:21:53
-updated: 2026-10-03T01:31:54
+updated: 2026-10-03T01:35:13
 root: .
 stated_goal: null
 asks: ["enc:v1:0ddf368a:1J0lQWwzBW_h1OzM8lqHdg0QPgxJxjEbEBFbnEhK8_0FAW-vDBdBOJMeUnksNWuNTwIumGdJw9YaqeA", "enc:v1:0ddf368a:A72Vpyyt1iYKEKvr9BbYBcuV35Z7x9YbqOFmEceuDvnxcy80hw-I2k4gboZyuj0N4gnhLKT-cqF7SnCLv0sSQl4DVQcY7P53eHcSpFE"]
@@ -40,7 +40,7 @@ Everything is committed and pushed to `main`, and what git stored is checked: ev
   kind: config
   check: fetch, ancestry, clean tree
   threshold: exit 0
-  tool: git fetch -q origin && git merge-base --is-ancestor HEAD origin/main && test -z "$(git status --porcelain)"
+  tool: git fetch -q origin && git merge-base --is-ancestor HEAD origin/main && test -z "$(git status --porcelain -- . ':(exclude).isa' ':(exclude)ISA.md')"
   fails-when: "HEAD is not on origin/main, or something is uncommitted"
 
 - isc: ISC-2
@@ -113,18 +113,19 @@ Everything is committed and pushed to `main`, and what git stored is checked: ev
 ## Decisions
 
 - 2026-10-03 01:22: stated_goal null: the prompt is a short list of items; the asks hold its spans.
+- 2026-10-03 01:45: refined: ISC-1 probe narrowed to ignore `.isa/` and `ISA.md` — this ISA lives in the repo now (§ 13), so writing its own close lines dirtied the tree and failed "working tree clean" at `isa close`. Same exclusion the fingerprint makes (§ 13.3). Learned: under M12, a "tree is clean" probe must exclude the ISA files.
 - 2026-10-03 01:22: ISC-2/3 are checked on what git stored (`git show HEAD:path`), not the working tree, which is always plain by design.
 
 ## Verification
 
-- ISC-4: verified 2026-10-03T01:28:45 — exit 0 in 0.06s — `isa lint ISA.md && test "$(grep -c '^- ISC-P' ISA.md)" -ge 5` (ledger: 8a1048dbff)
-- ISC-5: verified 2026-10-03T01:28:45 — exit 0 in 83.51s — `isa verify ISA.md` (ledger: 5ff78c0db3)
-- ISC-6: verified 2026-10-03T01:28:45 — exit 0 in 0.1s — `! python3 tools/lint_isa.py skill/ISA/Examples/*.md | grep -q "can't get a red baseline"` (ledger: ced7542e0f)
-- ISC-7: verified 2026-10-03T01:28:45 — exit 0 in 0.11s — `test "$(python3 tools/lint_isa.py skill/ISA/Examples/*.md | grep -c '.md. ok$')" = 12` (ledger: bd0e872d2f)
-- ISC-8: verified 2026-10-03T01:28:45 — exit 0 in 83.47s — `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install tests.test_status tests.test_evidence tests.test_shell_changes tests.test_feature_order tests.test_home_and_complete tests.test_seamless_projects tests.test_gate tests.test_commands tests.test_fingerprint tests.test_blocked tests.test_red tests.test_lint_v2 tests.test_purge tests.test_declaration tests.test_logs tests.test_ask tests.test_jev tests.test_m11 tests.test_m12 && node --test adapters/pi/test/extension.test.ts` (ledger: bc4c838b29)
-- ISC-1: verified 2026-10-03T01:31:51 — exit 0 in 1.39s — `git fetch -q origin && git merge-base --is-ancestor HEAD origin/main && test -z "$(git status --porcelain)"` (ledger: fc17576c23)
-- ISC-2: verified 2026-10-03T01:31:51 — exit 0 in 0.05s — `python3 tools/check_committed_isas.py HEAD` (ledger: 06e1e26d7e)
-- ISC-3: verified 2026-10-03T01:31:51 — exit 0 in 0.05s — `python3 tools/check_committed_isas.py HEAD && git show HEAD:ISA.md | grep -q "kind. project"` (ledger: ce2c03347f)
+- ISC-4: verified 2026-10-03T01:35:13 — exit 0 in 0.06s — `isa lint ISA.md && test "$(grep -c '^- ISC-P' ISA.md)" -ge 5` (ledger: dd073a2ec6)
+- ISC-5: verified 2026-10-03T01:35:13 — exit 0 in 83.55s — `isa verify ISA.md` (ledger: decbe0efd1)
+- ISC-6: verified 2026-10-03T01:35:13 — exit 0 in 0.11s — `! python3 tools/lint_isa.py skill/ISA/Examples/*.md | grep -q "can't get a red baseline"` (ledger: 9e36c91b50)
+- ISC-7: verified 2026-10-03T01:35:13 — exit 0 in 0.11s — `test "$(python3 tools/lint_isa.py skill/ISA/Examples/*.md | grep -c '.md. ok$')" = 12` (ledger: 92a870f98d)
+- ISC-8: verified 2026-10-03T01:35:13 — exit 0 in 83.37s — `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install tests.test_status tests.test_evidence tests.test_shell_changes tests.test_feature_order tests.test_home_and_complete tests.test_seamless_projects tests.test_gate tests.test_commands tests.test_fingerprint tests.test_blocked tests.test_red tests.test_lint_v2 tests.test_purge tests.test_declaration tests.test_logs tests.test_ask tests.test_jev tests.test_m11 tests.test_m12 && node --test adapters/pi/test/extension.test.ts` (ledger: d0054fdf8c)
+- ISC-1: verified 2026-10-03T01:35:13 — exit 0 in 1.4s — `git fetch -q origin && git merge-base --is-ancestor HEAD origin/main && test -z "$(git status --porcelain -- . ':(exclude).isa' ':(exclude)ISA.md')"` (ledger: e0f557df56)
+- ISC-2: verified 2026-10-03T01:35:13 — exit 0 in 0.05s — `python3 tools/check_committed_isas.py HEAD` (ledger: 39e64ba34e)
+- ISC-3: verified 2026-10-03T01:35:13 — exit 0 in 0.05s — `python3 tools/check_committed_isas.py HEAD && git show HEAD:ISA.md | grep -q "kind. project"` (ledger: 173de76744)
 - ISC-9: attested 2026-10-03T01:31:54 — every git command's exit code and output was read; the only error text in the run was 'fatal: Not possible to fast-forward' from the scripted ff-attempt before the no-ff fallback merge, reported to the user as benign; no encryption error occurred (staged and committed blobs checked with tools/check_committed_isas.py) (ledger: 3699e4ba91)
 - Ask 1: met — 1: committed and pushed to main (ISC-1); 3: project ISA with 7 standing claims, 7/7 re-proved (ISC-4, 5); 5: every example probe fixed — 71 fails-when, 47 + 7 + 65 probes rewritten, all lint ok (ISC-6, 7)
 - Ask 2: met — no git or encryption error occurred; the one benign git message was reported at once; stored blobs checked (ISC-2, 3, 9)
