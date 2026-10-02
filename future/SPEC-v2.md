@@ -954,6 +954,7 @@ A git repo's ISAs always live at its root — there is no per-repo switch and no
 - `isa ls` lists the current repo's `.isa/`; `isa ls --all` adds `~/.isa`.
 - A repo whose root is `$HOME` (a dotfiles work tree, e.g. yadm) or contains `ISA_HOME` is treated as no repo: its `.isa/` would be `~/.isa` itself. Its ISAs stay in `~/.isa/_home/`, as today.
 - `isa new` warns when `git check-ignore` says `.isa/` is ignored: those ISAs would never be committed.
+- A root `ISA.md` that exists without `kind: project` frontmatter (a file of another meaning) is never overwritten: `isa new` creates no project ISA in that repo and says so once; task ISAs still go to `.isa/`.
 - A task that changes files in several repos lives in the repo of its `root` only. The links `state.note_project` creates today in other projects' folders go away; touching another repo adds nothing there.
 
 ### 13.2 The project ISA (`<repo>/ISA.md`)
@@ -1032,12 +1033,13 @@ Files on disk are always plain: the model reads and edits them, and lint compare
 
 - `.gitattributes` (committed, written by the first `isa new`):
   ```
-  .isa/**/ISA.md filter=isa
+  .isa/**/*.md filter=isa
   .isa/**/evidence.jsonl merge=union
   ```
-  The root `ISA.md` is deliberately not filtered (§ 13.5).
+  Every Markdown file under `.isa/` is filtered — the task ISAs and their `_ephemeral/` slices, which copy the Goal (and its opening quote) from the master. The root `ISA.md` is deliberately not filtered (§ 13.5).
 - Local git config (per clone, written by `isa` the first time it touches the repo): `filter.isa.clean = <launcher> crypt clean %f`, `filter.isa.smudge = <launcher> crypt smudge %f` — `<launcher>` being the absolute path of the installed `isa` (`~/.local/share/isa/runtime/bin/isa`), since git GUIs and hooks run with a minimal PATH — and **`filter.isa.required = true`**: when `clean` fails (no key, § 13.7), git refuses the commit. **A commit can never carry a plaintext prompt.**
 - A clone without the filter registered (a collaborator, CI) has an undefined driver, which git skips: those files show `enc:v1:` values, and a commit from there keeps them as they are. Nothing is ever decrypted there.
+- `filter.isa.process = <launcher> crypt process` (git's long-running filter protocol) is registered too, so one `isa` process serves a whole `git status` / `commit` / `checkout` and reads the key once, instead of one process — and one `key_command` call — per file.
 - After registering the filter in a fresh clone, `isa` re-checks out the ISA files that hold ciphertext and have no local changes, so they become plain.
 - `clean` replaces each field of § 13.5 by `enc:v1:<keyid>:<base64url(iv ‖ ciphertext ‖ tag)>` — a YAML string in the frontmatter, the quoted text in the body. A value already in that form passes through unchanged (idempotent; a line written under another key is kept as is).
 - `smudge` decrypts every `enc:v1:` value whose `keyid` matches the key; others are left as they are (§ 13.7).
@@ -1048,9 +1050,9 @@ Files on disk are always plain: the model reads and edits them, and lint compare
 
 What happens when `isa` touches a repo that holds `enc:v1:` values (or needs to encrypt) and no key is available, or only a key with another `keyid`:
 
-- **Option A — hard stop until a key is set.** Every hook in that repo refuses ISA work: the prompt hook shows `ISA: no key for this repo's encrypted prompts (key id ab12cd34). Run \`isa key import\` (the key from another machine) or \`isa key new\` (a new key; the old prompts stay unreadable).`; PreToolUse refuses writes that need an ISA; `isa new|verify|close` exit 2 with the same text; `git commit` fails through the required filter. Nothing proceeds half-encrypted.
+- **Option A — hard stop until a key is set.** Every hook in that repo refuses ISA work (binding, editing or verifying a task ISA; reads are never refused): the prompt hook shows `ISA: no key for this repo's encrypted prompts (key id ab12cd34). Run \`isa key import\` (the key from another machine) or \`isa key new\` (a new key; the old prompts stay unreadable).`; PreToolUse refuses writes that need an ISA; `isa new|verify|close` exit 2 with the same text; `git commit` fails through the required filter. Nothing proceeds half-encrypted.
 - **Option B — work on, block only the commit.** ISAs are created and used locally; encrypted values from other machines show as `enc:v1:…` (the stated-goal and asks checks accept spans with a ledger `quote-verified` row); the required filter refuses the commit with the same message. Lets the user keep working offline, but the problem surfaces late, at commit time.
-- **Option C — a new key automatically, error only on a mismatch.** When the repo holds no ciphertext yet and no key exists, `isa` creates one silently (`~/.isa/key`) and says so once; Option A applies only when ciphertext under an unknown `keyid` exists. Smooth on the first machine, but a second machine set up before copying the key gets its own key, and the repo then mixes two key ids.
+- **Option C — a new key automatically, error only on a mismatch.** When the repo holds no ciphertext yet and no key exists, `isa` creates one silently (`$ISA_HOME/key`) and says so once; Option A applies only when ciphertext under an unknown `keyid` exists. Smooth on the first machine, but a second machine set up before copying the key gets its own key, and the repo then mixes two key ids.
 
 The hard stop covers **only work that needs the key**: creating a task ISA (its first `isa verify` writes keyed HMACs — the `asks` snapshot, `quote-verified` rows), reading or editing a task ISA that holds `enc:v1:` values, and committing ISA files (the filter). The project ISA holds no prompt: `isa verify ISA.md`, CI and work on tasks without encrypted values carry on. A prompt the user let go on without an ISA (the Continue pass, § 12.4) is not ISA work and is never stopped.
 
@@ -1058,9 +1060,13 @@ The hard stop covers **only work that needs the key**: creating a task ISA (its 
 
 ### 13.8 The key
 
-- 32 random bytes, base64 in `~/.isa/key` (mode 0600), outside every repo. One key for all repos (simplest to share between machines); `keyid` in each value tells which key a value needs.
-- Sources, first found wins: `ISA_KEY` (environment, base64), `~/.isa/key`, `"key_command"` in `config.json` (a command printing the key, e.g. `pass show isa` — for a password manager).
-- Commands: `isa key new [--force]`, `isa key import [FILE|-]` (stdin by default, so the key never lands in shell history), `isa key export` (prints it, to copy to another machine), `isa key status` (this key's id; for the current repo, the key ids its ISAs use and how many values each).
+- 32 random bytes, base64 in `$ISA_HOME/key` (`~/.isa/key` by default; mode 0600), outside every repo. One key for all repos (simplest to share between machines); `keyid` in each value tells which key a value needs.
+- Sources, first found wins: `ISA_KEY` (environment, base64), `$ISA_HOME/key`, `"key_command"` in `config.json` (a command printing the key, e.g. `pass show isa` — for a password manager).
+- Commands: `isa key new [--force]`, `isa key import [FILE|-]` (stdin by default, so the key never lands in shell history), `isa key export [FILE]` (writes it to `FILE`, mode 0600, to copy to another machine; to stdout only in a terminal, § below), `isa key status` (this key's id; for the current repo, the key ids its ISAs use and how many values each; never the key).
+- **With a password manager.** When `config.json` sets `"key_command"` (reads the key, e.g. `pass show isa`), `isa key new` does not write `$ISA_HOME/key`: it hands the new key to `"key_store_command"` on its stdin (e.g. `pass insert -m isa`) and checks it reads back the same through `key_command`. Without a `key_store_command`, it writes the key to a 0600 file the user names (`isa key new --to FILE`) to import into the manager by hand, and refuses otherwise. Every machine then reads the key from the manager; nothing is copied between them.
+- **The key never reaches an agent.** A key printed in a Claude Code or pi session — by the model's Bash tool, or by the user's `! isa key …` — lands in the transcript, which goes to the model provider. So `isa key export` and `isa key new` write a key to stdout only when stdout is a terminal and no agent session is detected (`CLAUDE_CODE_SESSION_ID`, `PI_SESSION_ID`, `CLAUDECODE`); otherwise they need a FILE (or `key_store_command`). PreToolUse refuses the model any `isa key` command except `status`; the user runs them in their own terminal.
+- **Hooks never run `key_command`.** A password manager may prompt (a GPG pinentry) or be slow, and a hook has 15 s. Hooks decide "is a key available" from `ISA_KEY`, `$ISA_HOME/key`, or the key id cached in `_state/keyid` by the last command that ran `key_command` successfully; commands and the git filter are the only callers of `key_command`.
+- Not covered yet: rotating a compromised key (re-encrypting every repo's values under a new one, which needs both keys). `isa key new --force` only starts a new key; values under the old one stay unreadable without it.
 - Losing the key loses the encrypted quotes only; the ISAs keep working (Option B-like reading of `enc:` values) — back it up like an SSH key.
 
 ### 13.9 Migration and failure modes
@@ -1079,7 +1085,7 @@ The hard stop covers **only work that needs the key**: creating a task ISA (its 
 ### 13.10 Milestone M12
 
 - Code: repo-root paths (`state.project_dir`, `is_isa_path`, `is_master_isa`, `isa ls`), the project ISA (`kind: project` lint, `isa verify ISA.md`, `promote:` at close), the ledger beside the ISA with repo-relative paths and `machine`, `quote-verified` rows, `isa crypt clean|smudge`, the `.gitattributes` / filter setup, the key commands and sources, the missing-key behaviour of § 13.7 (Option A, with the explicit first `isa key new`), `isa migrate`; SKILL.md, AGENTS.md, ON block.
-- Tests: an ISA created in a repo lands in `.isa/` and creates `ISA.md`; a non-repo directory still uses `~/.isa`; a commit through the real filter stores `enc:v1:` for exactly the § 13.5 fields and plain text for everything else; checkout restores the plain text; the same plaintext encrypts to the same line; a tampered tag is refused; no key → the chosen § 13.7 behaviour, and `git commit` refused; a wrong key → values left encrypted, a hard stop; two clones (two `ISA_HOME`s, one bare remote) continue one task, ledgers merge by union, close succeeds on the second; `quote-verified` lets lint pass on the machine without the prompt; `isa migrate` on a fixture `~/.isa`; the project ISA's standing claims re-proved by `isa verify ISA.md`; a `promote: true` criterion missing from `ISA.md` blocks `isa close`; `isa verify` appending to `evidence.jsonl` leaves the fingerprint unchanged and `isa close` succeeds; a checkout that removes the bound ISA gives the "not on this branch" message, no `no-isa` block, and the binding returns with the file; the `asks` snapshot in the ledger holds HMACs only; every quoting form of § 13.5 is encrypted and a model paraphrase is not; a commit leaves the root `ISA.md` byte-for-byte plain, and lint refuses a quoting form in it; after a union merge with interleaved rows, `latest` picks the newest by `t`; a probe whose output contains the `stated_goal` writes `[user words]` in the ledger; a quote containing `\"` round-trips; a repo rooted at `$HOME` keeps its ISAs in `~/.isa/_home`; the project ISA is never bound.
+- Tests: an ISA created in a repo lands in `.isa/` and creates `ISA.md`; a non-repo directory still uses `~/.isa`; a commit through the real filter stores `enc:v1:` for exactly the § 13.5 fields and plain text for everything else; checkout restores the plain text; the same plaintext encrypts to the same line; a tampered tag is refused; no key → the chosen § 13.7 behaviour, and `git commit` refused; a wrong key → values left encrypted, a hard stop; two clones (two `ISA_HOME`s, one bare remote) continue one task, ledgers merge by union, close succeeds on the second; `quote-verified` lets lint pass on the machine without the prompt; `isa migrate` on a fixture `~/.isa`; the project ISA's standing claims re-proved by `isa verify ISA.md`; a `promote: true` criterion missing from `ISA.md` blocks `isa close`; `isa verify` appending to `evidence.jsonl` leaves the fingerprint unchanged and `isa close` succeeds; a checkout that removes the bound ISA gives the "not on this branch" message, no `no-isa` block, and the binding returns with the file; the `asks` snapshot in the ledger holds HMACs only; every quoting form of § 13.5 is encrypted and a model paraphrase is not; a commit leaves the root `ISA.md` byte-for-byte plain, and lint refuses a quoting form in it; after a union merge with interleaved rows, `latest` picks the newest by `t`; a probe whose output contains the `stated_goal` writes `[user words]` in the ledger; a quote containing `\"` round-trips; a repo rooted at `$HOME` keeps its ISAs in `~/.isa/_home`; an `_ephemeral/` slice holding the Goal quote is encrypted; an existing non-project `ISA.md` is left untouched; `isa key export` and `isa key new` refuse stdout under `CLAUDE_CODE_SESSION_ID` and PreToolUse refuses the model `isa key export`; with `key_command` + `key_store_command`, `isa key new` stores through the manager and leaves no `$ISA_HOME/key`; a hook never runs `key_command` (tripwire command); the project ISA is never bound.
 
 ### 13.11 Review (2026-10-03)
 
@@ -1107,6 +1113,18 @@ Settled by the user (2026-10-03): ISAs follow branches (§ 13.4b, option a); the
 4. **Quote boundaries undefined** for the body forms → closing `"` not preceded by `\`, one form per line, the Goal quote is the `stated_goal` literal itself (§ 13.5).
 5. **A repo rooted at `$HOME`** would put `.isa/` at `~/.isa` itself → treated as no repo (§ 13.1); an ignored `.isa/` gets a warning.
 6. **Why creating a task ISA needs the key** (keyed HMACs at the first verify), and **the Continue pass is never stopped** by a missing key → stated (§ 13.7).
+
+### 13.13 Third review (2026-10-03)
+
+1. **The key could reach the model.** `isa key export` (and the planned "print the new key" for password-manager users) would put the key in the session transcript when run through Claude Code's Bash tool or `!`. → stdout only in a terminal outside an agent session; otherwise a FILE; the model may run only `isa key status` (§ 13.8).
+2. **`isa key new` with a password manager** (the user's request) → `key_store_command` stores it, read back through `key_command`; no `$ISA_HOME/key` written (§ 13.8).
+3. **A hook could block on a password-manager prompt** → hooks never run `key_command`; they use `ISA_KEY`, the key file or a cached key id (§ 13.8).
+4. **Ephemeral slices were unfiltered** and copy the Goal's opening quote → the filter covers every `.md` under `.isa/` (§ 13.6).
+5. **Per-file filter processes** would run `openssl` and `key_command` once per file on every `git status` → git's long-running filter protocol (`filter.isa.process`) (§ 13.6).
+6. **The key file ignored `ISA_HOME`** (`~/.isa/key` hard-coded) → `$ISA_HOME/key` (§ 13.7, § 13.8).
+7. **An unrelated root `ISA.md`** could be overwritten by the first `isa new` → never overwritten (§ 13.1).
+8. **"Reading a task ISA" can't be refused** by hooks (reads are always allowed) → Option A names what it refuses: binding, editing, verifying (§ 13.7).
+9. **Key rotation** is not covered → stated as a known gap (§ 13.8).
 
 ## Decisions
 
