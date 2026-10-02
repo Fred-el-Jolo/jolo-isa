@@ -8,21 +8,24 @@ It folds in six review rounds (2026-10-01/02); their choices are listed under §
 
 ## 0. Principles
 
-1. **Iron law.** Every piece of work with a checkable end state gets an ISA. Only work the gate
-   question answers NO for is exempt, plus an explicit user opt-out (§ 1.6). "Read-only" is no longer
-   a category.
+1. **Iron law.** Every piece of work with a checkable end state gets an ISA. A prompt goes on
+   without one only when the user chooses so: they pick Continue when the judge does not say yes
+   (§ 12.4), or they ask for no ISA explicitly (§ 1.6). Headless runs, where nobody can be asked,
+   continue without one. "Read-only" is no longer a category.
 2. **The model owns the content, the engine owns the state.** The model writes prose and criteria
    with Write/Edit. Ticks, generated Verification lines, `progress`, `phase: complete`, `root:` and
    the ledger (including `blocked` rows, § 4.5) are written only by `isa` commands (§ 3).
 3. **Hooks never run probes and never write the ISA.** Hooks read the ISA, the ledger and the session
    state, then allow, refuse or add context. Probes run only inside `isa verify` / `isa close`, which
    the model calls. Hooks may append rows to the ledger and session state, never to `ISA.md`.
-4. **One model call in the hook path:** the gate question (§ 1). Every other hook decision stays
-   deterministic. Other judge uses (§ 7) run inside commands, never inside hooks.
-5. **Fail toward ON.** If the gate can't decide, the session is ON. A silent OFF is the worse
-   mistake under the iron law.
+4. **One judgment in the hook path:** the gate (§ 12), by Jev under a hard deadline, or by the
+   running model itself when Jev is unavailable. Every other hook decision stays deterministic. The
+   advisory judgments (§ 11.2) run inside commands, never inside hooks.
+5. **The user decides what the judge does not settle.** A yes (Jev ≥ `jev_gate`, or the model's
+   `yes`) requires an ISA; anything else, including a judge that can't be reached, goes to the user
+   (§ 12.4). A silent OFF is the mistake this prevents.
 6. **Hooks fail open.** An engine crash still lets the tool call through, with a visible message
-   (unchanged from v1). The difference: a judge *error* counts as an ON verdict, not as no decision.
+   (unchanged from v1). A Jev error is not a crash: the model judges instead (§ 12.2).
 
 ---
 
@@ -43,9 +46,11 @@ See § 12.2 and § 12.4: Jev judges as soon as the prompt exists, the running mo
 Stored in the session file: `mode: off|on`, `mode_reason`, `mode_since`, `mode_source`.
 
 ```
-            prompt verdict yes ─────────────┐
+            judge says yes ─────────────────┐
  (new) OFF ─┤                               ▼
-            prompt verdict no → stays OFF   ON  (sticky for the rest of the session)
+            not yes → user asked:            ON  (sticky for the rest of the session)
+               Enable ISA ─────────────────▶ ON
+               Continue (or nobody to ask) → stays OFF
             write call while OFF ──────────▶ ON  (the call is refused, see 1.4)
             unknown call that changed files ▶ ON  (detected after it ran, see 1.4)
 ```
@@ -71,12 +76,12 @@ Stored in the session file: `mode: off|on`, `mode_reason`, `mode_since`, `mode_s
 | Event | OFF | ON |
 |---|---|---|
 | SessionStart | Injects nothing (mode undecided) | Re-injects the ON block plus the bound ISA status and its open `blocked` items (resume / compaction) |
-| UserPromptSubmit | Runs the gate. NO: user sees `ISA: OFF — <reason>`; model context gets nothing. YES: switch ON, user sees `ISA: ON — <reason>`, model gets the **ON block** | Status line of the bound ISA, or "no ISA bound yet". Bound ISA `complete`: runs the gate again (§ 1.3); YES → "new task: new ISA, or reopen" |
+| UserPromptSubmit | Runs the gate (§ 12.2, Q1). Yes: switch ON, the ON block. Otherwise: the user is asked (§ 12.4); in Claude Code the model gets the instruction to ask, and to write its judge line when Jev is unavailable | Bound ISA open: Q2 (continuation or new task). Bound ISA `complete`: Q1 again; yes → "new task: new ISA, or reopen" |
 | PreToolUse, read / `isa-cmd` | allow | allow (`isa verify` / `isa close` refuse their own probes before articulation, § 3.2) |
 | PreToolUse, write | **Switch ON**, refuse: "ISA: ON — this change needs an ISA first." plus the ON block | v1 gate: needs a bound ISA that passes articulation; plus the ownership rules (§ 3.3) |
 | PreToolUse, unknown | Allow, taking v1's change snapshot (`changes.py`) | v1 gate, as for write |
 | PostToolUse | `unknown` that changed project files → switch ON (`mode_source: change`); Stop then requires an ISA for the turn. Otherwise nothing | v1: lint feedback, nudges; binding and mtime refresh for `isa-cmd` (§ 3.3); tick feedback replaced by the runner (§ 4) |
-| Stop | nothing | v1 checks, **plus: no bound ISA (or `needs_isa_since` unmet, § 1.3) → refuse to end the turn once, whether or not anything changed** (fixes run A) |
+| Stop | When the prompt was not settled as yes: the turn ends after the user's Continue (or nobody to ask); a missing question or judge line is refused once (§ 12.4, § 12.5) | v1 checks, **plus: no bound ISA (or `needs_isa_since` unmet, § 1.3) → refuse to end the turn once, whether or not anything changed** (fixes run A) |
 
 The Stop no-ISA check runs before the "nothing happened this turn" early return in `_stop`, since a
 review turn changes nothing. Its refusal text gives the model two exits:
@@ -100,29 +105,11 @@ User-visible lines go through `systemMessage` in Claude Code and `ctx.ui.notify`
 
 ### 1.5 OFF block / ON block
 
-**OFF block:** empty. In OFF mode the model sees nothing from the ISA system.
+**OFF:** the model gets nothing from ISA except, when the gate's answer is not yes, the short instruction of § 12.4 (ask the user; write the judge line when Jev is unavailable).
 
-**ON block** (`runtime/isa/protocol.md`, rewritten, ~12 lines; `{…}` are filled in):
+**ON block:** `runtime/isa/protocol.md` is the ON block (read SKILL.md first, `isa new`, write the content with `asks:` and `fails-when:`, `isa lint`, `isa verify --red`, `isa verify`, `isa close`, the Bash timeout, relaying `Jev:` lines). This spec no longer copies its text: the file is the reference.
 
-```
-[ISA: ON — this prompt asks for work with a checkable end state]
-Before any change, write the ISA for this task. Read {skill_dir}/SKILL.md first (the contract and
-the numbered completion rules), then:
-1. `isa new <slug> --goal "<verbatim span of the prompt>"` — creates {project_dir}/<stamp>_<slug>/ISA.md
-   with frontmatter, stated_goal, asks and root filled, and binds it to this session.
-2. Write Goal, Criteria (≥1 `Anti:`), Test Strategy with Write/Edit — never with shell commands.
-3. `isa lint <ISA>` until clean; changes are refused until it is.
-4. For behaviour/http/schema criteria, write the test and run `isa verify --red <ISA>` (it must
-   fail) before building. Prove criteria with
-   `isa verify <ISA> [ISC-N…]` — it runs the probes and ticks what passed. Self-attested criteria:
-   `isa verify <ISA> ISC-N --attest "<evidence>"`. You never tick boxes yourself.
-5. Finish with `isa close <ISA>` — it re-proves everything and closes. Your final answer quotes its summary.
-The turn can't end without a bound ISA, and can't end with an unproven claim.
-```
-
-The v1 bullets that move into SKILL.md: continuation vs new task, folding in discoveries,
-`stated_goal` rules, Feature order, "you cannot exempt yourself". The v1 bullet that made read-only
-work a special case is **deleted**, and its counterpart in `fit.md` / `fit.py` advice is deleted too.
+The v1 bullets that move into SKILL.md: continuation vs new task, folding in discoveries, `stated_goal` rules, Feature order, "you cannot exempt yourself". The v1 bullet that made read-only work a special case is **deleted**.
 
 ### 1.6 Explicit opt-out (the "very specific cases")
 
@@ -130,18 +117,20 @@ work a special case is **deleted**, and its counterpart in `fit.md` / `fit.py` a
   `mode_source: override`.
 - `ISA_MODE=on`: forces ON from the first prompt (e.g. the eval harness).
 - `ISA_MODE=auto` (default): the gate decides.
-- The model can't change the mode. A user prompt saying "skip the ISA" goes through the gate like any
-  other prompt.
+- The model can't change the mode. A user prompt saying "skip the ISA" is the user's explicit opt-out:
+  Q1 does not count it as work, so the user is asked and Continue (the default) goes on without one
+  (§ 12.3, § 12.4).
 
 ### 1.7 Failure modes
 
 | Failure | Behaviour |
 |---|---|
-| Judge CLI missing | `heuristic`, logged once per session |
-| Judge slow / errors | `yes` (ON), `source: error`, user sees `ISA: ON — judge unavailable (<why>)` |
-| Harness kills the engine before the judge returns | Prevented by the limits in § 1.2; a kill is logged by the adapter as a hook error |
-| False NO | The first mutation switches ON. Only answers with no change at all escape; the judge log makes those measurable in evals |
-| False YES | The cost is an ISA for a small task (E1 is a minute of work), or one Stop refusal on a question turn. Accepted |
+| Jev unavailable | Switched off, missing, out of credit, over budget, tripped, past 1.5 s or garbled: the running model judges (§ 12.2), and the user gets one message per session per kind of outage (§ 11.4) |
+| The model skips the question or its judge line (Claude Code) | Stop refuses once, then lets the turn end with a warning (§ 12.4, § 12.5) |
+| Nobody to ask (headless) | Continue without ISA, logged |
+| The engine crashes or is killed | Fails open with a visible message (principle 6); logged in `errors.log` |
+| False "not yes" | The user is asked and can pick Enable ISA; the first change switches ON anyway |
+| False yes | The cost is an ISA for a small task (E1 is a minute of work). Accepted |
 
 ---
 
@@ -827,7 +816,7 @@ The judge is **Jev first; the running model when Jev is unavailable** (switched 
 |---|---|---|
 | No ISA bound to the session | Q1: is this work? | Yes → ON, the ON block, an ISA is required. Otherwise → ask the user (§ 12.4). |
 | The bound ISA is complete | Q1: is this work? | Yes → a new ISA or a reopen is required. Otherwise → ask the user. |
-| An open ISA is bound | Q2: continuation or new task? | Jev ≥ `jev_gate` "new task" → a new ISA is required (`isa new`), and the old one is marked paused or superseded (§ 12.7). Otherwise → continuation, nothing asked. When Jev is unavailable, Q2 is not asked: the prompt is a continuation, and the model can still start a new ISA itself when it sees a different task. |
+| An open ISA is bound | Q2: continuation or new task? | Jev ≥ `jev_gate` "new task" → a new ISA is required, and the old one is marked paused or superseded once it is bound (§ 12.7). Stop enforces it as after a complete ISA (`needs_isa_since`, § 1.3): it refuses once until a new ISA is bound after that prompt. Otherwise → continuation, nothing asked. When Jev is unavailable, Q2 is not asked: the prompt is a continuation, and the model can still start a new ISA itself when it sees a different task. |
 
 **No judge runs:** at session start, resume or compaction (there is no prompt); when the session is ON with no ISA written yet (one is already required); under `ISA_MODE=off|on`; for an empty prompt. A slash command (a skill invocation) is **judged** like any prompt (§ 12.6).
 
@@ -839,7 +828,7 @@ The text of Q1 is Jev's preset question and, when Jev is unavailable, the instru
 
 > The user's message (and, if it invokes a skill, that skill's description) — does it ask for a deliverable that could be done wrong in ways the reply alone would not reveal?
 > **Yes:** changing code, files, configuration or systems; fixing a bug; reviewing or auditing something; writing a plan, spec, design or report as a document; comparing options and recommending one in writing; finding out why something in the user's own project or system is slow, failing or wrong; deploying or publishing something whose result can be broken while every command succeeds; any task that needs choosing what to include or where to change (splitting commits, selecting files, renaming across a codebase); running a skill whose description is one of these.
-> **No:** anything the reply itself settles: looking something up; showing or listing what a file, log or command contains; explaining how something works or what code does; general knowledge; opinions; discussing an idea or a design in conversation, without a written deliverable; greetings and small talk.
+> **No:** the user explicitly asks to work without an ISA. Also anything the reply itself settles: looking something up; showing or listing what a file, log or command contains; explaining how something works or what code does; general knowledge; opinions; discussing an idea or a design in conversation, without a written deliverable; greetings and small talk.
 > **Also no:** straightforward operations whose steps are evident and whose failure the tool reports by itself (an error, a non-zero exit), even with a few steps or details: commit (with or without a given message), commit and push, run the tests, install dependencies, rename a branch, tag and push a tag.
 > A short reply ("go", "yes do it") counts as whatever it approves in the assistant's previous message.
 
@@ -859,7 +848,7 @@ Whenever Q1 is not settled as yes, the user is **always** asked: *"ISA is not en
 Not guaranteed: if the model skips the question, Stop refuses once and then lets the turn end with a warning (as in M8). When Jev is unavailable, the model also writes its judge line (§ 12.5) and asks when it is `no` or `unsure`.
 
 **pi lifecycle:**
-1. `input` (the earliest point; the raw text, `/skill:name …` not yet expanded): Jev runs here. Below the line, the extension asks with `ctx.ui.select` right here, **before the model sees anything**. Enable ISA switches the session ON.
+1. `input` (the earliest point; the raw text, `/skill:name …` not yet expanded): Jev runs here, only when the agent is idle. A message typed while the agent runs (`streamingBehavior: "steer" | "followUp"`) belongs to the current run: no judge, no question. Below the line, the extension asks with `ctx.ui.select` right here, **before the model sees anything**. Enable ISA switches the session ON.
 2. `before_agent_start`: the ON block is injected when the session is ON.
 3. Model and tool events: `tool_call` / `tool_result` gate as before.
 4. `agent_before_settle`: the Stop checks. When Jev was unavailable and the model judged `no` or `unsure`, the extension asks here, after the answer, and Enable ISA continues the run with the ON block.
@@ -871,7 +860,7 @@ Guaranteed while there is a UI: the extension asks, not the model.
 
 ### 12.5 Who judged — in the session and in the log
 
-- **The harness session (what the user sees):** the prompt hook's message names the judge and its result, e.g. `ISA gate — Jev 0.93 → ON`, `ISA gate — Jev 0.31 → asking you`, `ISA gate — Jev unavailable (credit) → the model judges`, `ISA gate — Jev 0.87 → new task: new ISA (open one paused)`. The question to the user names the judge too.
+- **The harness session (what the user sees):** on every judged prompt, continuations included, the prompt hook's message names the judge and its result, e.g. `ISA gate — Jev 0.12 → continuation`, `ISA gate — Jev unavailable → continuation (the model may start a new ISA)`, `ISA gate — Jev 0.93 → ON`, `ISA gate — Jev 0.31 → asking you`, `ISA gate — Jev unavailable (credit) → the model judges`, `ISA gate — Jev 0.87 → new task: new ISA (open one paused)`. The question to the user names the judge too.
 - **The model's line, when it judges Q1:** the answer contains `ISA judge (model): yes|no|unsure — <reason>`, anywhere in the last assistant message: in Claude Code the model often calls tools before it writes any text, so the line can't be required first. Stop (pi: `agent_before_settle`, on the same last-message text) refuses once when the line is missing, no ISA was bound and the user was not asked. Q2 never needs a model line.
 - **The debug log:** the prompt row carries `"judge": "jev" | "model"`, `"question": "q1" | "q2"`, the Jev score (or the unavailability reason), and the outcome; the Stop row carries the model's verdict and reason when it judged, and the user's choice.
 
@@ -893,14 +882,14 @@ What M11 builds on these facts:
 
 ### 12.7 Paused and superseded ISAs
 
-**When.** An open ISA is marked only when `isa new` creates an ISA after Q2 answered "new task" for that prompt. **Editing another ISA never rebinds the session or marks anything.** Binding rule from M11: a Write/Edit of an ISA.md binds it only when no open ISA is bound, or when the write creates the file. Editing an existing ISA while another is bound (a review skill adding a finding, the model fixing a past ISA's note) changes content, not the binding.
+**When.** An open ISA is marked only when a new ISA is bound after Q2 answered "new task" for that prompt (created by `isa new`, or by a Write that creates the file). **Editing another ISA never rebinds the session or marks anything.** Binding rule from M11: a Write/Edit of an ISA.md binds it only when no open ISA is bound, or when the write creates the file. Editing an existing ISA while another is bound (a review skill adding a finding, the model fixing a past ISA's note) changes content, not the binding.
 
 **How.** The binding hook appends a ledger row to the old ISA (hooks never edit an ISA file; they may write the ledger): `{"kind": "paused" | "superseded", "by": "<new slug>", "t": …}`. The label comes from Q2's `resumes` answer: ≥ 0.5 → **paused** (a side task, coming back), below → **superseded** (left for good). When Jev is unavailable the model starts new ISAs itself, so there is no Q2 answer, and the old one is paused by default (the reversible label).
 
 **Effects.**
 - `isa ls` and `isa status` show the label.
 - Stop no longer treats the ISA as open work.
-- It stays resumable: binding it again (`isa current` lists it; the model edits it while no other open ISA is bound) or reopening it (`phase: learn`) appends `{"kind": "resumed"}`.
+- It stays resumable: binding it again (`isa ls` lists it with its label; the model edits it while no other open ISA is bound) or reopening it (`phase: learn`) appends `{"kind": "resumed"}`.
 - Paused and superseded behave the same; the label only tells a reader whether the switch looked temporary.
 
 ### 12.8 Config
@@ -1037,3 +1026,6 @@ Taken in the sixth review round:
     never on a plain edit, as paused (side task, the default) or superseded (left for good). Q2 needs no
     model line. The gate rule is plain: yes → ISA, otherwise the user decides. pi judges at its `input`
     event, the earliest point. Harness facts for slash commands and session ids were checked live.
+35. **Second § 12 review (2026-10-02):** § 0 and §§ 1.3–1.7 now follow § 12 (the user decides what the
+    judge does not settle; no fail-toward-ON). The user's explicit "no ISA" is a Q1 "no". pi judges
+    only idle prompts. The "who judged" message shows on every judged prompt.
