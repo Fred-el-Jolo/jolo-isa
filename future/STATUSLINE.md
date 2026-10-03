@@ -1,6 +1,6 @@
 # Future B — "ISA status" status line
 
-> **Status: built for Claude Code.** The data side is `isa status --session <id> [--harness H] --json` (`runtime/isa/status.py`): it follows option 2 below through the engine's own session binding, and lists the leaf ISCs `progress` counts (via `lint.collect_iscs` / `lint.leaf_iscs`, so the two never disagree). The renderer is a separate Node statusLine client in `~/dev/progress-outline`. A pi display (`ctx.ui`) can consume the same JSON later. The LifeOS status line is deliberately **not** carried over.
+> **Status: built for Claude Code.** The data side is `isa status --session <id> [--harness H] --json` (`runtime/isa/status.py`): it follows option 2 below through the engine's own session binding, and lists the leaf ISCs `progress` counts (via `lint.collect_iscs` / `lint.leaf_iscs`, so the two never disagree). The renderer is the Node statusLine client in `adapters/claude-statusline/` (installed by `python3 install.py --statusline`; it was the standalone `progress-outline` repo until 2026-10-03). A pi display (`ctx.ui`) can consume the same JSON later. The LifeOS status line is deliberately **not** carried over.
 
 ```json
 {"bound": "/…/ISA.md", "task": "…", "effort": "E3", "phase": "build", "progress": "3/15",

@@ -1,0 +1,23 @@
+{
+  "name": "isaStatusline",
+  "type": "object",
+  "description": "config.json for the ISA statusLine (next to harness.ts)",
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["auto", "compact", "wide"],
+      "description": "'auto' picks compact vs wide from the terminal's reported column count; 'compact'/'wide' pin it regardless of width",
+      "default": "auto"
+    },
+    "color": {
+      "type": "boolean",
+      "description": "Master color switch. NO_COLOR, if set in the environment, always wins over this.",
+      "default": true
+    },
+    "isaBin": {
+      "type": "string",
+      "description": "Path to the `isa` launcher. $ISA_BIN wins; default ~/.local/bin/isa."
+    }
+  },
+  "additionalProperties": false
+}

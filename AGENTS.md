@@ -10,7 +10,7 @@ This folder is a port of the **ISA (Ideal State Artifact) skill** out of LifeOS,
 4. **Enforce it in every session.** A skill loads only when the model decides to, so hooks do the deciding: Claude Code hooks (user scope) and a pi extension call one shared engine. Every prompt that needs a decision is judged once — by Jev, else by the running model (`ISA judge (model): yes|no|unsure — <reason>`) — and whatever is not a yes goes to the user (Continue without ISA / Enable ISA); while ON, changes wait for an ISA that passes the gate, the `isa` commands own the ISA's state (ticks, evidence lines, `progress`, `phase: complete`), and a turn can't end without an ISA or with an unproven claim. See § Enforcement and `future/SPEC-v2.md` § 12.
 5. **Future, not built yet:**
    - A: memory. Learn from completed ISAs and reuse those learnings when scaffolding new ones, with the user approving each item. See `future/MEMORY.md`.
-   - B: an "ISA status" status line. The data side is built (`isa status --json`, `runtime/isa/status.py`); the Claude Code renderer lives in `~/dev/progress-outline`. See `future/STATUSLINE.md`.
+   - B: an "ISA status" status line. The data side is built (`isa status --json`, `runtime/isa/status.py`); the Claude Code renderer is `adapters/claude-statusline/` (opt-in: `python3 install.py --statusline`; moved here from the standalone `progress-outline` repo on 2026-10-03). See `future/STATUSLINE.md`.
    - C (possible, not planned): project ISAs, a living per-repo spec. Removed from the skill; see `future/project-isa/`.
    - D: TypeSafe / Jev judgments standing in for the model's self-grading (evidence check, verbatim goal selection, waiver hook, …). Analysis only; the wrapper is built in a separate repo. See `future/JEV.md`.
 
@@ -52,6 +52,7 @@ isa-skill-export/
 │       ├── cli.py                ← `isa ls|new|where|lint|verify|close|status|current|purge-logs|hook`; the Claude Code adapter lives here
 │       └── protocol.md           ← the ON block injected when a session turns ON
 ├── adapters/pi/isa.ts            ← pi extension → `isa hook pi` (installed to ~/.pi/agent/extensions/)
+├── adapters/claude-statusline/   ← Claude Code statusLine (Node TS): renders `isa status --json`; opt-in, installed to ~/.local/share/isa/statusline
 ├── install.py                    ← install / --uninstall / --dry-run for both harnesses
 ├── tests/                        ← unit + end-to-end tests of the hooks, gate, commands, fingerprint, lint rules, installer
 ├── tools/
@@ -69,10 +70,11 @@ isa-skill-export/
 ```bash
 python3 install.py --dry-run   # see what changes
 python3 install.py             # install / update (idempotent)
-python3 install.py --uninstall # remove everything except the ISAs in ~/.isa
+python3 install.py --statusline # also wire the ISA statusLine (keeps an existing one, e.g. ccstatusline)
+python3 install.py --uninstall # remove everything except the ISAs in ~/.isa (and restore the previous statusLine)
 ```
 
-Needs `python3` (standard library only) and, for pi, the pi agent at `~/.pi/agent`. The installer copies the runtime and the skill, links `~/.local/bin/isa`, merges hook entries and permissions (`Bash(isa:*)`, `Read`/`Edit(~/.isa/**)`, `Read(~/.claude/skills/ISA/**)`, `additionalDirectories: ~/.isa`) into `~/.claude/settings.json` — keeping every other entry and backing the file up first — and copies the pi extension. New sessions are gated from the start; a running Claude Code session picks the hooks up live.
+Needs `python3` (standard library only) and, for pi, the pi agent at `~/.pi/agent`. The installer copies the runtime and the skill, links `~/.local/bin/isa`, merges hook entries and permissions (`Bash(isa:*)`, `Read`/`Edit(~/.isa/**)`, `Read(~/.claude/skills/ISA/**)`, `additionalDirectories: ~/.isa`) into `~/.claude/settings.json` — keeping every other entry and backing the file up first — and copies the pi extension. With `--statusline` (node ≥ 23.6, via `mise which node`, else PATH) it also copies `adapters/claude-statusline/` to `~/.local/share/isa/statusline` (keeping its `config.json`) and wires `statusLine`: an existing statusLine command is kept in `_isaInnerCommand` and run by `scripts/statusline-wrapper.cjs` above the ISA rows, re-runs never nest, `--uninstall` puts it back, and an entry wired by the old `progress-outline` repo (`_isaManaged`, or `_taskPlanManaged` plus its `TodoWrite` capture hook) migrates in place. Once wired, every install refreshes it; `install.py` stays the only writer of settings.json. New sessions are gated from the start; a running Claude Code session picks the hooks up live.
 
 The skill still loads from its description, and can be called directly (`Skill("ISA", "scaffold from prompt: <...> at tier E3")`), but nothing depends on that any more: when a session turns ON, the ON block tells the model to read `SKILL.md` first.
 
@@ -252,8 +254,8 @@ Exported 2026-09-22 from a LifeOS 7.1.1 install:
 
 ## Working rules for this folder
 
-- What installs: `skill/ISA/`, `runtime/`, `adapters/pi/isa.ts` (via `install.py`). `future/` and this file are design notes.
-- Run the tests before installing: `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install tests.test_status tests.test_evidence tests.test_shell_changes tests.test_feature_order tests.test_home_and_complete tests.test_seamless_projects tests.test_gate tests.test_commands tests.test_fingerprint tests.test_blocked tests.test_red tests.test_lint_v2 tests.test_purge tests.test_declaration tests.test_logs tests.test_ask tests.test_jev tests.test_m11 tests.test_m12 tests.flow.test_isa_flow` and `node --test adapters/pi/test/extension.test.ts`. No test calls a model or the real `jev`; `HookCase` drops every inherited `ISA_*` variable and points `ISA_JEV_BIN` at nothing (`tests/test_jev.py` uses a fake `jev`; `ISA_FLOW_LIVE=1 python3 -m unittest tests.flow.test_jev_live` makes six real calls), and the declaration tests put tripwire `claude` / `pi` / `jev` CLIs on PATH that fail the test if a hook calls them. With PyYAML on `PYTHONPATH`, also `tests/test_yamlish.py` and `tests/test_lint_parity.py`.
+- What installs: `skill/ISA/`, `runtime/`, `adapters/pi/isa.ts`, and with `--statusline` `adapters/claude-statusline/` (via `install.py`). `future/` and this file are design notes.
+- Run the tests before installing: `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install tests.test_status tests.test_evidence tests.test_shell_changes tests.test_feature_order tests.test_home_and_complete tests.test_seamless_projects tests.test_gate tests.test_commands tests.test_fingerprint tests.test_blocked tests.test_red tests.test_lint_v2 tests.test_purge tests.test_declaration tests.test_logs tests.test_ask tests.test_jev tests.test_m11 tests.test_m12 tests.flow.test_isa_flow` and `node --test adapters/pi/test/extension.test.ts adapters/claude-statusline/test/renderer.test.ts`. No test calls a model or the real `jev`; `HookCase` drops every inherited `ISA_*` variable and points `ISA_JEV_BIN` at nothing (`tests/test_jev.py` uses a fake `jev`; `ISA_FLOW_LIVE=1 python3 -m unittest tests.flow.test_jev_live` makes six real calls), and the declaration tests put tripwire `claude` / `pi` / `jev` CLIs on PATH that fail the test if a hook calls them. With PyYAML on `PYTHONPATH`, also `tests/test_yamlish.py` and `tests/test_lint_parity.py`.
 - The whole-flow test (`tests/flow/test_isa_flow.py`, SPEC-v2 § 9) is live and paid (two Sonnet 5.5 sessions, about $0.30): `ISA_FLOW_LIVE=1 python3 -m unittest tests.flow.test_isa_flow`. It writes `flow/<stamp>/` (articulation and final ISA, timeline, verdict, transcripts, sandbox state) into the `eval-results` worktree at `tests/evals/results/` and commits it there. A run that dies on an API error is neither graded nor committed. Without the switch it is skipped.
 - Keep `runtime/` standard-library only (`python3 tests/check_stdlib.py runtime/`).
 - Keep it free of LifeOS: no `LIFEOS/` paths, no `localhost:31337`, no personal data. Check with `rg -n -i 'lifeos|31337|MEMORY/WORK|\btelos\b|\bpulse\b' skill/`. Expected: zero hits. Provenance lives only in this file (§ Source provenance), never inside `skill/`.

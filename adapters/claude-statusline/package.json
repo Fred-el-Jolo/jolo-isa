@@ -1,0 +1,9 @@
+{
+  "name": "isa-statusline",
+  "private": true,
+  "type": "module",
+  "description": "Claude Code statusLine showing the ISA bound to the current session: tier, phase, progress, open ISCs.",
+  "scripts": {
+    "test": "node --test 'test/*.test.ts'"
+  }
+}
