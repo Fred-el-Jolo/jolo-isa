@@ -63,7 +63,9 @@ test("the gate: Jev below the line asks; a Jev yes injects the ON block once", a
     const select = async (_t: string, options: string[]) => options[0]
     const { fire, notes } = harness("s-protocol", undefined, [], { select })
     await fire("input", { text: "hello", source: "interactive" })
-    assert.equal(await fire("before_agent_start", { prompt: "hello" }), undefined)
+    const cont = await fire("before_agent_start", { prompt: "hello" })
+    assert.match(cont.message.content, /Continue pass/)
+    assert.doesNotMatch(cont.message.content, /\[ISA: ON/)
     assert.ok(notes.some((n) => /^ISA gate — Jev 0\.50 → asking you/.test(n)))
     process.env.FAKE_JEV_P = "0.93"
     await fire("input", { text: "Fix the bug in dates.py so the tests pass", source: "interactive" })
@@ -210,7 +212,7 @@ test("no UI: nobody asks the user, the model's `no` stands", async () => {
 
 const QUESTION = "what does cmd_list in todo.py print?"
 
-test("M11: below the line, pi asks at input before the model; Continue injects nothing", async () => {
+test("M11: below the line, pi asks at input before the model; Continue tells the model about the pass", async () => {
   await withJev("0.31", async () => {
     const asked: string[] = []
     const select = async (title: string, options: string[]) => { asked.push(title); return options[0] }
@@ -218,7 +220,10 @@ test("M11: below the line, pi asks at input before the model; Continue injects n
     const r = await fire("input", { text: QUESTION, source: "interactive" })
     assert.deepEqual(r, { action: "continue" })
     assert.deepEqual(asked, ["ISA is not enabled for this prompt (Jev: 0.31). Continue?"])
-    assert.equal(await fire("before_agent_start", { prompt: QUESTION }), undefined)
+    // the model is told about the pick (TODO 2026-10-03), and the run is never restarted
+    const p = await fire("before_agent_start", { prompt: QUESTION })
+    assert.match(p.message.content, /the user chose Continue without ISA/)
+    assert.match(p.message.content, /no `ISA judge \(model\):` line/)
     assert.equal(await fire("agent_before_settle", DONE), undefined)
   })
 })

@@ -18,3 +18,5 @@ slow): the default 120 s can stop a long run halfway, leaving the ISA open. When
 The turn can't end without a bound ISA, and can't end with an unproven claim.
 Later prompts are judged again (SPEC-v2 § 12): a new task gets its own ISA (the open one is marked paused);
 when Jev is unavailable after a finished ISA, put `ISA judge (model): yes|no|unsure — <reason>` in your answer.
+When the user picks Continue without ISA for a later prompt, this block does not apply to that prompt: answer
+with no ISA and no `ISA judge (model):` line (that line is only for a Jev outage).

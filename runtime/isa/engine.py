@@ -365,17 +365,30 @@ def _record_choice(ev, choice):
         note(asked=True, choice=choice)
         if choice != "enable":
             st["pass"] = st["gate"].get("pid")  # the Continue pass: no ISA gate for the rest of this prompt
-            return {}
+            return {"context": _continue_text(st["gate"], choice)}
         _switch_on(st, "user", "the user chose to enable ISA")
         st["needs_isa_since"] = ev.get("prompt_id")
     return {"warn": "ISA: ON — you chose to enable it",
             "context": f"The user chose {ASK_ENABLE}: write the ISA and do the work under it.\n\n" + _on_block(ev.get("cwd"))}
 
 
+def _continue_text(gate, choice):
+    """What the model reads after a Continue pick (or a failed question): the gate's outcome and the pass.
+    Without it the model only holds the pre-ask line and older ON blocks, and hedges with a judge line."""
+    judge = f"Jev {gate['score']:.2f}" if isinstance(gate.get("score"), (int, float)) else "the model's own verdict"
+    picked = f"the user chose {ASK_CONTINUE}" if choice == "continue" else "the question could not reach the user"
+    return (f"[ISA gate — {judge}: not settled as work; {picked}]\n"
+            "The Continue pass holds for the rest of this prompt: answer and make changes with no ISA, write no "
+            "`ISA judge (model):` line, and ignore any earlier ISA protocol for this prompt. This supersedes any "
+            "line saying this prompt needs a new ISA (or a reopen). The next prompt is judged again.")
+
+
 def _ask_answer(ev):
     """pi: the adapter asked with its own dialog and reports the pick."""
     choice = "enable" if ASK_ENABLE.lower() in str(ev.get("choice") or "").lower() else "continue"
     res = _record_choice(ev, choice)
+    if choice != "enable":  # never `block`: at settle that would restart a run the user let end
+        return res
     # asked at `input`: the context goes before the model; asked at settle: the run continues with it
     return {"context": res["context"], "block": res["context"], "warn": res["warn"]} if res else {}
 

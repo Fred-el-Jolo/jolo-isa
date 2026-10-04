@@ -8,8 +8,10 @@ Run: python3 -m unittest tests.test_ask
 """
 import json
 import os
+import subprocess
+import sys
 
-from tests.test_hooks import HookCase
+from tests.test_hooks import CLOSED, ISA, HookCase
 from tests.test_jev import setup_fake
 
 QUESTION = "what does cmd_list in todo.py print?"
@@ -152,3 +154,52 @@ class TestAskLog(AskCase):
 if __name__ == "__main__":
     import unittest
     unittest.main()
+
+
+class TestContinueContext(AskCase):
+    """TODO 2026-10-03: a Continue pick must reach the model, or it hedges with a judge line."""
+
+    def pi(self, event, **kw):
+        d = {"event": event, "session": "pi-" + self.sid, "cwd": self.proj, "prompt_id": self.pid}
+        d.update(kw)
+        p = subprocess.run([sys.executable, ISA, "hook", "pi"], input=json.dumps(d), text=True,
+                           capture_output=True, env=self.env, timeout=20)
+        return json.loads(p.stdout or "{}")
+
+    def pi_continue(self):
+        self.assertIn("ask", self.pi("prompt", prompt=QUESTION, has_ui=True))
+        return self.pi("ask_answer", choice="Continue without ISA")
+
+    def test_pi_continue_context(self):
+        ctx = self.pi_continue().get("context", "")
+        self.assertIn("Continue without ISA", ctx)
+        self.assertIn("Continue pass", ctx)
+
+    def test_continue_names_the_gate(self):
+        ctx = self.pi_continue().get("context", "")
+        self.assertIn("Jev 0.31", ctx)
+        self.assertIn("the user chose Continue without ISA", ctx)
+
+    def test_continue_imposes_nothing(self):
+        ctx = self.pi_continue().get("context", "")
+        self.assertIn("no `ISA judge (model):` line", ctx)
+        self.assertIn("no ISA", ctx)
+        self.assertNotIn("isa new", ctx)
+
+    def test_pi_continue_never_blocks(self):
+        self.assertNotIn("block", self.pi_continue())
+
+    def test_claude_continue_context(self):
+        self.hook("UserPromptSubmit", prompt=QUESTION)
+        _, out, _ = self.ask("Continue without ISA (Recommended)")
+        ctx = self.ctx(out)
+        self.assertIn("Continue pass", ctx)
+        self.assertIn("Jev 0.31", ctx)
+
+    def test_continue_supersedes_the_pre_ask_line(self):
+        self.write_isa(CLOSED)  # a finished ISA bound: the gate adds "it needs a new ISA (or a reopen)"
+        _, out, _ = self.hook("UserPromptSubmit", prompt=QUESTION)
+        self.assertIn("needs a new ISA", self.ctx(out))
+        _, out, _ = self.ask("Continue without ISA (Recommended)")
+        self.assertIn("supersedes", self.ctx(out))
+        self.assertIn("needs a new ISA", self.ctx(out))  # names the line it overrides
