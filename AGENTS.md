@@ -62,6 +62,8 @@ isa-skill-export/
     ├── STATUSLINE.md             ← Future B: data contract for an ISA status line
     ├── project-isa/              ← Future C: project ISA idea, what was removed, the Seed workflow
     ├── JEV.md                    ← Future D: where TypeSafe/Jev judgments plug into the skill
+    ├── SKILL-SPLIT.md            ← spec: move reference material out of SKILL.md to fit the ~5k-token skill body budget
+    ├── ISA-HARDENING.md          ← spec (after SKILL-SPLIT): framework errors seen, fixes H1–H6, issue log for live testing
     └── SPEC-v2.md                ← the v2 design: gate, commands, evidence, rules (implemented M1–M7)
 ```
 

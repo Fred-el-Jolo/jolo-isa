@@ -9,17 +9,11 @@ effort: medium
 
 When a workflow runs, say so in one line: `Running the **WorkflowName** workflow in the **ISA** skill to ACTION...`
 
-## What It Does
+## What it is, and why
 
-The ISA is the single document that articulates "done" for any thing whose ideal state we are pursuing — a project, an application, a library, infrastructure, a work session, an art piece, a strategic decision. It serves five identities at once: ideal state articulation, test harness, build verification, done condition, system of record. This skill owns the canonical template, the workflows that generate and refine ISAs, and the example library.
+The ISA is the single document that articulates "done" for anything whose ideal state we pursue — a project, an application, a library, infrastructure, a work session, an art piece, a strategic decision. It serves five identities at once: ideal state articulation, test harness, build verification, done condition, system of record. This skill owns the canonical template, the five workflows that generate, deepen, score, append to and reconcile it across sessions and agents, and the example library.
 
-## The Problem
-
-Most work starts without a written, testable definition of what finished looks like, so "done" drifts — the goal in your head at the start isn't the goal you settle for at the end, and there's no record of which one was right. Criteria stay vague enough that anything passes, decisions and dead ends get forgotten and re-litigated, and when work spans multiple sessions or multiple agents there's no shared source of truth for what's been verified. The ISA fixes "done" as a hard-to-vary explanation with atomic, probe-able criteria, a stable-ID structure that survives edits, and an audit trail of what was conjectured, refuted, and learned.
-
-## How It Works
-
-The ISA is a single markdown file with YAML frontmatter and a locked fourteen-section body. The model is the only writer (Write/Edit or these workflows). A tier completeness gate decides which sections are required at which effort level, and five workflows generate, deepen, score, append to, and reconcile the artifact across sessions and agents.
+Most work starts without a written, testable definition of what finished looks like, so "done" drifts (the goal settled for at the end isn't the one held at the start, and nothing records which was right), vague criteria let anything pass, decisions and dead ends get forgotten and re-litigated, and sessions or agents share no record of what was verified. The ISA fixes "done" as a hard-to-vary explanation: atomic, probe-able criteria, stable IDs that survive edits, and an audit trail of what was conjectured, refuted and learned. It is one markdown file — YAML frontmatter plus a locked fourteen-section body — and the model is its only writer (Write/Edit or the workflows); a tier completeness gate decides which sections each effort level requires.
 
 ---
 
@@ -27,18 +21,22 @@ The ISA is a single markdown file with YAML frontmatter and a locked fourteen-se
 
 **In a git repo, ISAs live in the repo** and are committed with the code: task ISAs in `<repo>/.isa/{slug}/ISA.md` (`slug = YYYYMMDD-HHMMSS_kebab-description`), each with its ledger `evidence.jsonl` beside it and its ephemeral slices in `_ephemeral/`, and the repo's **project ISA** in `<repo>/ISA.md` — the living spec (`kind: project`): constraints and standing claims (`- ISC-P<n>: …`, no checkbox, re-proved with `isa verify ISA.md`, never closed, never bound to a session). A task criterion that must hold forever gets `promote: true` in its Test Strategy entry, and you copy it into the project ISA as `- ISC-P<n>: <claim> (from <task slug> ISC-<m>)`; `isa close` refuses until it is there. Outside any repo, task ISAs live in `~/.isa/<project>/{slug}/ISA.md`. `isa where` prints the folder, `isa ls` lists its ISAs, `isa new <slug>` creates one and prints its path; `root:` is repo-relative (`.`), so the committed ISA works on every machine. ISAs follow branches: a task ISA ships in the PR of its code.
 
-**The user's words are encrypted in git, nothing else.** The pushed repo must never show the user's verbatim prompts, and everything else must stay readable. A git filter encrypts exactly these forms, and you quote the user only in them: the frontmatter `stated_goal` and `asks`, the Goal's opening quote of the `stated_goal`, a waiver `waived: ISC-N — "<words>"`, the null-goal row `stated_goal null — candidate: "<literal>"`, a Test Strategy `anchors_to:` equal to one of those spans, and `user: "<words>"` for every other quote (an answer, a correction) — one per line, a `"` inside written `\"`. Anything else you write is public; lint warns when a line repeats six or more words of the prompt outside these forms. The project ISA never quotes the user. The key (`isa key …`) is the user's: you may run only `isa key status`; when a command says there is no key, tell the user to run `isa key import FILE` or `isa key new` themselves.
+**The user's words are encrypted in git, nothing else.** The pushed repo must never show the user's verbatim prompts; everything else stays readable. A git filter encrypts exactly these forms, and you quote the user only in them: the frontmatter `stated_goal` and `asks`, the Goal's opening quote of the `stated_goal`, a waiver `waived: ISC-N — "<words>"`, the null-goal row `stated_goal null — candidate: "<literal>"`, a Test Strategy `anchors_to:` equal to one of those spans, and `user: "<words>"` for every other quote (an answer, a correction) — one per line, a `"` inside written `\"`. Anything else you write is public; lint warns when a line repeats six or more words of the prompt outside these forms. The project ISA never quotes the user. The key (`isa key …`) is the user's: you may run only `isa key status`; when a command says there is no key, tell the user to run `isa key import FILE` or `isa key new` themselves.
 
-When the ISA hooks are installed (see the repo's `install.py`), the harness enforces this loop. Every prompt that needs a decision is judged once, as soon as it arrives — by **Jev** (through the `jev` CLI, jev-kit) when it is available, by **you** when it is not:
+## The gate
 
-- **No ISA bound, or the bound one is finished — "is this work?"** Work is a deliverable that could be done wrong in ways the reply alone would not reveal: a change, a fix, a review or audit, a written plan or comparison, finding out why the user's own system misbehaves. Not work: looking something up, showing what a file contains, explaining, discussing, small talk, a straightforward operation whose failure the tool reports (commit, run the tests), or the user asking for no ISA. A yes turns the session **ON**: write the ISA first. Anything else goes to the user.
-- **An open ISA is bound — "continuation or new task?"** (Jev only, never asks). A new task needs its own ISA (`isa new`); once it is bound, the open one is marked *paused* (a side task you will come back to) or *superseded* in its ledger, and stays resumable — edit it again while no other open ISA is bound. Editing another ISA never moves the binding.
+With the hooks installed (the repo's `install.py`), the harness enforces this loop and judges every prompt that needs a decision once, on arrival — by **Jev** (the `jev` CLI, jev-kit) when available, else by **you**. The user sees who judged (`ISA gate — Jev 0.31 → asking you`).
+
+- **No ISA bound, or the bound one is finished — "is this work?"** Work is a deliverable that could be done wrong in ways the reply alone would not reveal: a change, a fix, a review or audit, a written plan or comparison, finding out why the user's own system misbehaves. Not work: looking something up, showing what a file contains, explaining, discussing, small talk, a straightforward operation whose failure the tool reports (commit, run the tests), or the user asking for no ISA. A yes turns the session **ON**: write the ISA first. Anything else goes to the user. A slash command is judged with its skill's description.
+- **An open ISA is bound — "continuation or new task?"** (Jev only, never asks). A continuation edits the existing ISA. A new task needs its own ISA (`isa new`); once it is bound, the open one is marked *paused* (a side task you will come back to) or *superseded* in its ledger, and stays resumable — edit it again while no other open ISA is bound. Editing another ISA (fixing a note, a review adding a finding) changes its content, never the binding.
 - **When Jev is unavailable** (off, not installed, out of credit, past its deadline) you answer the first question yourself, with one line anywhere in your reply: `ISA judge (model): yes|no|unsure — <one-line reason>`. `yes` → write the ISA before the work. The turn can't end without the line or an ISA.
 - **The user decides whatever is not a yes** — except a clear no (Jev below `jev_quiet`, 0.3), which goes on without a question. You ask — *"ISA is not enabled for this prompt (<judge>: <score or verdict> — <reason>). Continue?"* with **Continue without ISA (Recommended)** and **Enable ISA** (Claude Code: with AskUserQuestion, as the injected text says; pi asks by itself) — and follow their pick. Continue grants the *Continue pass*: no ISA gate for the rest of that prompt (changes go through, no ISA is required at the end, and no `ISA judge (model):` line — the injected text names the pass and overrides earlier ISA instructions for that prompt); the next prompt is judged again. Nobody to ask (a headless run) or `{"ask_without_isa": false}` in `~/.isa/config.json`: the prompt goes on without an ISA.
 
-The user sees who judged each prompt (`ISA gate — Jev 0.31 → asking you`). A slash command is judged with its skill's description; a skill finds the session's ISA with `isa current [--json]`, and writes only content (never ticks, generated Verification lines, `progress` or `phase: complete`). Jev also gives advice the commands print — `isa verify` warns when it doubts a probe that can't be seen failing first, and `isa close` shows its view of the goal, each ask, and the evidence behind each self-attested tick or tick never seen failing — and none of that blocks. `{"jev": false}` in `~/.isa/config.json` turns Jev off; `jev_gate` (0.8), `jev_quiet` (0.3) and `jev_doubt` (0.5) set its lines. When a command prints a `Jev:` line (out of credit, over budget, down), relay it to the user word for word. A session that is OFF turns ON the moment a change is attempted. While ON, changes are refused until an ISA is bound and passes the articulation gate, every ISA edit is linted, and a turn can't end without a bound ISA or with an unproven claim. `isa new` (or writing an `ISA.md` under `~/.isa/` while no open ISA is bound) binds an ISA to the session.
+A session that is OFF turns ON the moment a change is attempted. While ON, changes are refused until an ISA is bound and passes the articulation gate, every ISA edit is linted, and a turn can't end without a bound ISA or with an unproven claim. `isa new` (or writing an `ISA.md` under `~/.isa/` while no open ISA is bound) binds an ISA to the session; a skill finds it with `isa current [--json]`.
 
-**You write the content; the `isa` commands write the state.**
+Jev also advises, never blocking: `isa verify` warns when it doubts a probe that can't be seen failing first, and `isa close` shows its view of the goal, each ask, and the evidence behind each self-attested tick or tick never seen failing. `{"jev": false}` in `~/.isa/config.json` turns Jev off; `jev_gate` (0.8), `jev_quiet` (0.3) and `jev_doubt` (0.5) set its lines. When a command prints a `Jev:` line (out of credit, over budget, down), relay it to the user word for word.
+
+## You write the content; the `isa` commands write the state
 
 | Step | Command | What it does |
 |------|---------|--------------|
@@ -50,15 +48,13 @@ The user sees who judged each prompt (`ISA gate — Jev 0.31 → asking you`). A
 | Attest | `isa verify <ISA> ISC-N --attest "<evidence>"` | Ticks a `manual` / `screenshot` / `eval` criterion with your evidence |
 | Close | `isa close <ISA>` | Re-runs every probe; sets `phase: complete` only when all pass and the close gate holds; prints the summary your final answer quotes |
 
-You never tick a box or write a generated Verification line, `progress`, or `phase: complete` yourself — the hooks refuse it and name the command.
+Neither you nor a skill ticks a box or writes a generated Verification line, `progress` or `phase: complete` — the hooks refuse it and name the command. Run `isa verify` and `isa close` with a **600000 ms Bash timeout** (or in the background when the suite is slow): the default 120 s can stop a long run halfway, which corrupts nothing but leaves the ISA open.
 
-Run `isa verify` and `isa close` with a **600000 ms Bash timeout** (or in the background when the suite is slow): the default 120 s can stop a long run halfway, which corrupts nothing but leaves the ISA open.
+**Prove as you go, red before green.** Prefer test-first where a probe is runnable (unit/property test, `bash`, `curl`, `SELECT`), and always for a behaviour/http/schema criterion: write it first and run `isa verify --red <ISA>` before building: it must fail — that red baseline gives the later pass its meaning. Then build and `isa verify` at once; don't batch at VERIFY. Screenshot-only or manual probes are exempt. Features tick in dependency order: a criterion whose Feature `depends_on` an unfinished Feature passes but waits, and a later run ticks it (IsaFormat § Features).
 
 **Only the exit code counts.** A probe passes iff it exits 0; `isa verify` never reads its output. Build the threshold into the command (`jq -e`, `test "$(…)" -le 5`), and negate a search for something that must never appear (`! rg -q 'pattern' file`) — a bare `rg` exits 0 exactly when the forbidden thing is found.
 
 **`fails-when`.** From E2, a mechanical probe whose ISC can't be seen failing first — an `Anti:` ISC, a `kind:` without the red step (config, doc, file, decision, visual, regression), or `red: exempt …` — says what it would see if the claim were false: `fails-when: "<observation>"`. Writing it is where a probe that can't fail (`true`, a grep standing in for running the code) shows itself; `isa close` lists it beside each ISC never seen failing.
-
-(A long-lived per-repo "project ISA" is not supported — it is a possible future feature, not part of this skill.)
 
 ---
 
@@ -104,29 +100,36 @@ A run is complete when all fifteen hold. Each rule says how it is enforced — i
 
 | # | The run is complete when… | Teeth |
 |---|---------------------------|-------|
-| 1 | **The stated goal survives verbatim** in `stated_goal` (immutable unless the user revises it; `null` only when the literal is contentless), every claim traces to it or to a named derived claim, and at close `- Goal: yes — <evidence>` confirms the result delivers its *intent*, not its surface. `no` blocks the close. | HOOK (`isa new --goal` and lint check the span) + CHECK (`isa close` needs `Goal: yes`) |
+| 1 | **The stated goal survives verbatim** in `stated_goal` (copied byte-for-byte, never paraphrased; immutable unless the user revises it; `null` only when the literal is contentless), every claim traces to it or to a named derived claim, and at close `- Goal: yes — <evidence>` confirms the result delivers its *intent*, not its surface — the frame-drift check, since all ISCs passing doesn't prove the ISC set still covers what was asked. The literal is the evidence anchor, not the optimization target: hitting "p95 < 200ms" through a percentile-calc edge case passes the surface and fails the intent. `no` blocks the close. | HOOK (`isa new --goal` and lint check the span) + CHECK (`isa close` needs `Goal: yes`) |
 | 2 | **Done existed in writing before building** — the ISA passes its articulation gate before the first change. | HOOK (changes refused until it does) |
-| 3 | **What must not happen is written down** — at least one `Anti:` criterion. | HOOK (lint) |
-| 4 | **Experiential goals name an antecedent** — at least one `Antecedent:` criterion. | SELF |
+| 3 | **What must not happen is written down** — at least one `Anti:` criterion, at every tier. | HOOK (lint) |
+| 4 | **Experiential goals name an antecedent** — for art, design, content, anything that has to "land", at least one `Antecedent:` criterion names a precondition that reliably produces the target experience. Verifiable goals (build, deploy, schema) don't need one. | SELF |
 | 5 | **External prerequisites were probed before execution** — tokens, logins, service config, deploy targets; a missing one blocked or was deferred in Decisions. | SELF |
 | 6 | **Material ambiguity was resolved before building** — up to 3 targeted questions, or a stated reasoned default; `context_sufficient` set. A whole-response `proceed` accepts the defaults. | CHECK (lint at articulation) |
 | 7 | **A reported bug was reproduced before its suspect code was read**, and the fix went upstream when one fix kills the class. Not reproduced → a `repro-bypass: pure-additive \| non-isolable \| repro would cause damage — <why>` row. | SELF + SHAPE |
-| 8 | **No claim closed without tool evidence of the right type** — file → read it, code → run it, command → its checked output, HTTP → `curl -i`, web/UI → a real browser or HTTP probe, appearance → an image actually looked at, motion → a frame scrub, schema → a query, config → read-back. The entry's `kind:` sets the minimum probe type; "should work" never closes anything. | HOOK (only `isa verify` ticks) + CHECK (`kind:` table, downgrades); choosing `kind:` is SELF |
+| 8 | **No claim closed without tool evidence of the right type** — file → read it, code → run it, command → its checked output, HTTP → `curl -i`, web/UI → a real browser or HTTP probe, appearance → an image actually looked at, motion → a frame scrub, schema → a query, config → read-back. The entry's `kind:` sets the minimum probe type (table in IsaFormat § Test Strategy); "should work" never closes anything. | HOOK (only `isa verify` ticks) + CHECK (`kind:` table, downgrades); choosing `kind:` is SELF |
 | 9 | **A defect that is one instance of a class** closed only after one search enumerated every sibling — each fixed and verified, or tombstoned: `class-sweep: <class> — N siblings via <probe>; M fixed, K tombstoned` (required by close for a Test Strategy `class:`). | SHAPE + SELF |
 | 10 | **Every explicit ask was met, skipped with a reason, or surfaced** — one `- Ask N:` line per entry of `asks`; scope narrowed only where the user ratified it; no claim passed because its wording was softened mid-run. A depth directive ("go deep", "quick pass") is an ask. | SHAPE (`isa close`: a missing line is unmet) + SELF |
 | 11 | **The builder never rubber-stamped its own build** — work with a `risk: high` ISC, or at E4+, got an independent second look or a row saying why not (`second-look:`); contradictions surfaced (two re-calls, then escalate to the user); every finding dispositioned (`finding: … — adopted / rebutted / deferred`). | SHAPE + SELF |
 | 12 | **The run left its trail in the ISA** — decisions including dead ends; conjectured / refuted-by / learned / criterion-now entries when understanding changed; evidence per claim. | SHAPE (lint, E4+) + SELF |
 | 13 | **State was observable without asking** — `phase` and `progress` true. | HOOK (the engine writes `progress` and `complete`) |
-| 14 | **The ISA at close is not the ISA at open** — every discovery (corrections, failed probes, new constraints, implied wants) was folded in as it arrived: criteria added, split, tightened, or killed. Falsifier: failed probes or user corrections in the transcript with no ISA edit after them. | SELF + nudge (a failed probe asks "claim wrong or code wrong?") |
+| 14 | **The ISA at close is not the ISA at open** — every discovery (user corrections, failed probes, new constraints, implied wants) was folded in right away: criteria added, split, tightened, or killed; an ISA untouched after one is stale. Falsifier: failed probes or user corrections in the transcript with no ISA edit after them. | SELF + nudge (a failed probe asks "claim wrong or code wrong?") |
 | 15 | **The spend matched the task** — depth, parallelism and time scaled to what the work revealed; breaks either way surfaced. A depth directive with no visible effect is a break. | SELF |
 
-**Close contract.** Your final answer quotes the `isa close` summary — which claims closed on what evidence, which are self-attested or have no red baseline, what was waived, deferred, or asked — instead of paraphrasing it.
+---
+
+## Lifecycle rules (the file is written and updated, never left stale)
+
+- **Reopen after complete.** Editing the body of a `phase: complete` ISA means the work resumed: set `phase: learn`, increment `iteration` (start at 2), add `resumed_at: <ISO-8601>`, and append a Decisions row `refined: reopened after complete — <why>`. `frozen: true` opts out (the edit is a pure correction). It closes again only through `isa close`.
+- **Waive or defer, never fudge.** A probe that genuinely can't run yet gets a `- ISC-N: [DEFERRED-VERIFY] — <why> — follow-up: <what>` Verification line; the ISC stays `[ ]`. Only the user can waive an ISC, and the row quotes them: `waived: ISC-N — "<their words>"`; waived ISCs leave the `progress` denominator.
+- **Close.** `isa close <ISA>` sets `phase: complete` only when every non-dropped leaf ISC is ticked by `isa verify` or waived by the user (the engine ticks a nested parent once all its leaves are); a `- Goal: yes` line (rule 1) and one `- Ask N:` line per ask exist; the close gate holds at the ISA's tier (CheckCompleteness with `moment: close`), including the `second-look:` / `class-sweep:` rows the rules call for, and no item is still blocked from an earlier turn; and its re-run of every mechanical probe passes without changing the tree. Self-attested ticks and ticks with no red baseline are listed to the user.
+- **Close contract.** Your final answer quotes the `isa close` summary — which claims closed on what evidence, which are self-attested or have no red baseline, what was waived, deferred, or asked — instead of paraphrasing it.
 
 ---
 
 ## The Fourteen-Section Body (locked order)
 
-Every ISA may have up to fourteen body sections. The tier completeness gate decides which are required at which effort tier; sections never appear empty. **Order is fixed**.
+The fourteen sections are a *capacity*, not a requirement: the tier gate decides which are required; a section not required and not yet written is absent (Decisions, Changelog, Verification until there is something real to record), never empty. Length is never graded; one sentence can be exactly right. **Order is fixed**.
 
 | # | Section | Purpose | Written At |
 |---|---------|---------|------------|
@@ -145,9 +148,13 @@ Every ISA may have up to fourteen body sections. The tier completeness gate deci
 | 13 | `## Changelog` | Conjecture / refuted-by / learned / criterion-now entries — Deutsch error-correction trail | LEARN |
 | 14 | `## Verification` | Evidence per ISC — generated by `isa verify` from its ledger — plus your `- Ask N:`, `[DEFERRED-VERIFY]` and `- Goal:` lines | VERIFY |
 
-`## Dependencies` and `## Bridge Criteria` are **conditional-required**: mandatory when the ISA has any `parent:`/`children:`/cross-ISA relationship, omitted (like any empty section) for a standalone single-ISA task. Multi-ISA trees are rare — full mechanics in `References/IsaHierarchy.md`.
+`## Dependencies` and `## Bridge Criteria` are **conditional-required**: mandatory when the ISA has any `parent:`/`children:`/cross-ISA relationship, omitted for a standalone single-ISA task. Multi-ISA trees are rare — full mechanics in `References/IsaHierarchy.md`.
 
 ISC line format: `- [ ] ISC-N: <end state, 8–12 words, binary>` — all ISCs number sequentially in one pool; `Anti:` / `Antecedent:` / `Bridge:` prose prefixes carry the kind. Nested IDs (`ISC-4.1`) are allowed; the one-probe rule applies at the leaves.
+
+**Features are vertical slices, not horizontal layers.** Each `## Features` entry cuts end-to-end to a verifiable increment satisfying ≥1 ISC — not "the data layer" then "the API layer." A Feature you can't independently verify on its own is a horizontal slice; re-slice it vertically.
+
+**The Changelog format is non-negotiable.** Every entry needs all four pieces (`conjectured`, `refuted by`, `learned`, `criterion now`) in that order. Append refuses a partial C/R/L; with any piece missing, the entry is a Decision, not a Changelog. The format is what makes the Deutsch error-correction trail auditable across sessions.
 
 ---
 
@@ -162,13 +169,13 @@ Adjacent concepts. Distinguished by **who they bind**.
 | **Out of Scope** | The *vision* | Declared, explicit, prose | "Mobile native apps are not part of v1." | `## Out of Scope` |
 | **Anti-criteria** | The *test surface* | Granular, testable, yes/no | "Anti: /admin returns 200 in v1 build." | `## Criteria` (with `Anti:` prefix) |
 
-The first three are author-stated (declarative). Anti-criteria are derived — they are how Out of Scope, Constraints, and Principles become probe-able.
+The first three are author-stated (declarative). Anti-criteria are derived from Out of Scope plus regression-prevention concerns — they are how Out of Scope, Constraints and Principles become probe-able. No anti-criterion at OBSERVE is a hard CheckCompleteness failure.
 
 ---
 
 ## Tier Completeness Gate (HARD at all tiers)
 
-Quality gates, not section counts — sections exist because content exists. The gate is checked at two moments: **articulation** (done written down, nothing built) and **close** (before `phase: complete`). Articulation sections (1–11) are checked at both; record sections (Decisions, Changelog, Verification) only at close, because they record what happened and must never be invented early.
+Quality gates, not section counts. Checked at two moments: **articulation** (done written down, nothing built) and **close** (before `phase: complete`). Articulation sections (1–11) are checked at both; record sections (Decisions, Changelog, Verification) only at close, because they record what happened and must never be invented early. CheckCompleteness reports each section `present` / `missing` / `empty` (never acceptable) / `not-yet` (a record section at articulation); at articulation a miss blocks building, at close it blocks `phase: complete`.
 
 | Tier | Articulation sections | Record sections at close |
 |------|----------------------|--------------------------|
@@ -192,25 +199,6 @@ Quality gates, not section counts — sections exist because content exists. The
 
 The tier can change mid-run when the work reveals more (or less) than expected: update `effort:` and log a Decisions row `refined: tier E2 → E3 — <why>`.
 
-`CheckCompleteness` enforces this gate: at articulation a miss blocks building; at close it blocks `phase: complete`.
-
----
-
-## Lifecycle rules (the file is written and updated, never left stale)
-
-- **Done exists in writing before building.** For any non-trivial task, the ISA (Goal + Criteria at minimum) is written before the first build step.
-- **Fold discoveries in as they arrive.** Corrections from the user, failed probes, new constraints, implied wants → add, split, tighten, or kill ISCs right away. The ISA at close is not the ISA at open; an ISA untouched after a surprising discovery is stale.
-- **Prove ISCs as you go.** For a behaviour/http/schema criterion, write its test first and run `isa verify --red <ISA>` before building (the probe must fail — that red baseline is what makes the later pass mean something). Then build, and run `isa verify <ISA> [ISC-N…]`: it runs each probe from the ISA's `root`, ticks what passes, unticks what regressed, and writes the Verification line. Don't batch at VERIFY. Self-attested criteria (`manual`, `screenshot`, `eval`) are ticked with `isa verify <ISA> ISC-N --attest "<evidence>"`. Features tick in dependency order: a criterion whose Feature `depends_on` an unfinished Feature passes but waits, and a later run ticks it (IsaFormat § Features).
-- **No ISC closes without tool evidence of the right type** — see completion rule 8 and the `kind:` table in IsaFormat § Test Strategy. "Should work" never closes an ISC.
-- **Reopen after complete.** Editing the body of a `phase: complete` ISA means the work resumed: set `phase: learn`, increment `iteration` (start at 2), add `resumed_at: <ISO-8601>`, and append a Decisions row `refined: reopened after complete — <why>`. `frozen: true` opts out (the edit is a pure correction). It closes again only through `isa close`.
-- **Continuation vs new task.** A follow-up that continues the same task edits the existing ISA; a genuinely new task gets a new ISA (`isa new`), and the open one is marked paused or superseded once the new one is bound. Editing a past ISA while another open one is bound (fixing a note, a review adding a finding) changes its content, never the binding.
-- **Waive or defer, never fudge.** A probe that genuinely can't run yet gets a `- ISC-N: [DEFERRED-VERIFY] — <why> — follow-up: <what>` Verification line; the ISC stays `[ ]`. Only the user can waive an ISC, and the row quotes them: `waived: ISC-N — "<their words>"`; waived ISCs leave the `progress` denominator.
-- **Close.** `isa close <ISA>` sets `phase: complete` only when all four hold:
-  1. Every non-dropped leaf ISC is ticked (by `isa verify`) or waived by the user. (The engine ticks a nested parent once all its leaves are.)
-  2. A `- Goal: yes — <evidence>` line confirms the finished result delivers the verbatim goal's intent — the frame-drift check: all ISCs passing doesn't prove the ISC set still covers what was asked. One `- Ask N:` line answers each ask.
-  3. The close gate holds at the ISA's tier (CheckCompleteness with `moment: close`), including the `second-look:` / `class-sweep:` rows the rules call for, and no item is still blocked from an earlier turn.
-  4. `isa close` succeeded: it re-runs every mechanical probe, and every one passes without changing the tree. Self-attested ticks and ticks with no red baseline are listed to the user.
-
 ---
 
 ## Workflow Routing
@@ -225,29 +213,28 @@ Match the verb in the request to a workflow. When ambiguous, default to Scaffold
 | "reconcile", "merge feature file back", "ephemeral → master" | **Reconcile** | `Workflows/Reconcile.md` |
 | "append decision", "append changelog", "append goal line", "answer the asks", "record C/R/L entry" | **Append** | `Workflows/Append.md` (ISC evidence lines come from `isa verify`, not from Append) |
 
+Typical call points (the skill is invocation-agnostic — the same from a loop or called directly by the user):
+
+- Start of work: `isa new`, then `Skill("ISA", "scaffold from prompt at tier T")` fills the body.
+- End of articulation: `isa lint <ISA>`; for the judgment parts, `Skill("ISA", "check completeness of <path> at tier T")`.
+- Planning parallel work: `Skill("ISA", "extract feature <name> as ephemeral file from <master-isa-path>")`; after the worker: `Skill("ISA", "reconcile <ephemeral-path> → <master-path>")`.
+- Any time: `Skill("ISA", "append decision|changelog|verification to <path>: ...")`.
+
 ---
 
-## Gotchas
+## ID stability and ephemeral feature files
 
-The highest-information-density part of this skill. Each entry captures a non-obvious failure mode that has bitten real ISA work.
+**ISC IDs never re-number on edit.** When the Splitting Test produces a finer-grained version of `ISC-7`, `ISC-7` stays as the parent and the children become `ISC-7.1`, `ISC-7.2`. A dropped ISC leaves a tombstone, `- [ ] ISC-N: [DROPPED — see Decisions YYYY-MM-DD]`, so references in Decisions, Changelog and Verification stay valid. Reconcile is keyed on these IDs: renumbering breaks ephemeral feature-file merges silently, and it looks like "the worker's checkmarks didn't land in master."
 
-- **ID-stability is the cornerstone of Reconcile — never re-number on edit.** When the Splitting Test produces a finer-grained version of `ISC-7`, preserve `ISC-7` as the parent and add `ISC-7.1`, `ISC-7.2`, etc. Even when an ISC is dropped, leave a tombstone (`- [ ] ISC-N: [DROPPED — see Decisions YYYY-MM-DD]`). Reconcile keys on stable IDs; renumbering breaks ephemeral feature-file merges silently and the failure mode looks like "the worker's checkmarks didn't land in master."
-- **Ephemeral files are derived views, never sources of truth.** Scaffold's ephemeral mode (`ephemeral_feature` input) produces a slice of the master ISA under `_ephemeral/<feature>.md`. Workers operate against that slice; Reconcile merges back. Hand-editing master content from an ephemeral file is policy-forbidden — the master is what persists; the ephemeral is what gets archived.
-- **The Changelog format is non-negotiable.** Every entry needs all four pieces (`conjectured`, `refuted by`, `learned`, `criterion now`) in that order. Append refuses to write a partial C/R/L; if any of the four is missing, the entry is a Decision, not a Changelog. The format is what makes the Deutsch error-correction trail auditable across sessions.
-- **Empty sections never appear.** The fourteen-section body is a *capacity*, not a *requirement* at every tier. Sections not required and not yet written are simply absent from the file — including Decisions, Changelog, and Verification until there is something real to record. CheckCompleteness distinguishes `present` / `missing` / `empty` (never acceptable) / `not-yet` (a record section at articulation). Section length is never graded; a one-sentence section can be exactly right.
-- **Anti-criteria are derived from Out of Scope plus regression-prevention concerns.** They are how the prose-guardrails (Out of Scope, Constraints, Principles) become probe-able. At least one is required at every tier; the absence of an anti-criterion at OBSERVE is a hard CheckCompleteness failure.
-- **Antecedents are required when the goal is experiential.** For art, design, content, and anything that has to "land," at least one ISC must use the `Antecedent:` prefix to name a precondition that reliably produces the target experience. Verifiable goals (build, deploy, schema) don't need antecedents; experiential goals always do.
-- **Reconcile is deterministic — there are no conflicts to resolve.** Either an ISC ID exists in master (mechanical merge) or it doesn't (abort with ID-stability violation). If the ephemeral made structural changes (split ISC-7 into ISC-7.1/ISC-7.2), those structural changes belong in master via a separate Edit by the user *before* Reconcile runs.
-- **The literal goal is the evidence anchor, not the optimization target.** `stated_goal` is copied byte-for-byte and never paraphrased; build for the intent it expresses, not its surface (hitting "p95 < 200ms" through a percentile-calc edge case passes the surface and fails the intent).
-- **The format spec wins on contradiction.** `References/IsaFormat.md` is the file-shape contract. If this skill's prose ever drifts from the format spec, reconcile them deliberately — don't silently pick one.
-- **Features are vertical slices, not horizontal layers.** Each `## Features` entry cuts end-to-end to a verifiable increment satisfying ≥1 ISC — not "the data layer" then "the API layer." A Feature you can't independently verify on its own is a horizontal slice; re-slice it vertically.
-- **Prefer test-first probes (red-before-build).** Where an ISC's probe is a *runnable* test (unit/property test, `bash`, `curl`, `SELECT`), write it so it FAILS before EXECUTE and passes after — the probe exists and is red before the build, green after. Probes that can only be a screenshot or manual check are exempt.
+**Ephemeral files (parallel workers).** To work a feature in an isolated context (a subagent, a worktree, a parallel coding-agent instance), Scaffold's ephemeral mode (`ephemeral_feature` input) writes a derived slice of the master to `_ephemeral/<feature>.md`: the Vision and Goal as read-only context, the relevant Constraints, the ISCs in the feature's `satisfies:` list with stable IDs, and the matching Test Strategy entries (no Verification section — it appears with the worker's first entry). A fresh-context agent works against that file alone. At completion, Reconcile merges its Decisions, Changelog entries and `[DEFERRED-VERIFY]` lines back to master, runs `isa verify <master>` on the slice's ISCs — the engine ticks what passes there; a worker's checkmarks are never copied over — and archives the slice under `_ephemeral/.archive/`.
+
+**Ephemeral files are derived views, never sources of truth, never hand-edited as policy — and master content is never hand-edited from one: the master ISA is what persists; the ephemeral is what gets archived.** Reconcile is deterministic — there are no conflicts to resolve: an ISC ID either exists in master (mechanical merge) or doesn't (abort with an ID-stability violation). Structural changes made in the ephemeral (splitting ISC-7 into ISC-7.1/ISC-7.2) go into master by a separate Edit by the user *before* Reconcile runs.
 
 ---
 
 ## Examples
 
-The `Examples/` directory holds reference ISAs spanning the tier (E1–E5) × domain (code / art / design / ops / marketplace / enterprise) matrix. Every example passes the completeness gate for its tier and phase: one Test Strategy entry per leaf ISC, probes out of the criterion text (except at E1, which has no Test Strategy), ticks backed by Verification lines. None is part of a hierarchy, so none shows Dependencies or Bridge Criteria — see `References/IsaHierarchy.md`. Read the canonical showpiece before scaffolding a new ISA — copy its section headers, then populate. Pick the example closest to your domain + scale as a template; read `e3-project.md` to see what a closed ISA looks like.
+`Examples/` holds reference ISAs spanning tier (E1–E5) × domain (code / art / design / ops / marketplace / enterprise). Each passes the gate for its tier and phase: one Test Strategy entry per leaf ISC, probes out of the criterion text (except at E1, which has no Test Strategy), ticks backed by Verification lines. None is part of a hierarchy, so none shows Dependencies or Bridge Criteria — see `References/IsaHierarchy.md`. Read the canonical showpiece before scaffolding a new ISA and copy its section headers; pick the example closest to your domain + scale as a template; read `e3-project.md` to see a closed ISA.
 
 | File | Tier | Purpose |
 |------|------|---------|
@@ -264,48 +251,9 @@ The `Examples/` directory holds reference ISAs spanning the tier (E1–E5) × do
 | `Examples/e5-album.md` | E5 | **Mariner Frequencies** — 12-track album over 6 months. Long-form experiential. |
 | `Examples/e5-enterprise.md` | E5 | **Beacon Health Alliance** — HIPAA patient portal. Compliance anti-criteria, parallel features. The E5 reference Scaffold reads. |
 
----
-
-## ID Stability Rule
-
-**ISC IDs never re-number on edit.** When the Splitting Test produces a finer-grained version of `ISC-7`, the original number is preserved as the parent and children become `ISC-7.1`, `ISC-7.2`, etc. Do not collapse the numbering even if the ISC is dropped — leave a tombstone marker so historical references in Decisions, Changelog, and Verification remain valid.
-
-This rule exists because `Reconcile` is keyed on ISC IDs. If IDs renumber across edits, ephemeral feature-file reconciliation breaks silently. The renumbering ban is what makes feature-file workflows safe.
-
----
-
-## Ephemeral Feature Files (parallel-worker pattern)
-
-When a feature is to be worked in an isolated context (a subagent, a worktree, a parallel coding-agent instance), invoke:
-
-```
-Skill("ISA", "extract feature <name> as ephemeral file from <master-isa-path>")
-```
-
-`Scaffold` (ephemeral mode) produces a derived view containing only the slice relevant to that feature: the Vision and Goal as read-only context, the relevant Constraints, the ISCs in the feature's `satisfies:` list with stable IDs, and the matching Test Strategy entries. (No Verification section yet — it appears with the worker's first entry.)
-
-A fresh-context agent operates against the ephemeral file alone. At completion, `Reconcile` merges its Decisions, Changelog entries and `[DEFERRED-VERIFY]` lines back to master, then runs `isa verify <master>` on the slice's ISCs — the engine ticks what passes there (a worker's checkmarks are never copied over) — and archives the ephemeral file under `_ephemeral/.archive/`.
-
-**Ephemeral files are derived views. They are never sources of truth. They are never hand-edited as policy. The master ISA is what persists.**
-
----
-
-## The loop this skill serves
-
-The skill owns the artifact, not the work loop. The loop that uses it — articulate done, build, verify each claim on tool evidence, fold what was learned back in — is summarized in `References/IsaLoop.md`. Typical call points:
-
-- Start of work: `isa new <slug> --goal "<span>"`, then `Skill("ISA", "scaffold from prompt at tier T")` fills the body.
-- End of articulation: `isa lint <ISA>`; for the judgment parts, `Skill("ISA", "check completeness of <path> at tier T")`.
-- While building: `isa verify --red <ISA>` before the change, `isa verify <ISA>` after it; `isa close <ISA>` to finish.
-- Planning parallel work: `Skill("ISA", "extract feature <name> as ephemeral file from <master-isa-path>")`.
-- After a worker finishes: `Skill("ISA", "reconcile <ephemeral-path> → <master-path>")`.
-- Any time: `Skill("ISA", "append decision|changelog|verification to <path>: ...")`.
-
-The skill is invocation-agnostic — it works the same whether called from a loop or directly by the user.
-
 ## References
 
-- `References/IsaFormat.md` — the file-shape contract (frontmatter fields, section schemas, ISC grammar, probe-type vocabulary).
+- `References/IsaFormat.md` — the file-shape contract (frontmatter fields, section schemas, ISC grammar, probe-type vocabulary). **It wins on contradiction:** if this skill's prose drifts from it, reconcile them deliberately — don't silently pick one.
 - `References/IsaSystem.md` — the conceptual frame (five identities, three guardrails).
 - `References/IsaHierarchy.md` — multi-ISA trees, Dependencies, Bridge Criteria. Load only when an ISA has `parent:`/`children:`.
-- `References/IsaLoop.md` — the work loop around the ISA: phases, standing questions, resume (the completion rules are in this file, § Completion rules).
+- `References/IsaLoop.md` — the work loop the skill serves (articulate done, build, verify each claim on tool evidence, fold what was learned back in): phases, standing questions, resume. The skill owns the artifact, not the loop; the completion rules are in this file.
