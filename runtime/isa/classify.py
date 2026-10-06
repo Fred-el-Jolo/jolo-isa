@@ -84,13 +84,16 @@ def _temp_roots(extra=()):
 
 
 def classify(tool, tool_input, cwd, temp_dirs=()):
-    """→ (kind, isa_paths) where kind is read|write|unknown and isa_paths lists ISA files touched."""
+    """→ (kind, isa_paths) where kind is read|spec|write|unknown and isa_paths lists ISA files touched. `spec`: a
+    file-tool write of a spec or plan — articulation, never a project change (plan P9; a shell write stays `write`)."""
     ti = tool_input or {}
     if tool in FILE_TOOLS:
         kinds = [(p, path_kind(p, cwd, temp_dirs)) for p in tool_paths(ti)]
         isa = [p for p, k in kinds if k == "isa"]
         if kinds and all(k in ("isa", "temp") for _, k in kinds):
             return "read", isa
+        if kinds and all(k in ("isa", "temp", "spec") for _, k in kinds):
+            return "spec", isa
         return "write", isa
     if tool in SHELL_TOOLS:
         return bash(ti.get("command", ""), cwd, temp_dirs)

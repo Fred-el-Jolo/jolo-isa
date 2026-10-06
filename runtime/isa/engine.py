@@ -48,7 +48,8 @@ def skill_dir():
 
 def protocol(cwd):
     text = open(os.path.join(HERE, "protocol.md"), encoding="utf-8").read()
-    return text.replace("{project_dir}", _tilde(state.project_dir(cwd))).replace("{skill_dir}", _tilde(skill_dir()))
+    return (text.replace("{project_dir}", _tilde(state.project_dir(cwd))).replace("{skill_dir}", _tilde(skill_dir()))
+            .replace("{spec_dir}", _tilde(os.path.join(state.doc_root(cwd), "docs", "spec"))))
 
 
 def _tilde(p):
@@ -206,7 +207,9 @@ def _handle(ev):
 
 NO_ISA = ("No ISA yet. Write it now (`isa new <slug> --goal \"<span>\"`, then Goal, Criteria, Test Strategy). "
           "If you are asking the user to clarify before you can define done, run `isa new`, write the Goal and "
-          "your questions under Decisions, and set `context_sufficient: false` — that is enough to end the turn.")
+          "your questions under Decisions, and set `context_sufficient: false` — that is enough to end the turn. "
+          "E2–E5 work starts with the spec instead (docs/spec/YYYY-MM-DD-<slug>.md), and the turn may end on its "
+          "ack question.")
 
 
 def _mode_env():
@@ -418,6 +421,8 @@ def _bind_doc(st, ev, out):
                        f"clean, ask with AskUserQuestion — header `{ACK_HEADER_SPEC if kind == 'spec' else ACK_HEADER_PLAN}`, "
                        f"question naming the file, options exactly `{ACK_YES}` and `{ACK_NO}`.")
         st["doc"] = {"path": full, "kind": kind, "pid": str(ev.get("prompt_id"))}  # pid: "changed this turn" (P8)
+        if (st.get("q2") or {}).get("doc") == full:
+            st.pop("q2", None)  # written again after Q2 called it another task: it is the task (P9)
 
 
 def _ack_questions(ev):
@@ -489,6 +494,8 @@ def _ack_text(path, h):
 
 def _record_ack(ev):
     """PostToolUse of an ack question: exactly ACK_YES records the ack; anything else records nothing."""
+    with state.session(ev["harness"], ev["session"]) as s:
+        s["ack_asked"] = str(ev.get("prompt_id"))  # the turn may end on it (spec § 5.2, plan P9)
     st = state.read_session(ev["harness"], ev["session"])
     out = []
     for q in _ack_questions(ev):
@@ -509,6 +516,172 @@ def _record_ack(ev):
         note(ack="recorded")
         out.append(_ack_text(path, h))
     return {"context": "\n".join(out)} if out else {}
+
+
+# ------------------------------------------------------------------ stages (spec 2026-10-06 § 5.2, plan P9)
+
+STAGES = ("off", "triage", "spec_draft", "spec_acked", "plan_draft", "plan_acked", "build")
+SPEC_HINT = "docs/spec/YYYY-MM-DD-<slug>.md"
+NEAR_MISS = re.compile(r"(^|[/_.-])(specs?|plans?)([/_.-]|$)", re.I)
+TRIAGE_TEXT = "write the E1 ISA, or the spec, first"
+DOC_CODES = ("pre-ack-change", "doc-no-ack")
+
+
+def _doc_acked(path):
+    """The user acknowledged the document as it is now: its status hash matches, or their click is recorded
+    for this content (the status line is written right after the click)."""
+    try:
+        text = open(path, encoding="utf-8").read()
+    except (OSError, ValueError):
+        return False
+    return specdoc.acked(path) or specdoc.ack_recorded(path, specdoc.ack_hash(text))
+
+
+def _doc_root_of(path):
+    return os.path.dirname(os.path.dirname(os.path.dirname(path)))
+
+
+def _doc_effort(path):
+    try:
+        effort = str(specdoc.parse(open(path, encoding="utf-8").read())["fm"].get("effort") or "")
+    except (OSError, ValueError):
+        return None
+    m = re.match(r"E([1-5])$", effort.strip(), re.I)
+    return int(m.group(1)) if m else None
+
+
+def _stage(st, cwd):
+    """The session's stage (spec § 5.2), from records only: the mode, the bound ISA, the bound spec or plan
+    and its ack. The doc doesn't count when it lives under another doc root than `cwd`'s, or when Q2 called
+    the prompt a different task (until the doc is written again)."""
+    if _mode(st) != "on":
+        return "off"
+    bound = _bound(st)
+    if bound and state.frontmatter(bound).get("phase") != "complete":
+        return "build"
+    doc = st.get("doc") or {}
+    path = doc.get("path")
+    if not path or not os.path.isfile(path):
+        return "triage"
+    if cwd and os.path.realpath(state.doc_root(cwd)) != _doc_root_of(path):
+        return "triage"
+    q2 = st.get("q2") or {}
+    if q2.get("outcome") == "new" and q2.get("doc") == path:
+        return "triage"
+    kind = "plan" if _doc_kind(path) == "plan" else "spec"
+    return f"{kind}_{'acked' if _doc_acked(path) else 'draft'}"
+
+
+def _doc_gate(st, cwd, harness):
+    """→ the refusal for code changes and `isa new` (E2+) while the session's document waits for an ack
+    (SPEC DRAFT, PLAN DRAFT, an E4–E5 spec acked with no plan yet), or None."""
+    stage = _stage(st, cwd)
+    path = (st.get("doc") or {}).get("path")
+    asks = ("pi asks the user when your turn ends" if harness == "pi" else
+            "ask with AskUserQuestion, header `{h}`, options `" + ACK_YES + "` / `" + ACK_NO + "`")
+    if stage in ("spec_draft", "plan_draft"):
+        kind = "spec" if stage == "spec_draft" else "plan"
+        how = asks.replace("{h}", ACK_HEADER_SPEC if kind == "spec" else ACK_HEADER_PLAN)
+        return (f"ISA: {kind} not acknowledged yet — {_tilde(path)} is a draft, so code changes and `isa new` (E2+) "
+                f"wait for the user's ack. Finish it (`isa lint {_tilde(path)}` clean, its open questions answered), "
+                f"then the ack: {how}. An E1 task needs no spec: `isa new <slug> --tier E1`.")
+    if stage == "spec_acked" and (_doc_effort(path) or 0) >= 4:
+        plan = os.path.join(_doc_root_of(path), "docs", "plan", os.path.basename(path))
+        how = asks.replace("{h}", ACK_HEADER_PLAN)
+        return (f"ISA: plan not acknowledged yet — {_tilde(path)} is an acknowledged E4–E5 spec: its ack is the go "
+                f"for the plan, not for code. Write the plan {_tilde(plan)}, `isa lint` it, then its ack: {how}.")
+    return None
+
+
+def _near_miss(ev, base):
+    """A line naming the right path for a file-tool write that looks meant as a spec or plan but isn't one."""
+    if ev.get("tool") not in classify.FILE_TOOLS:
+        return ""
+    root, cwd = state.doc_root(base), ev.get("cwd") or ""
+    for p in classify.tool_paths(ev.get("tool_input")):
+        full = os.path.realpath(os.path.join(cwd, os.path.expanduser(p)))
+        rel = os.path.relpath(full, os.path.realpath(root))
+        if os.path.splitext(full)[1].lower() in ("", ".md", ".txt", ".rst", ".adoc") and NEAR_MISS.search(rel):
+            return (f"\n{_tilde(full)} is not a spec path: a spec goes to "
+                    f"{_tilde(os.path.join(root, 'docs', 'spec'))}/YYYY-MM-DD-<slug>.md (a plan to docs/plan/, same "
+                    "basename), and a file there is articulation, written before any ISA.")
+    return ""
+
+
+def _isa_new_tiers(cmd):
+    """The tier of each `isa new` call in a shell command (E3 when `--tier` is absent, as the command defaults)."""
+    try:
+        toks = classify._tokens(classify._drop_heredoc_bodies(cmd).replace("\\\n", " ").replace("\n", " ; "))
+    except ValueError:
+        return []
+    out, i = [], 0
+    while i < len(toks):
+        if os.path.basename(toks[i]) == "isa" and i + 1 < len(toks) and toks[i + 1] == "new":
+            tier, j = "E3", i + 2
+            while j < len(toks) and toks[j] not in classify.SEPARATORS and not all(c in ";&|()" for c in toks[j]):
+                if toks[j] == "--tier" and j + 1 < len(toks):
+                    tier = toks[j + 1]
+                elif toks[j].startswith("--tier="):
+                    tier = toks[j].split("=", 1)[1]
+                j += 1
+            out.append(tier.upper())
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def _new_isa_refusal(ev, st):
+    """No ISA before the ack (spec § 5): `isa new` above E1, or a Write creating a task ISA above E1, while the
+    session's document waits for its ack."""
+    if st.get("pass"):
+        return None
+    tool, ti, cwd = ev.get("tool", ""), ev.get("tool_input") or {}, ev.get("cwd") or ""
+    if tool in classify.SHELL_TOOLS:
+        if not any(t != "E1" for t in _isa_new_tiers(str(ti.get("command", "")))):
+            return None
+    elif tool in ("Write", "write"):
+        new = [p for p in classify.tool_paths(ti)
+               if state.is_master_isa(os.path.join(cwd, os.path.expanduser(p)))
+               and not os.path.exists(os.path.join(cwd, os.path.expanduser(p)))]
+        m = re.search(r"^effort:\s*(\S+)", str(ti.get("content") or ""), re.M)
+        if not new or (m and m.group(1).strip("\"'").upper() == "E1"):
+            return None
+    else:
+        return None
+    return _doc_gate(st, cwd, ev.get("harness"))
+
+
+def _doc_stop_items(ev, st, pid):
+    """Stop in the DRAFT stages: a project change made before the ack, and a document changed this turn that
+    ends on neither its ack question nor its open questions (each refused once, like every Stop problem)."""
+    doc = st.get("doc") or {}
+    path = doc.get("path")
+    kind = _doc_kind(path)
+    items = []
+    if st.get("pre_ack_change") == pid:
+        items.append({"code": "pre-ack-change", "isc": None,
+                      "line": f"project files changed before the {kind} was acknowledged — revert them or ask the user"})
+    if _stage(st, ev.get("cwd")) not in ("spec_draft", "plan_draft") or doc.get("pid") != pid:
+        return items
+    try:
+        text = open(path, encoding="utf-8").read()
+    except (OSError, ValueError):
+        return items
+    errors = [m for m in specdoc.lint(path, "ack") if not m.startswith("warn:")]
+    pi = ev.get("harness") == "pi"
+    nobody = (pi and not ev.get("has_ui")) or (not pi and _headless())  # no one can answer the ack (§ 5.6)
+    if st.get("ack_asked") == pid or specdoc.open_questions(text) or nobody or (pi and not errors):
+        return items  # pi with a UI and a clean draft: the settle asks the ack itself (P8)
+    header = ACK_HEADER_SPEC if kind == "spec" else ACK_HEADER_PLAN
+    how = ("pi asks it when the turn ends, once `isa lint` passes" if pi else
+           f"AskUserQuestion, header `{header}`, options `{ACK_YES}` / `{ACK_NO}`")
+    line = (f"{_tilde(path)} changed this turn: end the turn on its ack question ({how}), or on its open questions "
+            "(under `## Open questions`).")
+    if errors:
+        line += f" The ack needs `isa lint` clean first:\n{_fmt(errors)}"
+    items.append({"code": "doc-no-ack", "isc": None, "line": line})
+    return items
 
 
 def _pi_ack_due(ev, res):
@@ -756,7 +929,8 @@ def _prompt(ev):
     if mode == "on" and not bound and doc and os.path.isfile(doc) and _mode_env() != "on":
         return _q2(ev, None, prompt, context, doc=doc)  # the bound spec or plan is the task (spec § B.7)
     if mode == "on" and not bound:
-        return {"context": "ISA: ON — no ISA bound yet: write it before the work (`isa new <slug> --goal \"…\"`)."}
+        return {"context": "ISA: ON — no ISA bound yet: write it before the work (`isa new <slug> --goal \"…\"`), "
+                           "or for E2–E5 work the spec first (docs/spec/YYYY-MM-DD-<slug>.md), then its ack."}
     if _mode_env() == "on":
         return {"context": _status_line(bound) + (". A new task gets a new ISA (or a reopen of this finished one)."
                                                   if complete else ". A new task gets a new ISA; continuing work keeps this one.")}
@@ -983,14 +1157,16 @@ def _pre_tool(ev):
     if _targets_acks(ev):
         return {"deny": "ISA ack: acks.jsonl (~/.isa/_state/acks.jsonl) holds the user's Acknowledge clicks and is "
                         "written only by the hooks."}
-    if kind == "isa-cmd":
-        return {}  # `isa new|lint|verify|close`: how the model writes the engine-owned state — never gated
+    if kind == "isa-cmd":  # `isa new|lint|verify|close`: how the model writes the engine-owned state
+        refused = _new_isa_refusal(ev, state.read_session(ev["harness"], ev["session"]))
+        return {"deny": refused} if refused else {}
     if kind == "isa-shell-edit":
         return {"deny": "ISA ownership: edit an ISA.md with Write/Edit, not a shell command — the hooks check "
                         "Write/Edit against the engine-owned fields (ticks, generated Verification lines, "
                         "progress, root, phase: complete); `isa verify` / `isa close` write those."}
     st = state.read_session(ev["harness"], ev["session"])
-    refused = _ownership_refusal(ev) or _status_refusal(ev) or _ack_question_refusal(ev, st)
+    refused = (_ownership_refusal(ev) or _status_refusal(ev) or _ack_question_refusal(ev, st)
+               or _new_isa_refusal(ev, st))
     if refused:
         return {"deny": refused}
     _note_creating(ev)
@@ -1009,15 +1185,30 @@ def _pre_tool(ev):
         # unknown: it runs; only a change it actually makes switches the session ON (post_tool)
         _snapshot_unknown(ev, kind, cwd)
         return {}
+    if kind == "spec":
+        return {}  # a spec or plan is articulation: written at any stage, before any ISA (spec § B.7)
+    base = _target_base(ev) or cwd  # file the ISA where the change lands, not where the session started
+    gate = _doc_gate(st, cwd, ev.get("harness"))
+    if gate:
+        if kind == "unknown":  # it runs: a change it makes is reported after, and Stop refuses once (§ 5.2)
+            _snapshot_unknown(ev, kind, cwd)
+            return {}
+        return {"deny": gate + _near_miss(ev, base)}
     bound = _bound(st)
     if not bound:
-        base = _target_base(ev) or cwd  # file the ISA where the change lands, not where the session started
         listing = _project_listing(base)
+        acked = _stage(st, cwd) in ("spec_acked", "plan_acked")
+        first = ("the acknowledged " + _doc_kind(st["doc"]["path"]) + " " + _tilde(st["doc"]["path"])
+                 + " is the go: write its ISA now" if acked else
+                 f"{TRIAGE_TEXT}. E1 (one small change): the ISA")
         return {"deny": (
-            f"ISA gate: this {kind} call is refused because no ISA is bound to this session yet. "
-            f"Write the ISA first — e.g. {_tilde(state.new_isa_path(base, 'your-task'))} "
-            f"(read {_tilde(skill_dir())}/SKILL.md and the closest example first; E1 = `## Goal` + `## Criteria` "
-            "with ≥1 `Anti:` ISC). Writing it binds it to this session; then retry this call."
+            f"ISA gate: this {kind} call is refused because no ISA is bound to this session yet — {first}, e.g. "
+            f"{_tilde(state.new_isa_path(base, 'your-task'))} (read {_tilde(skill_dir())}/SKILL.md and the closest "
+            "example first; E1 = `## Goal` + `## Criteria` with ≥1 `Anti:` ISC). Writing it binds it to this session; "
+            "then retry this call."
+            + ("" if acked else f" E2–E5 work starts with the spec: {_tilde(os.path.join(state.doc_root(base), 'docs', 'spec'))}"
+               "/YYYY-MM-DD-<slug>.md, then the user's ack.")
+            + _near_miss(ev, base)
             + ("\n" + listing if listing else ""))}
     if state.frontmatter(bound).get("phase") == "complete":
         # a finished ISA is not a current task: never re-gate it against today's rules
@@ -1025,7 +1216,10 @@ def _pre_tool(ev):
             f"ISA gate: the bound ISA {_tilde(bound)} is complete, so this {kind} call has no open task. "
             f"For new work write a new ISA — e.g. {_tilde(state.new_isa_path(cwd, 'your-task'))}. To continue "
             "the finished work instead, reopen it: set `phase: learn`, increment `iteration`, add `resumed_at` "
-            "and a `refined: reopened after complete — <why>` Decision. Then retry this call.")}
+            "and a `refined: reopened after complete — <why>` Decision. Then retry this call."
+            + ("" if _stage(st, cwd) != "triage" else
+               f" New E2–E5 work starts with the spec instead ({TRIAGE_TEXT}): "
+               f"{_tilde(os.path.join(state.doc_root(base), 'docs', 'spec'))}/YYYY-MM-DD-<slug>.md."))}
     errors, _ = _lint(bound, "articulation", ev["harness"], ev["session"])
     if errors:
         return {"deny": f"ISA gate: {_tilde(bound)} does not pass the articulation gate yet, so building is refused. "
@@ -1399,7 +1593,13 @@ def _post_tool(ev):
                 _count_change(st, now, out)  # one script edited the ISA and project files
         elif isa_paths:
             st["last_isa_edit"] = now  # ephemeral slice or probe file inside the ISA folder
+        elif kind == "spec":  # a spec or plan: articulation — it binds, and is never counted as a change
+            _spec_project_isa(ev, out)
+            _bind_doc(st, ev, out)
+            if was_off and not st.get("pass") and _switch_on(st, "spec", "a spec or plan was written"):
+                warn = "ISA: ON — a spec or plan was written; it is the deliverable until you acknowledge it"
         elif kind == "write" or (kind == "unknown" and tool in classify.SHELL_TOOLS and _script_changed(ev, st)):
+            _pre_ack_change(ev, st, out)
             _count_change(st, now, out)
             touched = _changed_projects(ev, kind)
             _spec_project_isa(ev, out)
@@ -1442,6 +1642,16 @@ def _post_tool(ev):
     return res
 
 
+def _pre_ack_change(ev, st, out):
+    """A project change while the document waits for its ack (spec § 5.2): reported now, refused once at Stop."""
+    if st.get("pass") or not _doc_gate(st, ev.get("cwd"), ev.get("harness")):
+        return
+    st["pre_ack_change"] = str(ev.get("prompt_id"))
+    kind = _doc_kind(st["doc"]["path"])
+    out.append(f"This changed project files before the {kind} was acknowledged: revert them, or ask the user "
+               "whether they stay.")
+
+
 def _tool_failed(ev):
     if ev.get("tool") == "AskUserQuestion" and _is_our_question(ev):
         _record_choice(ev, "unavailable")  # the tool can't reach the user here: the default (continue) stands
@@ -1451,6 +1661,7 @@ def _tool_failed(ev):
         if kind == "unknown":  # a script that failed halfway may still have written files
             with state.session(ev["harness"], ev["session"]) as st:
                 if _script_changed(ev, st):
+                    _pre_ack_change(ev, st, [])
                     _count_change(st, time.time(), [])
                 ledger_out = []
                 ledger_warn = _ledger_check(ev, st, ledger_out)
@@ -1566,14 +1777,18 @@ def _stop_checks(ev):
         bound = _bound(st)
         if _isa_touched(st):  # edited by a call whose PostToolUse never ran (e.g. a failed command)
             st["last_isa_edit"] = time.time()
-        need = _needs_isa(st, bound, ev.get("prompt_id"))
+        drafting = bool(_doc_gate(st, ev.get("cwd"), ev.get("harness")))  # the document is the deliverable
+        doc_items = _doc_stop_items(ev, st, pid) if drafting else []
+        need = False if drafting else _needs_isa(st, bound, ev.get("prompt_id"))
         new_task = bool(bound) and _new_task_pending(st, bound)
         if need == "scaffold":
             return {}  # the clarify-first scaffold, on the prompt that created it
         started = st.get("prompt_started", 0.0)
-        if need is not True and started and st["last_mutation"] < started and st["last_isa_edit"] < started:
+        if need is not True and not doc_items and started and st["last_mutation"] < started \
+                and st["last_isa_edit"] < started:
             return {}  # nothing happened this turn: nothing to check
     items = []
+    items += doc_items
     if need is True:  # checked even on a turn that changed nothing: a review is work too
         items.append({"code": "no-isa", "isc": None, "line": NO_ISA})
         bound = None if not bound or new_task or _scaffold(bound) \
@@ -1594,7 +1809,7 @@ def _stop_checks(ev):
     text = "ISA check before ending the turn:\n" + "\n".join(f"- {p}" for p in problems.render(items))
     if already:
         if bound:  # escalate: the open problems outlive the turn (SPEC-v2 § 4.5) — in the ledger, never the ISA
-            problems.record_blocked(bound, items)
+            problems.record_blocked(bound, [it for it in items if it["code"] not in DOC_CODES])
         return {"warn": "ISA still not true after one retry — ending the turn anyway; these stay recorded as "
                         "blocked (shown at the next start, `isa close` refuses until they are fixed).\n" + text}
     return {"block": text}

@@ -67,6 +67,23 @@ class SpecCase(GitCase):
         return self.hook("PostToolUse", cwd=cwd or self.proj, tool_name="AskUserQuestion", tool_input=ti,
                          tool_response=resp)[1]
 
+    def pi(self, event, pid="p1", **kw):
+        d = {"event": event, "session": self.sid, "cwd": self.proj, "prompt_id": pid}
+        d.update(kw)
+        p = subprocess.run([sys.executable, ISA, "hook", "pi"], input=json.dumps(d), text=True,
+                           capture_output=True, env=self.env, timeout=20)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return json.loads(p.stdout or "{}")
+
+    def pi_write(self, rel, text, pid="p1"):
+        p = self.doc(rel, text)
+        self.pi("post_tool", pid, tool="write", tool_input={"path": p, "content": text}, tool_output="")
+        return os.path.realpath(p)
+
+    def pi_session(self):
+        with open(os.path.join(self.home, "_state", "sessions", f"pi-{self.sid}.json")) as f:
+            return json.load(f)
+
     def acks(self):
         try:
             with open(os.path.join(self.home, "_state", "acks.jsonl")) as f:
@@ -261,33 +278,16 @@ class PiAck(SpecCase):
         super().setUp()
         setup_fake(self, isa_gate=0.1)  # below jev_quiet: no gate question, the prompt has the Continue pass
 
-    def pi(self, event, pid="p1", **kw):
-        d = {"event": event, "session": self.sid, "cwd": self.proj, "prompt_id": pid}
-        d.update(kw)
-        p = subprocess.run([sys.executable, ISA, "hook", "pi"], input=json.dumps(d), text=True,
-                           capture_output=True, env=self.env, timeout=20)
-        self.assertEqual(p.returncode, 0, p.stderr)
-        return json.loads(p.stdout or "{}")
-
     def quiet(self, pid="p1", has_ui=True):
         res = self.pi("prompt", pid, prompt="draft the spec for the help screen", has_ui=has_ui)
         self.assertNotIn("ask", res)
         return res
-
-    def pi_write(self, rel, text, pid="p1"):
-        p = self.doc(rel, text)
-        self.pi("post_tool", pid, tool="write", tool_input={"path": p, "content": text}, tool_output="")
-        return os.path.realpath(p)
 
     def stop(self, pid="p1", has_ui=True, **kw):
         return self.pi("stop", pid, has_ui=has_ui, **kw)
 
     def ack(self, path, choice="Acknowledge", pid="p1"):
         return self.pi("ask_answer", pid, choice=choice, ask_kind="ack", ask_path=path)
-
-    def pi_session(self):
-        with open(os.path.join(self.home, "_state", "sessions", f"pi-{self.sid}.json")) as f:
-            return json.load(f)
 
     def assert_ack_ask(self, res, path, rel):
         self.assertEqual((res.get("ask_kind"), res.get("ask_path")), ("ack", path), res)
@@ -416,6 +416,206 @@ class PiAck(SpecCase):
                            text=True, capture_output=True, env=self.env, timeout=20)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertNotIn("ask", json.loads(p.stdout))
+
+
+def acked(text):
+    return text.replace("status: draft", f"status: acked 2026-10-06 #{specdoc.ack_hash(text)}")
+
+
+TRIAGE = "write the E1 ISA, or the spec, first"
+NOT_ACKED = "spec not acknowledged yet"
+PLAN_NOT_ACKED = "plan not acknowledged yet"
+PRE_ACK = "project files changed before the spec was acknowledged — revert them or ask the user"
+
+
+class StageRules(SpecCase):
+    """Plan P9 (spec § 5, § 5.2, § 8 item 6): the stage of a session and what each stage enforces."""
+
+    def on(self):
+        setup_fake(self, isa_gate=0.93)  # Jev yes: ON, nothing bound
+        rc, out, err = self.hook("UserPromptSubmit", prompt="redesign the help screen of the tool")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.st().get("mode"), "on")
+
+    def stage(self):
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); from isa import engine, state; "
+                "print(engine._stage(state.read_session('claude', sys.argv[2]), sys.argv[3]))")
+        p = subprocess.run([sys.executable, "-c", code, os.path.join(ROOT, "runtime"), self.sid, self.proj],
+                           text=True, capture_output=True, env=self.env, timeout=20)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return p.stdout.strip()
+
+    def pre(self, path, content="x"):
+        return self.hook("PreToolUse", tool_name="Write", tool_input={"file_path": path, "content": content})[1]
+
+    def bash(self, cmd):
+        return self.hook("PreToolUse", tool_name="Bash", tool_input={"command": cmd})[1]
+
+    def stop(self):
+        return self.hook("Stop", last_assistant_message="Here is the spec draft.")
+
+    def assert_denied(self, out, text):
+        self.assertEqual(self.decision(out), "deny", out)
+        self.assertIn(text, self.reason(out))
+
+    def test_stage_values(self):
+        self.assertEqual(self.stage(), "off")
+        self.on()
+        self.assertEqual(self.stage(), "triage")
+        self.write_doc(SPEC, E3)
+        self.assertEqual(self.stage(), "spec_draft")
+        self.answer(SPEC, "Acknowledge")
+        self.assertEqual(self.stage(), "spec_acked")
+        self.doc(E4_SPEC, acked(E4))
+        self.write_doc(PLAN_DOC, PLAN)
+        self.assertEqual(self.stage(), "plan_draft")
+        self.answer(PLAN_DOC, "Acknowledge", header="Plan ack")
+        self.assertEqual(self.stage(), "plan_acked")
+        self.task()
+        self.assertEqual(self.stage(), "build")
+
+    def test_triage_spec_write_passes(self):
+        self.on()
+        out = self.pre(os.path.join(self.proj, SPEC), E3)
+        self.assertNotEqual(self.decision(out), "deny", out)
+
+    def test_triage_refuses_change(self):
+        self.on()
+        self.assert_denied(self.edit_project()[1], TRIAGE)
+
+    def test_near_miss_names_path(self):
+        self.on()
+        for rel in ("docs/specs/2026-10-06-help.md", "SPEC.md", "docs/spec/2026-10-06-help.txt"):
+            out = self.pre(os.path.join(self.proj, rel), E3)
+            self.assert_denied(out, "docs/spec/YYYY-MM-DD-<slug>.md")
+            self.assertIn(rel, self.reason(out))
+
+    def test_spec_draft_refuses_change(self):
+        self.on()
+        self.write_doc(SPEC, E3)
+        self.assert_denied(self.edit_project()[1], NOT_ACKED)
+
+    def test_spec_draft_refuses_isa_new(self):
+        self.on()
+        self.write_doc(SPEC, E3)
+        for cmd in ("isa new help", "isa new help --tier E3", "isa new help --goal 'redesign the help screen of it'"):
+            self.assert_denied(self.bash(cmd), NOT_ACKED)
+        for cmd in ("isa new help --tier E1", "isa new help --tier=e1"):
+            self.assertNotEqual(self.decision(self.bash(cmd)), "deny", cmd)
+
+    def test_spec_draft_refuses_isa_write(self):
+        self.on()
+        self.write_doc(SPEC, E3)
+        path = self.isa_path("20261006-000000_help")
+        self.assert_denied(self.pre(path, "---\ntask: help\neffort: E3\n---\n"), NOT_ACKED)
+        self.assertNotEqual(self.decision(self.pre(path, "---\ntask: help\neffort: E1\n---\n")), "deny")
+
+    def test_plan_draft_refuses(self):
+        self.on()
+        self.doc(E4_SPEC, acked(E4))
+        self.write_doc(PLAN_DOC, PLAN)
+        self.assert_denied(self.edit_project()[1], PLAN_NOT_ACKED)
+        self.assert_denied(self.bash("isa new api-step"), PLAN_NOT_ACKED)
+
+    def test_e4_spec_acked_needs_plan(self):
+        self.on()
+        self.write_doc(E4_SPEC, acked(E4))
+        self.assertEqual(self.stage(), "spec_acked")
+        out = self.edit_project()[1]
+        self.assert_denied(out, PLAN_NOT_ACKED)
+        self.assertIn("docs/plan/2026-10-06-api-migration.md", self.reason(out))
+
+    def test_stop_ack_question(self):
+        self.on()
+        self.write_doc(SPEC, E3)
+        self.answer(SPEC, "Request changes")
+        rc, _, err = self.stop()
+        self.assertEqual(rc, 0, err)
+
+    def test_stop_open_questions(self):
+        self.on()
+        self.write_doc(SPEC, E3 + "- Should `-h` print the short form or the full reference?\n")
+        rc, _, err = self.stop()
+        self.assertEqual(rc, 0, err)
+
+    def test_stop_refuses_once(self):
+        self.on()
+        self.write_doc(SPEC, E3)
+        rc, _, err = self.stop()
+        self.assertEqual(rc, 2, err)
+        self.assertIn("Spec ack", err)
+        rc, _, err = self.stop()
+        self.assertEqual(rc, 0, err)
+
+    def change_before_ack(self):
+        self.on()
+        self.write_doc(SPEC, E3)
+        cmd = "python3 -c \"open('gen.txt', 'w').write('x')\""
+        self.assertNotEqual(self.decision(self.bash(cmd)), "deny")
+        subprocess.run(cmd, shell=True, cwd=self.proj, check=True)
+        return self.hook("PostToolUse", tool_name="Bash", tool_input={"command": cmd},
+                         tool_response={"stdout": "", "stderr": ""})[1]
+
+    def test_pre_ack_change_reported(self):
+        self.assertIn("before the spec was acknowledged", self.ctx(self.change_before_ack()))
+
+    def test_pre_ack_change_stop(self):
+        self.change_before_ack()
+        rc, _, err = self.stop()
+        self.assertEqual(rc, 2, err)
+        self.assertIn(PRE_ACK, err)
+        rc, _, err = self.stop()
+        self.assertEqual(rc, 0, err)
+
+    def test_after_ack_needs_isa(self):
+        self.on()
+        self.write_doc(SPEC, E3)
+        self.answer(SPEC, "Acknowledge")
+        self.write_doc(SPEC, acked(E3))
+        self.assertEqual(self.stage(), "spec_acked")
+        rc, _, err = self.stop()
+        self.assertEqual(rc, 2, err)
+        self.assertIn("No ISA yet", err)
+
+    def test_pi_on_session_asks_ack(self):
+        setup_fake(self, isa_gate=0.93)
+        self.assertNotIn("ask", self.pi("prompt", prompt="redesign the help screen of the tool", has_ui=True))
+        p = self.pi_write(SPEC, E3)
+        self.assertEqual(self.pi_session().get("mode"), "on")
+        res = self.pi("stop", has_ui=True, context="Here is the spec draft.")
+        self.assertNotIn("block", res)
+        self.assertEqual((res.get("ask_kind"), res.get("ask_path")), ("ack", p), res)
+
+    def test_q2_new_task_triage(self):
+        self.on()
+        self.write_doc(SPEC, E3)
+        self.pid = "p2"
+        setup_fake(self, isa_continuation=0.91)
+        self.hook("UserPromptSubmit", prompt="now add a man page generator to the release script")
+        self.assertEqual(self.st()["q2"]["outcome"], "new")
+        self.assertEqual(self.stage(), "triage")
+        self.assert_denied(self.edit_project()[1], TRIAGE)
+
+    def test_other_project_doc(self):
+        other = tempfile.mkdtemp(prefix="isa-p9-other-", dir=os.path.expanduser("~/.cache"))
+        self.addCleanup(shutil.rmtree, other, True)
+        self.on()
+        self.write_doc(SPEC, E3, root=other)
+        self.assertEqual(self.st()["doc"]["path"], os.path.realpath(os.path.join(other, SPEC)))
+        self.assertEqual(self.stage(), "triage")
+        self.assert_denied(self.edit_project()[1], TRIAGE)
+
+    def test_pass_unaffected(self):
+        setup_fake(self, isa_gate=0.1)  # below jev_quiet: the Continue pass
+        self.hook("UserPromptSubmit", prompt="redesign the help screen of the tool")
+        self.write_doc(SPEC, E3)
+        self.assertNotEqual(self.decision(self.edit_project()[1]), "deny")
+
+    def test_build_unaffected(self):
+        self.task()
+        self.write_doc(SPEC, E3)
+        self.assertEqual(self.stage(), "build")
+        self.assertNotEqual(self.decision(self.edit_project()[1]), "deny")
 
 
 class SpecdocAcks(unittest.TestCase):

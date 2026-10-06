@@ -305,7 +305,7 @@ def _spec_rules(d, moment):
         out.append(f"{sid}: {aid} used twice (line {bn}) — bullet ids are unique in their section")
     oq = next((v for k, v in by_name.items() if k.startswith("open questions")), None)
     if moment == "ack" and oq:
-        left = [ln for _, ln in _text(oq[1]) if ln.strip().rstrip(".").lower() != "none"]
+        left = _open_left(oq[1])
         if left:
             out.append(f"Open questions: {len(left)} line(s) left — answer them before the ack")
     if tier and tier >= 3 and not ("approaches" in by_name and _text(by_name["approaches"][1])):
@@ -319,6 +319,18 @@ def _spec_rules(d, moment):
     if tier == 5 and not fm.get("interview"):
         out.append("E5: no `interview:` in the frontmatter (the date the Interview ran)")
     return out
+
+
+def _open_left(content):
+    return [ln for _, ln in _text(content) if ln.strip().rstrip(".").lower() != "none"]
+
+
+def open_questions(text):
+    """The lines left under the document's `## Open questions` (a lone `None` doesn't count)."""
+    for name, _, content in _headings(_parse(text)["_body"]):
+        if name.lower().startswith("open questions"):
+            return _open_left(content)
+    return []
 
 
 def _doc_root(path):

@@ -329,12 +329,13 @@ class TestProjectIsaEverywhere(GitCase):
         for root in (self.proj, self.plain):
             self.assertEqual(read(os.path.join(root, "ISA.md")), "# International Standard Atmosphere\n")
 
-    def test_spec_write_still_gated(self):
+    def test_spec_write_not_gated(self):
+        # plan P9: a spec is articulation, written before any ISA (P6 still refused it)
         self.env["ISA_MODE"] = "on"
         self.hook("UserPromptSubmit", prompt=PROMPT)
         spec = os.path.join(self.proj, "docs", "spec", "2026-10-06-x.md")
         out = self.pre_isa("Write", file_path=spec, content="x")
-        self.assertEqual(self.decision(out), "deny", out)
+        self.assertNotEqual(self.decision(out), "deny", out)
 
 
 if __name__ == "__main__":

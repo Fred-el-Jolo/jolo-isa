@@ -98,7 +98,8 @@ class TestCompositions(unittest.TestCase):
 
 
 class TestSpecKind(unittest.TestCase):
-    """Plan P6: specs and plans are their own path kind; until P9 a write onto one is still a write."""
+    """Plan P6: specs and plans are their own path kind. Plan P9: a file-tool write onto one is `spec`
+    (articulation, never a project change); a shell write onto one stays a write."""
 
     def test_spec(self):
         for rel in ("docs/spec/2026-10-06-x.md", "docs/plan/2026-10-06-x.md"):
@@ -121,9 +122,11 @@ class TestSpecKind(unittest.TestCase):
             os.environ.pop("ISA_HOME") if old is None else os.environ.__setitem__("ISA_HOME", old)
             shutil.rmtree(home, ignore_errors=True)
 
-    def test_spec_is_write(self):
-        self.assertEqual(classify.classify("Write", {"file_path": "docs/spec/x.md", "content": "x"}, CWD)[0], "write")
-        self.assertEqual(classify.classify("Edit", {"file_path": "docs/plan/x.md"}, CWD)[0], "write")
+    def test_spec_file_tools(self):
+        self.assertEqual(classify.classify("Write", {"file_path": "docs/spec/x.md", "content": "x"}, CWD)[0], "spec")
+        self.assertEqual(classify.classify("Edit", {"file_path": "docs/plan/x.md"}, CWD)[0], "spec")
+        self.assertEqual(classify.classify("edit", {"path": "docs/spec/x.md", "edits": []}, CWD)[0], "spec")
+        self.assertEqual(classify.classify("Write", {"file_path": "docs/specs/x.md", "content": "x"}, CWD)[0], "write")
         self.assertEqual(classify.bash("echo x > docs/spec/x.md", CWD)[0], "write")
         self.assertEqual(classify.bash("cat <<EOF > docs/plan/x.md\nhi\nEOF", CWD)[0], "write")
 
