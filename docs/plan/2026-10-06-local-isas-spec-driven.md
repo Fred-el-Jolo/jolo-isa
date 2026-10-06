@@ -1,5 +1,5 @@
 ---
-status: acked 2026-10-06 #008f483e
+status: done 2026-10-06 #008f483e
 spec: docs/spec/2026-10-06-local-isas-spec-driven.md
 ---
 
@@ -141,7 +141,7 @@ Review focus:
   - `IsaFormat.md` line 21 is reworded as in spec § 6 (no parallel *proof* artifacts); Scaffold's ambiguity check says it runs at the spec draft for E2–E5;
   - SKILL.md links SpecDriven.md and stays under its current size;
   - `rg -n -i 'lifeos|31337|MEMORY/WORK|\btelos\b|\bpulse\b' skill/` finds nothing.
-- [ ] P13 — The global rule block in both harnesses · E2 · covers §8.14 · after P12
+- [x] P13 — The global rule block in both harnesses · E2 · covers §8.14 · after P12 · Done: 2026-10-06
   Files: `install.py`, `tests/test_install.py`
   Interfaces: produces `install.merge_block(text: str, block: str) -> str` and `install.strip_block(text: str) -> str`, with markers `<!-- isa:spec-driven:begin -->` / `<!-- isa:spec-driven:end -->`; the block text is spec § B.8's draft, shipped as a file next to the skill
   Done when:
