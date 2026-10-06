@@ -88,7 +88,7 @@ Review focus:
   - outside git, specs go to `<dir>/docs/spec/`; in `$HOME` or a temp directory, to `~/.isa/<project-key>/docs/spec/`;
   - a Write to `docs/spec/x.md` classifies as `spec`; `docs/specs/x.md` and `docs/spec/x.txt` classify as `project`;
   - the first `isa new`, or the first spec written, creates `ISA.md` at the doc root when it is missing, in git and out of it; an `ISA.md` without `kind: project` is still left untouched.
-- [ ] P7 — Bind a spec, ask and record the ack (Claude Code) · E3 · covers §8.8, §8.15 · after P5, P6
+- [x] P7 — Bind a spec, ask and record the ack (Claude Code) · E3 · covers §8.8, §8.15 · after P5, P6 · Done: 2026-10-06
   Files: `runtime/isa/engine.py`, `runtime/isa/specdoc.py`, `tests/test_spec_flow.py` (new)
   Interfaces: session key `st["doc"] = {"path": str, "kind": "spec" | "plan"}`, set when a spec or plan is written; constants `ACK_HEADER_SPEC = "Spec ack"`, `ACK_HEADER_PLAN = "Plan ack"`, `ACK_YES = "Acknowledge"`, `ACK_NO = "Request changes"`; produces `specdoc.record_ack(path, harness, session) -> str` (appends `{"path", "hash", "t", "harness", "session"}` to `~/.isa/_state/acks.jsonl` and returns the hash), `specdoc.ack_recorded(path, h) -> bool`, `specdoc.acked(path) -> bool` (the `status: acked … #h` line matches `ack_hash` of the file now)
   Done when:
