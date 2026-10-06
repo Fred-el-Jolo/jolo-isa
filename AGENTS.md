@@ -46,7 +46,6 @@ isa-skill-export/
 │       ├── config.py             ← ~/.isa/config.json (`ask_without_isa`, `jev`, `jev_gate`, `jev_doubt`); a broken file means the defaults
 │       ├── jev.py / jev/         ← Jev through the `jev` CLI (jev-kit): deadlines, parsing, outage messages + the 6 ISA presets
 │       ├── skills.py             ← a slash command's skill description, for the gate
-│       ├── crypt.py / quotes.py  ← the git filter encrypting the user's words; where those words are (§ 13)
 │       ├── logs.py               ← debug log location and `isa purge-logs` (day files older than 7 days; never state)
 │       ├── status.py             ← read-only view of a session's mode and bound ISA (`isa status`, `isa current`)
 │       ├── cli.py                ← `isa ls|new|where|lint|verify|close|status|current|purge-logs|hook`; the Claude Code adapter lives here
@@ -66,7 +65,7 @@ isa-skill-export/
 │   ├── ISA-HARDENING.md          ← spec (after SKILL-SPLIT): framework errors seen, fixes H1–H6, issue log for live testing
 │   └── SPEC-v2.md                ← the v2 design: gate, commands, evidence, rules (implemented M1–M7)
 └── docs/
-    ├── spec/2026-10-06-local-isas-spec-driven.md  ← acked spec (not built yet): task ISAs back in ~/.isa (reverts SPEC-v2 § 13), spec → plan → ISA workflow
+    ├── spec/2026-10-06-local-isas-spec-driven.md  ← acked spec: task ISAs back in ~/.isa (reverts SPEC-v2 § 13; built, P1–P4), spec → plan → ISA workflow (not built yet)
     └── plan/2026-10-06-local-isas-spec-driven.md  ← its plan
 ```
 
@@ -85,20 +84,20 @@ The skill still loads from its description, and can be called directly (`Skill("
 
 ## Where ISA files go
 
-In a git repo, everything ISA lives in the repo and is committed with it (SPEC-v2 § 13):
+Task ISAs are local and never committed; a git repo holds only its project ISA, specs and plans (spec 2026-10-06 § A.1, § B.1):
 
-| Kind | Path |
-|------|------|
-| Project ISA (living spec, `kind: project`) | `<repo>/ISA.md` |
-| Task ISA | `<repo>/.isa/{YYYYMMDD-HHMMSS_kebab-slug}/ISA.md` |
-| Its ledger | `<repo>/.isa/{slug}/evidence.jsonl` (`merge=union`) |
-| Ephemeral slice | `<repo>/.isa/{slug}/_ephemeral/<feature>.md` |
-| A directory outside any repo | `~/.isa/<project>/{slug}/ISA.md` (ledger in `~/.isa/_state/evidence/`) |
-| Machine state | `~/.isa/_state/` (sessions, prompt logs, debug logs `logs/YYYY-MM-DD.jsonl`, `errors.log`, project-ISA proof), `~/.isa/config.json`, `~/.isa/key` |
+| Kind | Path | Committed |
+|------|------|-----------|
+| Task ISA (in a git repo or not) | `~/.isa/<project>/{YYYYMMDD-HHMMSS_kebab-slug}/ISA.md` | no |
+| Ephemeral slice | `~/.isa/<project>/{slug}/_ephemeral/<feature>.md` | no |
+| Its ledger | `~/.isa/_state/evidence/<slug>-<hash>.jsonl` | no |
+| Project ISA (living spec, `kind: project`) | `<repo>/ISA.md` | yes, with the code |
+| Specs and plans | `<repo>/docs/spec/YYYY-MM-DD-<slug>.md`, `<repo>/docs/plan/` (same basename) | yes, with the code |
+| Machine state | `~/.isa/_state/` (sessions, prompt logs, debug logs `logs/YYYY-MM-DD.jsonl`, `errors.log`, project-ISA proof `project/<key>.jsonl`), `~/.isa/config.json` | no |
 
-`<project>` is the git work-tree root (or the directory) relative to `$HOME`, with `/` → `-`: `~/dev/jolo-isa` → `dev-jolo-isa`; `$HOME` itself is `_home`, and a repo rooted at `$HOME` (dotfiles) counts as no repo. `isa where` prints the folder; `isa ls` lists the current one, `isa ls --all` adds every `~/.isa` folder. `isa migrate [--dry-run]` moves `~/.isa` ISAs of repos into their `.isa/`. The first export used `~/.claude/isa/`, but Claude Code blocks writes under `~/.claude/`. Override the home with `ISA_HOME`.
+`<project>` is the git work-tree root (or the directory) relative to `$HOME`, with `/` → `-`: `~/dev/jolo-isa` → `dev-jolo-isa`; `$HOME` itself is `_home`, and a repo rooted at `$HOME` (dotfiles) counts as no repo. `root:` is the project's absolute path. `isa where` prints the folder; `isa ls` lists the current one, `isa ls --all` adds every `~/.isa` folder. A task ISA does not follow the repo to another machine: the spec and the plan do (§ A.7). The first export used `~/.claude/isa/`, but Claude Code blocks writes under `~/.claude/`. Override the home with `ISA_HOME`.
 
-**Prompts encrypted in git (§ 13.5–13.8).** A required git clean/smudge filter (`isa crypt`, registered per clone by the first `isa` command there) encrypts only the user's verbatim words — `stated_goal`, `asks`, the Goal's opening quote, `anchors_to:` values equal to those, waiver quotes, the null-goal candidate row, `user: "…"` quotes — in `.isa/**/*.md`; files on disk stay plain and everything else stays public; the root `ISA.md` is never filtered. AES-256-CTR via `openssl` + HMAC-SHA256, deterministic (unchanged values never churn), in place byte for byte. The ledger never holds the words (asks snapshot and `quote-verified` rows are keyed HMACs; probe output and attest text are redacted to `[user words]`). The key: `ISA_KEY` or `~/.isa/key`; `isa key new | import FILE | export FILE | status`; it is never printed into an agent session, and the model may run only `isa key status`. Without the key (Option A): `isa new|verify|close` on a repo task ISA exit 2, a Write/Edit of one is refused, and git refuses the commit.
+SPEC-v2 § 13 (task ISAs committed in the repo, the user's words encrypted by a git filter) was undone in plan steps P1–P4: `isa migrate --home` moved the four repos' task ISAs home once, then the migration and the whole encryption layer (the git filter, the key commands, the quoting forms, the ledger redaction) were deleted.
 
 ## Enforcement
 
@@ -261,7 +260,7 @@ Exported 2026-09-22 from a LifeOS 7.1.1 install:
 ## Working rules for this folder
 
 - What installs: `skill/ISA/`, `runtime/`, `adapters/pi/isa.ts`, and with `--statusline` `adapters/claude-statusline/` (via `install.py`). `future/` and this file are design notes.
-- Run the tests before installing: `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install tests.test_status tests.test_evidence tests.test_shell_changes tests.test_feature_order tests.test_home_and_complete tests.test_seamless_projects tests.test_gate tests.test_commands tests.test_fingerprint tests.test_blocked tests.test_red tests.test_lint_v2 tests.test_purge tests.test_declaration tests.test_logs tests.test_ask tests.test_jev tests.test_m11 tests.test_m12 tests.flow.test_isa_flow` and `node --test adapters/pi/test/extension.test.ts adapters/claude-statusline/test/renderer.test.ts`. No test calls a model or the real `jev`; `HookCase` drops every inherited `ISA_*` variable and points `ISA_JEV_BIN` at nothing (`tests/test_jev.py` uses a fake `jev`; `ISA_FLOW_LIVE=1 python3 -m unittest tests.flow.test_jev_live` makes six real calls), and the declaration tests put tripwire `claude` / `pi` / `jev` CLIs on PATH that fail the test if a hook calls them. With PyYAML on `PYTHONPATH`, also `tests/test_yamlish.py` and `tests/test_lint_parity.py`.
+- Run the tests before installing: `python3 -m unittest tests.test_hooks tests.test_bash_classifier tests.test_state tests.test_install tests.test_status tests.test_evidence tests.test_shell_changes tests.test_feature_order tests.test_home_and_complete tests.test_seamless_projects tests.test_gate tests.test_commands tests.test_fingerprint tests.test_blocked tests.test_red tests.test_lint_v2 tests.test_purge tests.test_declaration tests.test_logs tests.test_ask tests.test_jev tests.test_m11 tests.test_project_isa tests.flow.test_isa_flow` and `node --test adapters/pi/test/extension.test.ts adapters/claude-statusline/test/renderer.test.ts`. No test calls a model or the real `jev`; `HookCase` drops every inherited `ISA_*` variable and points `ISA_JEV_BIN` at nothing (`tests/test_jev.py` uses a fake `jev`; `ISA_FLOW_LIVE=1 python3 -m unittest tests.flow.test_jev_live` makes six real calls), and the declaration tests put tripwire `claude` / `pi` / `jev` CLIs on PATH that fail the test if a hook calls them. With PyYAML on `PYTHONPATH`, also `tests/test_yamlish.py` and `tests/test_lint_parity.py`.
 - The whole-flow test (`tests/flow/test_isa_flow.py`, SPEC-v2 § 9) is live and paid (two Sonnet 5.5 sessions, about $0.30): `ISA_FLOW_LIVE=1 python3 -m unittest tests.flow.test_isa_flow`. It writes `flow/<stamp>/` (articulation and final ISA, timeline, verdict, transcripts, sandbox state) into the `eval-results` worktree at `tests/evals/results/` and commits it there. A run that dies on an API error is neither graded nor committed. Without the switch it is skipped.
 - Keep `runtime/` standard-library only (`python3 tests/check_stdlib.py runtime/`).
 - Keep it free of LifeOS: no `LIFEOS/` paths, no `localhost:31337`, no personal data. Check with `rg -n -i 'lifeos|31337|MEMORY/WORK|\btelos\b|\bpulse\b' skill/`. Expected: zero hits. Provenance lives only in this file (§ Source provenance), never inside `skill/`.

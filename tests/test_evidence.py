@@ -277,5 +277,31 @@ class TestLedgerProtected(GateCase):
         self.assertIsNone(self.decision(self.pre("Bash", command=f"cat {ledger}")))
 
 
+
+class TestLedgerText(EvidenceCase):
+    """Free text in a row (a probe's tail, attest evidence) is stored as written: the ledger is local."""
+
+    GOAL = "Make greet.py shout the greeting when --shout is given"
+
+    def isa(self):
+        return self.write_isa(self.text.replace("context_sufficient: true",
+                                                f'context_sufficient: true\nstated_goal: "{self.GOAL}"'))
+
+    def test_free_text_kept_verbatim(self):
+        path = self.isa()
+        tail, ev = f"FAIL: {self.GOAL}\n", f"checked by hand: {self.GOAL}"
+        evidence.record(path, [{"v": 2, "t": 1.0, "isc": "ISC-1", "kind": "verify", "ok": False, "tail": tail},
+                               {"v": 2, "t": 2.0, "isc": "ISC-3", "kind": "attest", "ok": True, "evidence": ev}])
+        rows = self.rows(path)
+        self.assertEqual(rows[-2]["tail"], tail)
+        self.assertEqual(rows[-1]["evidence"], ev)
+
+    def test_rows_sorted_by_time(self):
+        path = self.isa()
+        evidence.record(path, [{"v": 2, "t": 50.0, "isc": "ISC-2", "kind": "verify", "ok": True, "tool_sha": "a"}])
+        evidence.record(path, [{"v": 2, "t": 10.0, "isc": "ISC-2", "kind": "verify", "ok": False, "tool_sha": "b"}])
+        self.assertEqual(evidence.latest(path)["ISC-2"]["tool_sha"], "a")
+
+
 if __name__ == "__main__":
     unittest.main()

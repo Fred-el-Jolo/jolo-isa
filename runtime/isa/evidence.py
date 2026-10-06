@@ -22,7 +22,7 @@ import json
 import os
 import socket
 
-from . import lint, quotes, state
+from . import lint, state
 
 SELF_ATTESTED = lint.SELF_ATTESTED
 TAIL_CHARS = 800
@@ -55,7 +55,6 @@ def tool_sha(tool):
 
 
 MACHINE = hashlib.sha256(socket.gethostname().encode()).hexdigest()[:8]
-REDACTED = ("tail", "evidence")  # free text a probe or the model wrote: the user's words are taken out (§ 13.3)
 
 
 def row_id(row):
@@ -66,34 +65,18 @@ def row_id(row):
 
 
 def record(isa_path, rows):
-    """Append rows (each gets `machine` and `id`; the user's verbatim words are redacted from free text).
-    → the rows' ids, in order."""
-    words = None
+    """Append rows (each gets `machine` and `id`). → the rows' ids, in order."""
     ids = []
     path = ledger_path(isa_path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a") as f:
         for row in rows:
             row = dict(row)
-            if any(isinstance(row.get(k), str) and row[k] for k in REDACTED):
-                if words is None:
-                    words = _user_words(isa_path)
-                for k in REDACTED:
-                    row[k] = quotes.redact(row.get(k), words) if k in row else row.get(k)
-                row = {k: v for k, v in row.items() if v is not None or k not in REDACTED}
             row.setdefault("machine", MACHINE)
             row["id"] = row_id(row)
             ids.append(row["id"])
             f.write(json.dumps(row) + "\n")
     return ids
-
-
-def _user_words(isa_path):
-    try:
-        with open(isa_path, encoding="utf-8") as f:
-            return quotes.spans(f.read())
-    except OSError:
-        return []
 
 
 def rows(isa_path):

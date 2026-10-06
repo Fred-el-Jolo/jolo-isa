@@ -1,13 +1,13 @@
 """Where ISAs live and what each harness session has done. Standard library only.
 
-Layout (SPEC-v2 § 13): a git repo's ISAs live at its root, committed with it —
+Layout (spec 2026-10-06 § A.1): a git repo keeps only its project ISA, committed with it —
 
     <repo>/ISA.md                                            the project ISA (kind: project)
-    <repo>/.isa/<YYYYMMDD-HHMMSS>_<slug>/ISA.md              one task ISA, its ledger beside it
 
-and everything else under ISA_HOME (default ~/.isa):
+and everything else lives under ISA_HOME (default ~/.isa), never committed:
 
-    ~/.isa/<project-key>/<YYYYMMDD-HHMMSS>_<slug>/ISA.md    a task ISA of a directory outside any repo
+    ~/.isa/<project-key>/<YYYYMMDD-HHMMSS>_<slug>/ISA.md    a task ISA (in a repo or not)
+    ~/.isa/_state/evidence/<slug>-<hash>.jsonl              its evidence ledger
     ~/.isa/_state/sessions/<harness>-<session>.json         binding + counters
     ~/.isa/_state/prompts/<harness>-<session>.jsonl         raw user prompts
     ~/.isa/_state/errors.log                                hook failures
@@ -70,7 +70,7 @@ def _is_repo(d):
 
 
 def repo_root(cwd):
-    """The git repo whose root holds cwd's ISAs (SPEC-v2 § 13.1), or None: no repo, or a repo rooted at
+    """The git repo whose root holds cwd's project ISA, or None: no repo, or a repo rooted at
     $HOME or holding ISA_HOME (a dotfiles work tree — its `.isa/` would be ISA_HOME itself)."""
     root = project_root(cwd)
     if not _is_repo(root):

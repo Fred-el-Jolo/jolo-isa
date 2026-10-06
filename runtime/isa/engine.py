@@ -35,7 +35,7 @@ import os
 import re
 import time
 
-from . import changes, classify, config, crypt, evidence, isafile, jev, lint, logs, problems, rules, skills, state
+from . import changes, classify, config, evidence, isafile, jev, lint, logs, problems, rules, skills, state
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STALE_NUDGE_EVERY = 5
@@ -68,7 +68,7 @@ def _lint(isa_path, moment, harness, session):
     fm = state.frontmatter(isa_path)
     goal = fm.get("stated_goal") if isinstance(fm.get("stated_goal"), str) else None
     prompts = None
-    if goal and not goal.startswith("enc:v1:"):
+    if goal:
         digest = hashlib.sha256(goal.encode()).hexdigest()
         try:
             verified = open(_goal_ok_file(isa_path)).read().strip() == digest
@@ -674,9 +674,6 @@ def _pre_tool(ev):
     refused = _ownership_refusal(ev)
     if refused:
         return {"deny": refused}
-    refused = _key_refusal(ev)
-    if refused:
-        return {"deny": refused}
     _note_creating(ev)
     if kind == "read":
         return {}
@@ -729,18 +726,6 @@ def _note_creating(ev):
     if new:
         with state.session(ev["harness"], ev["session"]) as s:
             s["creating"] = (s.get("creating", []) + new)[-10:]
-
-
-KEY_CMD = re.compile(r"(^|[\s;&|(/])isa\s+key\s+(new|import|export)\b")
-
-
-def _key_refusal(ev):
-    """SPEC-v2 § 13.8: the model never handles the key (only `isa key status`)."""
-    tool, ti = ev.get("tool", ""), ev.get("tool_input") or {}
-    if tool in classify.SHELL_TOOLS and KEY_CMD.search(str(ti.get("command", ""))):
-        return ("ISA: `isa key new|import|export` is the user's to run, in their own terminal (or as `! isa key …`) "
-                "— the key must never pass through the model. `isa key status` is fine.")
-    return None
 
 
 def _snapshot_unknown(ev, kind, cwd):
@@ -1004,15 +989,9 @@ def _may_bind(st, path, ev):
 
 
 def _project_feedback(path):
-    """An edit of the repo's project ISA: content only, never bound; quotes of the user are refused there."""
-    try:
-        text = open(path, encoding="utf-8").read()
-    except OSError:
+    """An edit of the repo's project ISA: content only, never bound."""
+    if not os.path.isfile(path):
         return {}
-    bad = crypt.lint_project(text)
-    if bad:
-        return {"context": f"Project ISA {_tilde(path)}: it never holds the user's words (it is committed unencrypted, "
-                           "SPEC-v2 § 13.5) — rewrite these in your own words:\n" + _fmt(bad)}
     return {"context": f"Project ISA {_tilde(path)} edited (not bound to this session)."}
 
 

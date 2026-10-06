@@ -114,7 +114,6 @@ class Sandbox:
     def env(self):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("ISA_", "CLAUDE_CODE_", "CLAUDECODE"))}
         env.update(ISA_HOME=self.isa_home, ISA_SKILL_DIR=SKILL_DIR,
-                   ISA_KEY="Zmxvdy10ZXN0LWtleS1mbG93LXRlc3Qta2V5LWZsb3c=",  # the sandbox is a repo (§ 13.7)
                    ISA_FLOW_PROJECT=self.proj, ISA_FLOW_SNAPSHOT=os.path.join(self.out, "ISA.articulation.md"),
                    PATH=self.bin + os.pathsep + os.environ.get("PATH", ""), ENABLE_CLAUDEAI_MCP_SERVERS="false")
         return env

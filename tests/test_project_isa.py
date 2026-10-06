@@ -10,10 +10,11 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 from tests.test_commands import CommandCase
 from tests.test_evidence import read
-from tests.test_hooks import ROOT
+from tests.test_hooks import ISA, ROOT
 
 sys.path.insert(0, os.path.join(ROOT, "runtime"))
 from isa import changes, evidence, state  # noqa: E402
@@ -72,11 +73,10 @@ greet.py can't shout.
 
 
 class GitCase(CommandCase):
-    """A real git repo as the project, and no key: nothing about a task ISA needs one any more."""
+    """A real git repo as the project."""
 
     def setUp(self):
         super().setUp()
-        self.env.pop("ISA_KEY", None)
         shutil.rmtree(os.path.join(self.proj, ".git"))
         self.git("init", "-q")
         self.put("a.txt", "one\n")
@@ -133,6 +133,33 @@ class TestLocation(GitCase):
         self.assertFalse(hasattr(state, "repo_isa_dir"))
         self.assertFalse(hasattr(state, "isa_repo"))
 
+    def test_non_repo_uses_isa_home(self):
+        d = tempfile.mkdtemp(prefix="isa-norepo-", dir=os.path.expanduser("~/.cache"))
+        try:
+            rc, out = self.isa("new", "x", cwd=d)
+            self.assertEqual(rc, 0, out)
+            self.assertTrue(out.strip().splitlines()[-1].startswith(os.path.realpath(self.home)))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_existing_non_project_isa_md_untouched(self):
+        self.put("ISA.md", "# International Standard Atmosphere\n")
+        self.hook("UserPromptSubmit", prompt=PROMPT)
+        rc, out = self.isa("new", "x")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(read(os.path.join(self.proj, "ISA.md")), "# International Standard Atmosphere\n")
+        self.assertIn("left untouched", out)
+
+    def test_home_repo_is_no_repo(self):
+        fake = tempfile.mkdtemp(prefix="isa-homerepo-")
+        try:
+            os.makedirs(os.path.join(fake, ".git"))
+            env = dict(self.env, HOME=fake, ISA_HOME=os.path.join(fake, ".isa"))
+            r = subprocess.run([sys.executable, ISA, "where"], cwd=fake, env=env, text=True, capture_output=True)
+            self.assertIn(os.path.join(fake, ".isa", "_home"), r.stdout)
+        finally:
+            shutil.rmtree(fake, ignore_errors=True)
+
 
 class TestLedgerPaths(GitCase):
     def test_ledger_only_under_state_evidence(self):
@@ -184,6 +211,18 @@ class TestProjectIsa(GitCase):
             f.write(f"\n## Criteria\n\n- ISC-P1: default output unchanged (from {slug} ISC-2)\n")
         rc, out = self.isa("close", path)
         self.assertEqual(rc, 0, out)
+
+    def test_user_quotes_allowed(self):
+        """Q9: whether the project ISA quotes the user is the user's call, not the tool's."""
+        self.task()
+        proj = os.path.join(self.proj, "ISA.md")
+        with open(proj, "a") as f:
+            f.write('\n## Decisions\n\n- 2026-01-01 00:00: user: "keep the default output as is" — no flag changes.\n')
+        rc, out = self.isa("lint", proj)
+        self.assertEqual(rc, 0, out)
+        _, hook_out, _ = self.hook("PostToolUse", tool_name="Edit", tool_input={"file_path": proj}, tool_response={})
+        self.assertIn("edited (not bound to this session)", self.ctx(hook_out))
+        self.assertNotIn("never holds the user's words", json.dumps(hook_out))
 
     def test_project_isa_of(self):
         repo = os.path.realpath(self.proj)

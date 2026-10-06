@@ -16,11 +16,10 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import time
 
-from . import config, crypt, evidence, fingerprint, isafile, jev, lint, logs, problems, rules, state
+from . import config, evidence, fingerprint, isafile, jev, lint, logs, problems, rules, state
 
 TAIL = evidence.TAIL_CHARS
 VAGUE = {"make", "this", "that", "good", "better", "thing", "things", "stuff", "please", "just", "with", "from",
@@ -224,8 +223,6 @@ def lint_project(path, text):
     if not str(fm.get("task") or "").strip():
         errs.append("frontmatter: `task:` (the repo's one-line purpose) is empty")
     errs += [f"frontmatter: `{k}:` belongs to task ISAs, not the project ISA" for k in PROJECT_FORBIDDEN if k in fm]
-    errs += [f"the project ISA never quotes the user (it is committed unencrypted): {line}"
-             for line in crypt.lint_project(text) if not line.startswith("frontmatter")]
     if re.search(r"^\s*- \[[ xX]\] ISC-", p["content"].get("Criteria", ""), re.M):
         errs.append("Criteria: standing claims have no checkbox — write `- ISC-P<n>: <claim>` (re-proved, never ticked)")
     claims = STANDING.findall(p["content"].get("Criteria", ""))
@@ -907,158 +904,3 @@ def jev_close_advice(path, text, results=None, marks=None):
     msgs = []
     _jev_line(results, msgs.append)
     return "\nJev (advisory — never blocks the close):\n" + "\n".join(lines) + ("\n" + "\n".join(msgs) if msgs else "")
-
-
-# ------------------------------------------------------------------ session rebinding
-
-def _rebind(moved):
-    d = os.path.join(state.home(), "_state", "sessions")
-    for name in os.listdir(d) if os.path.isdir(d) else []:
-        p = os.path.join(d, name)
-        try:
-            with open(p) as f:
-                st = json.load(f)
-        except (OSError, ValueError):
-            continue
-        changed = False
-        if st.get("bound") in moved:
-            st["bound"], changed = moved[st["bound"]], True
-        hist = [moved.get(h, h) for h in st.get("bound_history") or []]
-        if hist != (st.get("bound_history") or []):
-            st["bound_history"], changed = hist, True
-        if changed:
-            with open(p + ".tmp", "w") as f:
-                json.dump(st, f)
-            os.replace(p + ".tmp", p)
-
-
-# ------------------------------------------------------------------ migrate --home (spec 2026-10-06 § A.5)
-
-HOME_COMMIT = 'git rm -r --cached .isa && git add .gitattributes && git commit -m "Move task ISAs out of git"'
-ENC_VALUE = re.compile(r'"?' + crypt.TOKEN.pattern + r'"?')
-
-
-def _plain(text, k):
-    """`text` with every `enc:v1:` value opened by the key; one it can't open (no key, another key) → `""`.
-    → (text, how many were blanked)."""
-    if "enc:v1:" not in text:
-        return text, 0
-    text = crypt.smudge(text, k)
-    return ENC_VALUE.subn('""', text)
-
-
-def _home_rows(lines, repo, tags):
-    """Ledger rows of a repo ISA as a home ledger holds them: `root` / `cwd` absolute, the `asks` snapshot
-    verbatim (`tags`: hmac tag → ask). Row ids are kept, so every `(ledger: <id>)` line still resolves."""
-    out = []
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(row, dict):
-            continue
-        for kk in ("root", "cwd"):
-            if isinstance(row.get(kk), str) and not os.path.isabs(row[kk]):
-                row[kk] = os.path.normpath(os.path.join(repo, row[kk]))
-        if row.get("kind") == "asks":
-            row["asks"] = [tags.get(a, a) for a in row.get("asks") or []]
-        out.append(json.dumps(row))
-    return out
-
-
-def _drop_attributes(repo, dry, out):
-    path = os.path.join(repo, ".gitattributes")
-    try:
-        with open(path) as f:
-            have = f.read().splitlines()
-    except OSError:
-        return
-    keep = [x for x in have if x.strip() not in crypt.ATTRIBUTES]
-    if len(keep) == len(have):
-        return
-    empty = not any(x.strip() for x in keep)
-    out(f".gitattributes: drop the {len(have) - len(keep)} `.isa` line(s)" + (", then the empty file" if empty else ""))
-    if dry:
-        return
-    if empty:
-        os.remove(path)
-    else:
-        isafile.write_atomic(path, "\n".join(keep) + "\n")
-
-
-def migrate_home(args, out=print):
-    """`isa migrate --home [--dry-run]`, run inside a repo: move every `<repo>/.isa/<slug>/` to
-    `ISA_HOME/<project-key>/<slug>/`, its `evidence.jsonl` to the home ledger, `root:` absolute, values still
-    encrypted on disk opened with the key (or blanked), sessions rebound, the `.isa` git filter removed.
-    Commits nothing; prints the commit for the user. → 0, 1 when a slug was skipped, 2 outside a repo."""
-    dry = "--dry-run" in args
-    repo = state.repo_root(os.getcwd())
-    if not repo:
-        out("isa migrate --home: not inside a git repo (run it at the repo whose .isa/ should move home)")
-        return 2
-    src_dir, dest_dir = os.path.join(repo, ".isa"), os.path.join(state.home(), state.project_key(repo))
-    slugs = sorted(s for s in (os.listdir(src_dir) if os.path.isdir(src_dir) else [])
-                   if os.path.isdir(os.path.join(src_dir, s)) and not os.path.islink(os.path.join(src_dir, s)))
-    if dry:
-        out("isa migrate --home (dry run: nothing is changed)")
-    k = crypt.key()
-    moved, skipped = {}, []
-    for slug in slugs:
-        src, dest = os.path.join(src_dir, slug), os.path.join(dest_dir, slug)
-        if os.path.lexists(dest):
-            skipped.append(slug)
-            out(f"skip  {slug} — {dest} exists; it stays in {src_dir}/")
-            continue
-        out(f"move  {src} → {dest}")
-        old_isa = os.path.join(src, "ISA.md")
-        texts = {}
-        for d, _, files in os.walk(src):
-            for n in files:
-                p = os.path.join(d, n)
-                if n.endswith(".md"):
-                    text, blanked = _plain(_read(p), k)
-                    texts[os.path.relpath(p, src)] = text
-                    if blanked:
-                        out(f"  {slug}/{os.path.relpath(p, src)}: {blanked} encrypted value(s) "
-                            f"{'blanked' if not dry else 'would be blanked'} to \"\" "
-                            f"({'no key' if not k else 'not under your key'})")
-        if dry:
-            continue
-        real_old = os.path.realpath(old_isa)
-        os.makedirs(dest_dir, exist_ok=True)
-        shutil.move(src, dest)
-        new_isa = os.path.join(dest, "ISA.md")
-        for rel, text in texts.items():
-            if rel == "ISA.md":
-                root = isafile.fm(text).get("root")
-                if isinstance(root, str) and root and not os.path.isabs(os.path.expanduser(root)):
-                    text = isafile.fm_set(text, "root", os.path.normpath(os.path.join(repo, root)))
-            isafile.write_atomic(os.path.join(dest, rel), text)
-        ledger = os.path.join(dest, "evidence.jsonl")
-        if os.path.isfile(ledger):
-            asks = isafile.fm(texts.get("ISA.md", "")).get("asks")
-            tags = {crypt.tag(str(a), k): str(a) for a in asks} if k and isinstance(asks, list) else {}
-            with open(ledger) as f:
-                rows = _home_rows(f, repo, tags)
-            target = evidence.ledger_path(new_isa)
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            with open(target, "a") as f:
-                f.writelines(r + "\n" for r in rows)
-            os.remove(ledger)
-        moved[real_old] = os.path.realpath(new_isa)
-    _drop_attributes(repo, dry, out)
-    r = crypt._git(repo, "config", "--local", "--get-regexp", r"^filter\.isa\.")
-    if r is not None and r.returncode == 0 and r.stdout.strip():
-        out("git config: remove the filter.isa section")
-        if not dry:
-            crypt._git(repo, "config", "--local", "--remove-section", "filter.isa")
-    if not dry:
-        _rebind(moved)
-    out(f"isa migrate --home: {len(moved) if not dry else len(slugs) - len(skipped)} ISA folder(s) "
-        f"{'would move' if dry else 'moved'} to {dest_dir}/, {len(skipped)} skipped; nothing committed")
-    if skipped:
-        out(f"  skipped (already at home): {', '.join(skipped)} — move or delete them by hand before committing")
-    out("Commit the removal from git yourself:")
-    out(HOME_COMMIT)
-    return 1 if skipped else 0
