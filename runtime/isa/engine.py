@@ -35,7 +35,7 @@ import os
 import re
 import time
 
-from . import changes, classify, config, evidence, isafile, jev, lint, logs, problems, rules, skills, state
+from . import changes, classify, config, evidence, isafile, jev, lint, logs, problems, rules, skills, specdoc, state
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STALE_NUDGE_EVERY = 5
@@ -366,6 +366,230 @@ def _ask_answer(ev):
     return {"context": res["context"], "block": res["context"], "warn": res["warn"]} if res else {}
 
 
+# The spec / plan ack (spec 2026-10-06 § B.4, § 5.6 questions 3–5): a click on exactly ACK_YES, recorded
+ACK_HEADER_SPEC = "Spec ack"
+ACK_HEADER_PLAN = "Plan ack"
+ACK_YES = "Acknowledge"
+ACK_NO = "Request changes"
+ACK_HEADERS = {ACK_HEADER_SPEC: "spec", ACK_HEADER_PLAN: "plan"}
+DOC_PATH = re.compile(r"[^\s\"'`(]*docs/(?:spec|plan)/[^\s\"'`?)]+\.md")
+STATUS_ACKED_TEXT = re.compile(r"status:\s*acked")
+
+
+def _doc_kind(path):
+    return "plan" if os.path.basename(os.path.dirname(path)) == "plan" else "spec"
+
+
+def _doc_title(path):
+    try:
+        text = open(path, encoding="utf-8").read()
+    except (OSError, ValueError):
+        return ""
+    title = next((ln[2:].strip() for ln in text.splitlines() if ln.startswith("# ")), "")
+    return title[len("Plan — "):] if title.startswith("Plan — ") else title
+
+
+def _doc_summary(path):
+    """Title and Goal of a spec or plan, for Q2 (the `isa-continuation` preset's `isa` field)."""
+    try:
+        text = open(path, encoding="utf-8").read()
+    except (OSError, ValueError):
+        return f"{_doc_kind(path)} {path}"
+    lines = text.splitlines()
+    goal = next((ln[len("Goal:"):].strip() for ln in lines if ln.startswith("Goal:")), "")
+    if not goal and "## Goal" in lines:
+        goal = next((ln.strip() for ln in lines[lines.index("## Goal") + 1:] if ln.strip()), "")
+    return f"{_doc_kind(path)} {_tilde(path)} (no ISA yet): {_doc_title(path)}\nGoal: {goal}"
+
+
+def _bind_doc(st, ev, out):
+    """A file-tool write of a spec or plan binds it to the session (spec § B.7); the ISA binding is untouched."""
+    if ev.get("tool") not in classify.FILE_TOOLS:
+        return
+    for p in classify.tool_paths(ev.get("tool_input")):
+        full = os.path.realpath(p if os.path.isabs(os.path.expanduser(p)) else os.path.join(ev.get("cwd") or "", p))
+        if not state.is_spec_path(full):
+            continue
+        kind = _doc_kind(full)
+        if st.get("doc", {}).get("path") != full:
+            out.append(f"{kind.capitalize()} {_tilde(full)} bound to this session. Its ack: once `isa lint` on it is "
+                       f"clean, ask with AskUserQuestion — header `{ACK_HEADER_SPEC if kind == 'spec' else ACK_HEADER_PLAN}`, "
+                       f"question naming the file, options exactly `{ACK_YES}` and `{ACK_NO}`.")
+        st["doc"] = {"path": full, "kind": kind}
+
+
+def _ack_questions(ev):
+    qs = (ev.get("tool_input") or {}).get("questions") or []
+    return [q for q in qs if isinstance(q, dict) and q.get("header") in ACK_HEADERS]
+
+
+def _ack_path(q, ev, st):
+    """The document an ack question is about: the spec/plan path it names, else the session's bound doc."""
+    cwd = ev.get("cwd") or ""
+    for m in DOC_PATH.findall(str(q.get("question", ""))):
+        full = os.path.realpath(os.path.join(cwd, os.path.expanduser(m)))
+        if state.is_spec_path(full):
+            return full
+    doc = (st or {}).get("doc") or {}
+    return doc.get("path")
+
+
+def _ack_question_refusal(ev, st):
+    """PreToolUse: the ack question is asked only in its exact shape, about a document that lints clean."""
+    if ev.get("tool") != "AskUserQuestion":
+        return None
+    for q in _ack_questions(ev):
+        header = q.get("header")
+        if (ev.get("tool_input") or {}).get("answers"):
+            return "ISA ack: the ack question carries `answers` — only the user answers it. Ask it without them."
+        labels = [str((o or {}).get("label", "")) for o in q.get("options") or [] if isinstance(o, dict)]
+        if sorted(labels) != sorted([ACK_YES, ACK_NO]) or q.get("multiSelect"):
+            return (f"ISA ack: the `{header}` question takes exactly two options, `{ACK_YES}` and `{ACK_NO}` "
+                    "(no other label, no \"(Recommended)\", no multiSelect).")
+        path = _ack_path(q, ev, st)
+        if not path or not os.path.isfile(path):
+            return (f"ISA ack: the `{header}` question must name the document, e.g. \"Acknowledge "
+                    "docs/spec/YYYY-MM-DD-<slug>.md?\" — no such spec or plan here.")
+        if ACK_HEADERS[header] != _doc_kind(path):
+            want = ACK_HEADER_SPEC if _doc_kind(path) == "spec" else ACK_HEADER_PLAN
+            return f"ISA ack: {_tilde(path)} is a {_doc_kind(path)} — ask with header `{want}`."
+        errors = [m for m in specdoc.lint(path, "ack") if not m.startswith("warn:")]
+        if errors:
+            return (f"ISA ack: {_tilde(path)} does not pass `isa lint --moment ack` yet, so the user can't be asked "
+                    f"to acknowledge it. Fix it, then ask:\n{_fmt(errors)}")
+    return None
+
+
+def _ack_answer(ev, question):
+    resp = ev.get("tool_response")
+    for src in ((ev.get("tool_input") or {}).get("answers"), resp.get("answers") if isinstance(resp, dict) else None):
+        if isinstance(src, dict) and question in src:
+            return str(src[question])
+    m = re.search(re.escape(f'"{question}"') + r'\s*=\s*"([^"]*)"', str(ev.get("tool_output") or ""))
+    return m.group(1) if m else None
+
+
+def _ack_text(path, h):
+    """What the model does after the click: the status line, then (in a git repo) commit that file alone."""
+    kind, title = _doc_kind(path), _doc_title(path)
+    line = f"status: acked {time.strftime('%Y-%m-%d')} #{h}"
+    repo = state.repo_root(os.path.dirname(path))
+    if repo and path.startswith(repo + os.sep):
+        rel = os.path.relpath(path, repo)
+        msg = f"{'Spec' if kind == 'spec' else 'Plan'}: {title} (acked)"
+        commit = (f" Then commit that file alone: `git -C {repo} add -- {rel} && git -C {repo} commit -m \"{msg}\" "
+                  f"-- {rel}` (code commits stay the user's call).")
+    else:
+        commit = " The project is outside any repository: no commit."
+    return (f"The user acknowledged {_tilde(path)} (#{h}). Set its frontmatter line to exactly `{line}` with Edit, "
+            f"changing nothing else in that edit.{commit} The ack is the go for what the {kind} covers.")
+
+
+def _record_ack(ev):
+    """PostToolUse of an ack question: exactly ACK_YES records the ack; anything else records nothing."""
+    st = state.read_session(ev["harness"], ev["session"])
+    out = []
+    for q in _ack_questions(ev):
+        path = _ack_path(q, ev, st)
+        answer = _ack_answer(ev, str(q.get("question", "")))
+        if not path or not os.path.isfile(path):
+            continue
+        if answer is None or answer.strip() != ACK_YES:
+            note(ack="declined")
+            out.append(f"{answer!r} is not an acknowledgement — {_tilde(path)} stays unacknowledged. Revise it "
+                       "with the user's notes, then ask again.")
+            continue
+        errors = [m for m in specdoc.lint(path, "ack") if not m.startswith("warn:")]
+        if errors:
+            out.append(f"Not recorded: {_tilde(path)} does not pass the ack lint:\n{_fmt(errors)}")
+            continue
+        h = specdoc.record_ack(path, ev["harness"], ev["session"])
+        note(ack="recorded")
+        out.append(_ack_text(path, h))
+    return {"context": "\n".join(out)} if out else {}
+
+
+def _status_refusal(ev):
+    """A `status: acked … #h` line is written only after the user's click (spec § B.4): with Edit/Write, when
+    an ack with that hash is recorded and the written file still has that hash."""
+    tool, ti, cwd = ev.get("tool", ""), ev.get("tool_input") or {}, ev.get("cwd") or ""
+    if tool in classify.SHELL_TOOLS:
+        if _shell_status_write(str(ti.get("command", "")), cwd):
+            return ("ISA ack: `status: acked` is written with Edit, after the user picked Acknowledge — not from a "
+                    "shell command. (A command that only reads the spec: run it apart from the text naming the "
+                    "status line.)")
+        return None
+    if tool not in classify.FILE_TOOLS:
+        return None
+    for p in classify.tool_paths(ti):
+        path = os.path.realpath(os.path.join(cwd, os.path.expanduser(p)))
+        if not state.is_spec_path(path):
+            continue
+        try:
+            current = open(path, encoding="utf-8").read()
+        except (OSError, ValueError):
+            current = ""
+        new = _proposed(tool, ti, current)
+        if new is None or specdoc.status_line(new) == specdoc.status_line(current):
+            continue
+        h = specdoc.acked_hash(new)
+        if not h:
+            continue
+        if not specdoc.ack_recorded(path, h):
+            header = ACK_HEADER_SPEC if _doc_kind(path) == "spec" else ACK_HEADER_PLAN
+            return (f"ISA ack: no recorded ack of {_tilde(path)} with hash #{h}. Only the user acknowledges: ask with "
+                    f"AskUserQuestion (header `{header}`, options `{ACK_YES}` / `{ACK_NO}`); the status line comes "
+                    "after their click.")
+        if specdoc.ack_hash(new) != h:
+            return (f"ISA ack: after this write {_tilde(path)} would no longer match what the user acknowledged "
+                    f"(#{h}). Write the status line alone; any other change needs a new ack.")
+    return None
+
+
+def _shell_status_write(cmd, cwd):
+    """A shell command that names `status: acked` and may write it into a spec: a segment naming the spec
+    that writes or runs a script (`sed -i`, `perl -pi`, `> spec`), or a script whose heredoc names it.
+    Segments that only read the spec (`grep`, `cat`, `isa lint`) or never name it (`git commit -m …`) don't count."""
+    if not STATUS_ACKED_TEXT.search(cmd):
+        return False
+    specs = {m for m in DOC_PATH.findall(cmd) if state.is_spec_path(os.path.join(cwd, os.path.expanduser(m)))}
+    if not specs:
+        return False
+    try:
+        toks = classify._tokens(classify._drop_heredoc_bodies(cmd).replace("\\\n", " ").replace("\n", " ; "))
+    except ValueError:
+        return True  # can't read the command: treat it as a write
+    segs, seg = [], []
+    for t in toks + [";"]:
+        if t in classify.SEPARATORS or all(c in ";&|()" for c in t):
+            segs.append(seg)
+            seg = []
+        else:
+            seg.append(t)
+    seen, scripts = set(), False
+    for words in filter(None, segs):
+        named = {s for s in specs if any(s in w for w in words)}
+        seen |= named
+        kind, _ = classify._segment(words, cwd, ())
+        if named and kind not in ("read", "isa-cmd"):
+            return True
+        scripts = scripts or kind == "unknown"
+    return scripts and bool(specs - seen)  # named only inside a heredoc body that a script reads
+
+
+def _targets_acks(ev):
+    """A write aimed at the ack records (`acks.jsonl`): only the hooks append there."""
+    tool, ti, cwd = ev.get("tool", ""), ev.get("tool_input") or {}, ev.get("cwd") or ""
+    acks = os.path.realpath(specdoc.acks_path())
+    if tool in classify.FILE_TOOLS:
+        paths = [os.path.join(cwd, os.path.expanduser(p)) for p in classify.tool_paths(ti)]
+    elif tool in classify.SHELL_TOOLS:
+        paths = classify.write_targets(str(ti.get("command", "")), cwd)
+    else:
+        return False
+    return any(os.path.realpath(p) == acks for p in paths)
+
+
 def _on_block(cwd):
     listing = _project_listing(cwd)
     return protocol(cwd) + ("\n" + listing if listing else "")
@@ -406,7 +630,7 @@ def _needs_isa(st, bound, pid):
 def _new_task_pending(st, bound):
     """Q2 said "new task" while `bound` was open: a new ISA must be bound (editing this one won't do)."""
     q2 = st.get("q2") or {}
-    return q2.get("outcome") == "new" and q2.get("old") == bound
+    return bool(bound) and q2.get("outcome") == "new" and q2.get("old") == bound  # a doc's Q2 has no `old`
 
 
 def _session_start(ev):
@@ -464,6 +688,7 @@ def _prompt(ev):
         st.pop("gate", None)
         st.pop("pass", None)  # the Continue pass lasts until the next prompt (SPEC-v2 § 12.4, M11.1)
         mode = _mode(st)
+        doc = (st.get("doc") or {}).get("path")
         forced = mode == "on" and _switch_on(st, "override" if _mode_env() == "on" else "binding",
                                              "ISA_MODE=on" if _mode_env() == "on" else "open ISA bound (v1 session)")
         bound = _bound(st)
@@ -474,6 +699,8 @@ def _prompt(ev):
     # no judge (§ 12.2): an empty prompt, ON with no ISA yet (one is required already), or ISA_MODE=on
     if not str(prompt or "").strip():
         return {}
+    if mode == "on" and not bound and doc and os.path.isfile(doc) and _mode_env() != "on":
+        return _q2(ev, None, prompt, context, doc=doc)  # the bound spec or plan is the task (spec § B.7)
     if mode == "on" and not bound:
         return {"context": "ISA: ON — no ISA bound yet: write it before the work (`isa new <slug> --goal \"…\"`)."}
     if _mode_env() == "on":
@@ -611,8 +838,10 @@ def _isa_summary(path):
     return f"task: {fm.get('task', '')}\nGoal: {_goal_section(path)}"
 
 
-def _q2(ev, bound, prompt, context):
-    """Q2 — continuation or new task? (an open ISA is bound). Never asks the user."""
+def _q2(ev, bound, prompt, context, doc=None):
+    """Q2 — continuation or new task? (an open ISA is bound, or else a spec or plan). Never asks the user."""
+    if doc:
+        return _q2_doc(ev, doc, prompt, context)
     line = _gate_line()
     res = jev.ask("isa-continuation", {"isa": _isa_summary(bound), "prompt": prompt, "context": context or ""},
                   jev.HOOK_DEADLINE, harness=ev.get("harness"), session=ev.get("session"), prompt_id=ev.get("prompt_id"))
@@ -646,6 +875,39 @@ def _q2(ev, bound, prompt, context):
     return _with_outage(ev, res, out)
 
 
+def _q2_doc(ev, doc, prompt, context):
+    """Q2 against the bound spec or plan (no ISA bound yet). The outcome is recorded with `doc`, never `old`:
+    no ISA is paused for it."""
+    line = _gate_line()
+    res = jev.ask("isa-continuation", {"isa": _doc_summary(doc), "prompt": prompt, "context": context or ""},
+                  jev.HOOK_DEADLINE, harness=ev.get("harness"), session=ev.get("session"), prompt_id=ev.get("prompt_id"))
+    kind, pid = _doc_kind(doc), str(ev.get("prompt_id"))
+    bound_line = f"{kind.capitalize()} {_tilde(doc)} is bound (no ISA yet)"
+    note(question="q2", judge="jev" if res["served"] else "none", doc=True)
+    with state.session(ev["harness"], ev["session"]) as st:
+        if not res["served"]:
+            note(jev_reason=res["reason"], outcome="continuation")
+            st["q2"] = {"pid": pid, "outcome": "unavailable", "doc": doc}
+            return _with_outage(ev, res, {
+                "warn": "ISA gate — Jev unavailable → continuation of the bound " + kind,
+                "context": bound_line + ". A different task gets its own spec, or an E1 ISA."})
+        new = res["answers"].get("new_task")
+        new = float(new) if isinstance(new, (int, float)) else 0.0
+        note(score=new)
+        if new >= line:
+            st["q2"] = {"pid": pid, "outcome": "new", "doc": doc}
+            note(outcome="new_task")
+            out = {"warn": f"ISA gate — Jev {new:.2f} → new task (not the bound {kind})",
+                   "context": f"{bound_line}. This prompt starts a new task (Jev {new:.2f}), not about it: write a "
+                              "new spec for it, or an E1 ISA (`isa new <slug> --tier E1`)."}
+        else:
+            st["q2"] = {"pid": pid, "outcome": "continuation", "doc": doc}
+            note(outcome="continuation")
+            out = {"warn": f"ISA gate — Jev {new:.2f} → continuation of the bound {kind}",
+                   "context": f"{bound_line}. This prompt continues it."}
+    return _with_outage(ev, res, out)
+
+
 def _jev_outage(ev, res):
     """The user's line for a Jev call that was not served — once per session and kind of problem."""
     kind = jev.kind(res)
@@ -664,6 +926,9 @@ def _pre_tool(ev):
     if _targets_ledger(ev, kind):
         return {"deny": "ISA evidence gate: the evidence ledger (~/.isa/_state/evidence/) is written only by "
                         "`isa verify`. Run the probe through `isa verify <ISA> ISC-N` instead."}
+    if _targets_acks(ev):
+        return {"deny": "ISA ack: acks.jsonl (~/.isa/_state/acks.jsonl) holds the user's Acknowledge clicks and is "
+                        "written only by the hooks."}
     if kind == "isa-cmd":
         return {}  # `isa new|lint|verify|close`: how the model writes the engine-owned state — never gated
     if kind == "isa-shell-edit":
@@ -671,7 +936,7 @@ def _pre_tool(ev):
                         "Write/Edit against the engine-owned fields (ticks, generated Verification lines, "
                         "progress, root, phase: complete); `isa verify` / `isa close` write those."}
     st = state.read_session(ev["harness"], ev["session"])
-    refused = _ownership_refusal(ev)
+    refused = _ownership_refusal(ev) or _status_refusal(ev) or _ack_question_refusal(ev, st)
     if refused:
         return {"deny": refused}
     _note_creating(ev)
@@ -1043,6 +1308,8 @@ def _post_isa_cmd(ev):
 def _post_tool(ev):
     if ev.get("tool") == "AskUserQuestion" and _is_our_question(ev):
         return _record_choice(ev, _ask_choice(ev))
+    if ev.get("tool") == "AskUserQuestion" and _ack_questions(ev):
+        return _record_ack(ev)
     tool, ti, cwd = ev.get("tool", ""), ev.get("tool_input") or {}, ev.get("cwd")
     kind, isa_paths = classify.classify(tool, ti, cwd, ev.get("temp_dirs", ()))
     if kind == "isa-cmd":
@@ -1082,6 +1349,7 @@ def _post_tool(ev):
             _count_change(st, now, out)
             touched = _changed_projects(ev, kind)
             _spec_project_isa(ev, out)
+            _bind_doc(st, ev, out)
             if was_off and not st.get("pass") and _switch_on(st, "change", "a command changed project files"):
                 warn = "ISA: ON — a command changed project files; the turn needs an ISA before it ends"
         if kind == "unknown" and tool in classify.SHELL_TOOLS:

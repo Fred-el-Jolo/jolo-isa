@@ -5,20 +5,23 @@ is the template of spec § B.3; the lint checks only what a script can decide (s
 user checks the rest at the ack.
 
 Standard library only (frontmatter via `yamlish`). Entry points: `parse(text)`, `ack_hash(text)`,
-`lint(path, moment)`.
+`lint(path, moment)`; the ack records (§ B.4): `record_ack`, `ack_recorded`, `acked`.
 """
 import hashlib
+import json
 import os
 import re
 import subprocess
+import time
 
-from . import yamlish
+from . import state, yamlish
 
 SECTION_RE = re.compile(r"^## (S\d+)\b(?:\s*[—–-]\s*(.*?))?\s*$")
 BULLET_RE = re.compile(r"^- \[( |x|X)\] (A\d+):\s?(.*)$")
 STEP_RE = re.compile(r"^- \[( |x|X)\] (P\d+) — (.*)$")
 FOCUS_RE = re.compile(r"^- (.*?)\s*→\s*(P\d+)\s*$")
 COVERS_RE = re.compile(r"(S\d+)(?::(A\d+(?:\s*,\s*A\d+)*))?")
+STATUS_ACKED = re.compile(r"^status:\s*acked (\d{4}-\d{2}-\d{2}) #([0-9a-f]{8})(?:\s+#\s.*)?\s*$")
 STATUS_RE = re.compile(r"^(draft|acked \d{4}-\d{2}-\d{2} #[0-9a-f]{8}|done \d{4}-\d{2}-\d{2})$")
 EFFORT_RE = re.compile(r"^E[1-5]$")
 # the marks `isa close` writes (§ B.6), which the ack hash leaves out
@@ -407,3 +410,62 @@ def lint(path, moment="draft"):
     out += _plan_rules(d, path, text) if d["kind"] == "plan" else _spec_rules(d, moment)
     out += _placeholders(d)
     return out
+
+
+# ------------------------------------------------------------------ acks (§ B.4: a click, recorded)
+
+def acks_path():
+    """`~/.isa/_state/acks.jsonl`: one row per Acknowledge click. Written only by the hooks."""
+    return os.path.join(state.home(), "_state", "acks.jsonl")
+
+
+def status_line(text):
+    """The frontmatter's raw `status:` line, or None."""
+    lines = _norm(text).split("\n")
+    if not lines or lines[0] != "---" or "---" not in lines[1:]:
+        return None
+    return next((ln for ln in lines[1:lines.index("---", 1)] if ln.startswith("status:")), None)
+
+
+def acked_hash(text):
+    """The `#<hash8>` of a `status: acked YYYY-MM-DD #<hash8>` line, or None."""
+    m = STATUS_ACKED.match(status_line(text) or "")
+    return m.group(2) if m else None
+
+
+def record_ack(path, harness, session):
+    """Append the user's Acknowledge for the file as it is now; → its ack hash."""
+    p = os.path.realpath(path)
+    with open(p, encoding="utf-8") as f:
+        h = ack_hash(f.read())
+    with open(os.path.join(state.state_dir(), "acks.jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps({"path": p, "hash": h, "t": time.time(), "harness": harness, "session": session}) + "\n")
+    return h
+
+
+def ack_recorded(path, h):
+    """True when the user acknowledged this file with this hash on this machine."""
+    p = os.path.realpath(path)
+    try:
+        with open(acks_path(), encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if row.get("path") == p and row.get("hash") == h:
+                    return True
+    except OSError:
+        pass
+    return False
+
+
+def acked(path):
+    """The file's `status: acked … #h` matches its content now (on any machine: no record needed to read)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, ValueError):
+        return False
+    h = acked_hash(text)
+    return bool(h) and h == ack_hash(text)
