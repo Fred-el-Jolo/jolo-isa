@@ -96,7 +96,7 @@ Review focus:
   - PreToolUse refuses an `AskUserQuestion` with header `Spec ack` / `Plan ack` while `specdoc.lint(path, "ack")` has errors, and names them;
   - PostToolUse records the ack only when the answer is exactly `Acknowledge`; then it tells the model to write `status: acked <YYYY-MM-DD> #<hash>` and, in a git repo, to run `git add <path> && git commit -m "Spec: <title> (acked)"` (`"Plan: …"` for a plan), that file only; outside git, no commit;
   - PreToolUse refuses a Write/Edit that introduces `status: acked … #h` when `ack_recorded(path, h)` is false, and lets the same Write through after the click.
-- [ ] P8 — The ack in pi · E2 · covers §8.12 · after P7
+- [x] P8 — The ack in pi · E2 · covers §8.12 · after P7 · Done: 2026-10-06
   Files: `adapters/pi/isa.ts`, `runtime/isa/engine.py` (change: `agent_before_settle` result), `adapters/pi/test/extension.test.ts`
   Interfaces: consumes P7's constants and `specdoc.record_ack`; the engine's settle result gains `{"ask": "Acknowledge <path>?", "options": ["Acknowledge", "Request changes"], "ask_kind": "ack", "ask_path": <path>}`, and the extension sends `ask_kind` and `ask_path` back in the `ask_answer` event
   Done when:
