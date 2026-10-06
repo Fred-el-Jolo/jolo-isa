@@ -132,7 +132,7 @@ Review focus:
   - a section closed by two ISAs: after `spec: X#S2:A1,A2` closes, A1 and A2 are ticked and S2 has no `Done:` line; after `spec: X#S2:A3` closes, the line reads `3/3 accepted` and names both ISAs; `ack_hash` is unchanged by the ticks;
   - with `plan: Y#P2`, a passing close ticks the bullets P2 covers and P2 itself, and sections whose bullets are all ticked get their `Done:` line;
   - two closes on one spec, run back to back from two processes, lose no tick.
-- [ ] P12 — The skill docs and the worked examples · E3 · covers §8.5, §8.16 · after P11
+- [x] P12 — The skill docs and the worked examples · E3 · covers §8.5, §8.16 · after P11 · Done: 2026-10-06
   Files: `skill/ISA/References/SpecDriven.md` (new), `skill/ISA/Examples/specs/` (new: `e2-backup-verify.spec.md`, `e3-help-redesign.spec.md`, `e4-api-migration.spec.md`, `e4-api-migration.plan.md`), `skill/ISA/SKILL.md`, `skill/ISA/References/IsaFormat.md`, `skill/ISA/Workflows/Scaffold.md`, `tools/lint_isa.py`, `AGENTS.md`
   Done when:
   - SpecDriven.md holds spec § B.10 rules 1–15, the red-flags table, both templates of § B.3, the done marks of § B.6 and the ownership table of § B.5, and names no outside source;
