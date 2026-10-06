@@ -23,7 +23,9 @@ isa-skill-export/
 │   ├── SKILL.md                  ← entry point: homes, frontmatter, 14 sections, tier gate, lifecycle rules, routing, gotchas
 │   ├── Workflows/                ← Scaffold, Interview, CheckCompleteness, Reconcile, Append
 │   ├── Examples/                 ← 12 reference ISAs (E1–E5 × code/art/design/ops/enterprise), all passing tools/lint_isa.py
+│   │   └── specs/                ← worked specs and a plan behind e2-backup-verify, e3-help-redesign, e4-api-migration (ack lint)
 │   └── References/
+│       ├── SpecDriven.md         ← spec → ack → (plan → ack) → ISA: tiers, templates, writing rules, red flags, ownership, done marks
 │       ├── IsaFormat.md          ← file-shape contract (wins on contradiction)
 │       ├── IsaSystem.md          ← conceptual frame
 │       ├── IsaHierarchy.md       ← multi-ISA trees (rare, load on demand)
@@ -56,7 +58,7 @@ isa-skill-export/
 ├── install.py                    ← install / --uninstall / --dry-run for both harnesses
 ├── tests/                        ← unit + end-to-end tests of the hooks, gate, commands, fingerprint, lint rules, installer
 ├── tools/
-│   └── lint_isa.py               ← wrapper around runtime/isa/lint.py (repo convenience)
+│   └── lint_isa.py               ← wrapper around runtime/isa/lint.py (repo convenience); `*.spec.md` / `*.plan.md` go to the spec lint
 ├── future/
 │   ├── MEMORY.md                 ← Future A: how LifeOS learns from ISAs today + target design
 │   ├── STATUSLINE.md             ← Future B: data contract for an ISA status line
@@ -239,7 +241,7 @@ Each removed block was checked against one question: does anything in the skill,
 
 ## Open notes
 
-1. **Examples are checked mechanically.** Run `python3 tools/lint_isa.py skill/ISA/Examples/*.md` after any change to them or to the gate rules; expected: every file `ok`. The linter covers what a script can decide (sections, tier gate, Test Strategy coverage, `progress`, ticks vs evidence, close rules); atomicity and the honesty of a `Goal:` line stay judgment calls. It warns, without failing, on criteria over 20 words — about 60 remain in the E4/E5 files. No example is part of a hierarchy, so Dependencies / Bridge Criteria are shown nowhere yet.
+1. **Examples are checked mechanically.** Run `python3 tools/lint_isa.py skill/ISA/Examples/*.md skill/ISA/Examples/specs/*.md` after any change to them or to the gate rules; expected: every file `ok` (the spec examples at the ack moment, an example plan beside its sibling spec). The linter covers what a script can decide (sections, tier gate, Test Strategy coverage, `progress`, ticks vs evidence, close rules); atomicity and the honesty of a `Goal:` line stay judgment calls. It warns, without failing, on criteria over 20 words — about 60 remain in the E4/E5 files. No example is part of a hierarchy, so Dependencies / Bridge Criteria are shown nowhere yet.
 2. **Criteria heading.** Write `## Criteria`. A future parser (status line) should also accept `## ISC Criteria` and `## IDEAL STATE CRITERIA`, which the LifeOS tooling emitted.
 
 ## Later (ideas noted, not planned yet)

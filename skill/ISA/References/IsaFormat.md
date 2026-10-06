@@ -18,7 +18,7 @@ This file is the file-shape contract. `IsaSystem.md` is the conceptual frame; `S
 4. **Done condition** — task complete when all ISCs pass
 5. **System of record** — for the thing being articulated
 
-**Don't invent parallel artifacts.** No `acceptance.yaml`, no `acceptance.ts`, no separate test specs. The ISA covers this surface. For complex apps the ISA naturally has many more ISCs — API behavior, performance budgets, security model, RBAC, auth flow, data integrity invariants. They aren't "in addition to" the ISA — they ARE the ISA.
+**Don't invent parallel *proof* artifacts.** No `acceptance.yaml`, no `acceptance.ts`, no separate test specs: the probes and their evidence live in the ISA, and nothing else claims either. A spec (`docs/spec/`, `SpecDriven.md`) states acceptance in human words and holds no probe; the ISA turns it into probes. For complex apps the ISA naturally has many more ISCs — API behavior, performance budgets, security model, RBAC, auth flow, data integrity invariants. They aren't "in addition to" the ISA — they ARE the ISA.
 
 Each ISC is a testable claim — one part of the explanation that can be tried against reality and either pass or fail. Hard-to-variability and testability are the same property: an ISC is hard-to-vary **if and only if** you can name a test that would falsify it. The whole ISA is hard-to-vary when removing or weakening any part changes what "done" means.
 

@@ -117,7 +117,7 @@ class TestDependencyLint(unittest.TestCase):
         self.assertTrue(any("dependency cycle" in e and "A" in e and "B" in e for e in errors(text)), errors(text))
 
     def test_examples_with_dependencies_have_no_cycle(self):
-        for name in sorted(os.listdir(os.path.join(ROOT, "skill/ISA/Examples"))):
+        for name in sorted(n for n in os.listdir(os.path.join(ROOT, "skill/ISA/Examples")) if n.endswith(".md")):
             text = read(os.path.join(ROOT, "skill/ISA/Examples", name))
             self.assertFalse([e for e in errors(text) if "depends on" in e or "cycle" in e], name)
 

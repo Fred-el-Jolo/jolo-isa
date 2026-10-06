@@ -74,6 +74,8 @@ Distill what remains:
 
 One rule: **could I be wrong about what done means?**
 
+**Where it runs.** For E2–E5 work this check runs at the spec draft, before the ack (`References/SpecDriven.md` rule 3): the questions go into the spec's Open questions, and an ISA linked to the acked spec inherits the answers (`context_sufficient: true`). It runs here for E1 ISAs and for `--no-spec` ones.
+
 If materially ambiguous — the goal supports ≥2 interpretations leading to materially different builds, or required content can't be scaffolded without speculation — ask up to 3 targeted questions (E3+) or prepend the ambiguity flag (E1/E2): `⚠️ Picking X over Y because R; redirect if wrong.` Literal whole-response `proceed` accepts reasoned defaults.
 
 **By tier:** E1/E2 answer ambiguity with the one-line flag only; E3+ may ask the questions below.

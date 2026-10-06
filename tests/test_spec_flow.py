@@ -1337,5 +1337,54 @@ class CloseMarks(SpecCase):
         self.assertFalse(os.path.exists(os.path.join(self.proj, SPEC + ".lock")))
 
 
+LINT_ISA = os.path.join(ROOT, "tools", "lint_isa.py")
+
+
+class LintIsaSpecs(unittest.TestCase):
+    """Plan P12: `tools/lint_isa.py` lints the worked spec examples (`*.spec.md`, `*.plan.md`) too."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix="isa-p12-lint-", dir=os.path.expanduser("~/.cache"))
+        self.addCleanup(shutil.rmtree, self.base, True)
+
+    def put(self, name, text):
+        p = os.path.join(self.base, name)
+        with open(p, "w") as f:
+            f.write(text)
+        return p
+
+    def run_lint(self, *files):
+        p = subprocess.run([sys.executable, LINT_ISA, *files], capture_output=True, text=True, timeout=60)
+        return p.returncode, p.stdout + p.stderr
+
+    def test_spec_routed(self):
+        good = self.put("help.spec.md", acked(E3))
+        rc, out = self.run_lint(good)
+        self.assertEqual((rc, out.splitlines()[0]), (0, f"{good}: ok"), out)
+        bad = self.put("bad.spec.md", acked(E3.replace("Said:\n- the help is a wall of text, make it usable\n", "")))
+        rc, out = self.run_lint(bad)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("ERROR: Goal: no `Said:` list", out)
+
+    def test_plan_with_sibling_spec(self):
+        self.put("api.spec.md", acked(E4))
+        plan = self.put("api.plan.md", acked(PLAN))
+        rc, out = self.run_lint(plan)
+        self.assertEqual((rc, out.splitlines()[0]), (0, f"{plan}: ok"), out)
+        broken = self.put("api.plan.md", acked(PLAN.replace("covers S3 · after P1, P2", "covers S9 · after P1, P2")))
+        rc, out = self.run_lint(broken)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("covers S9 — no such section in the spec", out)
+        self.assertEqual(sorted(os.listdir(self.base)), ["api.plan.md", "api.spec.md"])
+
+    def test_isa_route_unchanged(self):
+        files = [os.path.join(ROOT, "skill", "ISA", "Examples", n) for n in ("e1-minimal.md", "e3-project.md")]
+        files.append(self.put("broken.md", "---\ntask: x\n---\n\n## Goal\n\nNothing.\n"))
+        code = "import sys; sys.path.insert(0, sys.argv[1]); from isa.lint import main; sys.exit(main(sys.argv[2:]))"
+        ref = subprocess.run([sys.executable, "-c", code, os.path.join(ROOT, "runtime"), *files], capture_output=True,
+                             text=True, timeout=60)
+        self.assertEqual(self.run_lint(*files), (ref.returncode, ref.stdout + ref.stderr))
+
+
 if __name__ == "__main__":
     unittest.main()
