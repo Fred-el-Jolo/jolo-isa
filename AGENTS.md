@@ -247,6 +247,7 @@ Each removed block was checked against one question: does anything in the skill,
 - ~~**`isa run` harness.**~~ Built as `isa verify` (see § Enforcement, "Proven ticks"). It judges by exit code only; `threshold:` stays descriptive, so a non-exit-code threshold must be built into the command.
 - **`[arch]` decision tag.** Recorded as an input for Future A in `future/MEMORY.md`.
 - **Subagent per plan step.** An E4–E5 plan built one step per subagent, with a second agent reviewing (`docs/spec/2026-10-06-local-isas-spec-driven.md` § 9 Later). Waits for subagent support in pi and for single-session testing of the spec-driven flow.
+- **Change summary before a re-ack.** When a spec or plan already acked once is asked again, the user first sees a short summary of what changed since the last ack: the sections or steps touched, one line each, with tick and `Done:` changes left out. The plan's re-ack of 2026-10-06 asked with no such summary. The earlier text could come from a copy saved by `specdoc.record_ack` at each click, or else from the last commit "… (acked)" of the file. The hook would hand the summary to the model, to show just above the ack question (pi: in the select's title). The spec sketches it as § 5.6 question 5 ("changed since your ack: <changed sections>"), but no plan step builds it yet.
 
 ## Source provenance
 
