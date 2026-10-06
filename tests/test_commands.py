@@ -283,7 +283,7 @@ class TestNew(CommandCase):
         self.assertTrue(path.endswith("_shout-flag/ISA.md"))
         fm = self.fm(path)
         self.assertEqual((fm["root"], fm["stated_goal"], fm["asks"], fm["phase"], fm["effort"]),
-                         (".", LONG_PROMPT, [], "observe", "E3"))  # root: repo-relative (§ 13.3)
+                         (os.path.realpath(self.proj), LONG_PROMPT, [], "observe", "E3"))  # root: absolute
         self.assertTrue(fm["slug"].endswith("_shout-flag"))
         _, hout, _ = self.hook("PostToolUse", tool_name="Bash", tool_input={"command": "isa new shout-flag"},
                                tool_response={"stdout": out, "stderr": ""})
@@ -326,14 +326,14 @@ class TestNewRefusals(CommandCase):
         first = out.strip().splitlines()[-1]
         rc, out = self.isa("new", "second", cwd=os.path.dirname(first))
         self.assertEqual(rc, 0, out)
-        self.assertEqual(self.fm(out.strip().splitlines()[-1])["root"], ".")  # repo-relative (§ 13.3)
+        self.assertEqual(self.fm(out.strip().splitlines()[-1])["root"], os.path.realpath(self.proj))
         bare = self.isa_path("20260101-000009_bare")
         os.makedirs(os.path.dirname(bare))
         with open(bare, "w") as f:
             f.write(self.text)  # a v1 ISA: no root
         rc, out = self.isa("new", "third", cwd=os.path.dirname(bare))
-        self.assertEqual(rc, 0, out)  # inside a repo's .isa/, the repo itself is the root (§ 13.1)
-        self.assertEqual(self.fm(out.strip().splitlines()[-1])["root"], ".")
+        self.assertEqual(rc, 2)  # inside ISA_HOME, an ISA without `root:` names no project
+        self.assertIn("no root", out)
 
 
 class TestArticulationFirst(CommandCase):
@@ -498,9 +498,7 @@ class TestAsksSnapshot(CommandCase):
         self.verify(path, "ISC-2")
         snaps = [r["asks"] for r in evidence.rows(path) if r.get("kind") == "asks"]
         self.assertEqual(len(snaps), 1)  # once, at the first verify
-        # a repo ISA's ledger is committed: the snapshot holds keyed HMACs, never the words (SPEC-v2 § 13.5)
-        self.assertTrue(all(s.startswith("hmac:v1:") for s in snaps[0]) and len(snaps[0]) == 2)
-        self.assertNotIn("shout", read(evidence.ledger_path(path)))
+        self.assertEqual(snaps[0], ["Add a --shout flag to greet.py", "with a test"])  # verbatim (spec § A.2)
         self.write_isa(read(path).replace(', "with a test"]', "]"), path)
         rc, out = self.isa("lint", path)
         self.assertIn("ask removed from `asks:` without a `refined:`", out)

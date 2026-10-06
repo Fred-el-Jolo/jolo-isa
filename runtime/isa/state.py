@@ -82,40 +82,13 @@ def repo_root(cwd):
 
 
 def project_dir(cwd):
-    """Where a new task ISA of cwd goes: `<repo>/.isa`, or `ISA_HOME/<project-key>` outside any repo."""
-    if not _inside_home(cwd):
-        repo = repo_root(cwd)
-        if repo:
-            return os.path.join(repo, ".isa")
+    """Where a new task ISA of cwd goes: always `ISA_HOME/<project-key>`, in a git repo too (spec 2026-10-06
+    § A.1). A repo keeps only its project ISA, `<repo>/ISA.md`."""
     return os.path.join(home(), project_key(cwd))
 
 
-def _inside_home(path):
-    try:
-        p, h = os.path.realpath(path or os.getcwd()), os.path.realpath(home())
-    except (TypeError, ValueError):
-        return False
-    return p == h or (p + os.sep).startswith(h + os.sep)
-
-
-def repo_isa_dir(path):
-    """`<repo>/.isa` when `path` lies inside a repo's ISA folder, else None."""
-    try:
-        p = os.path.realpath(os.path.expanduser(path))
-    except (TypeError, ValueError):
-        return None
-    d = p
-    while True:
-        parent = os.path.dirname(d)
-        if parent == d:
-            return None
-        if os.path.basename(d) == ".isa" and _is_repo(parent) and repo_root(parent) == parent:
-            return d
-        d = parent
-
-
 def is_project_isa(path):
-    """`<repo>/ISA.md`: the repo's living spec — never bound, never encrypted (§ 13.2, § 13.5)."""
+    """`<repo>/ISA.md`: the repo's living spec — never bound, never closed (spec 2026-10-06 § A.4)."""
     try:
         p = os.path.realpath(os.path.expanduser(path))
     except (TypeError, ValueError):
@@ -125,13 +98,13 @@ def is_project_isa(path):
 
 
 def is_isa_path(path):
-    """True for anything inside an ISA folder (the ISA itself, ephemeral slices, probes, the repo's ledger),
-    and for a repo's project ISA."""
+    """True for anything inside an ISA folder under ISA_HOME (the ISA itself, ephemeral slices, probes), and for
+    a repo's project ISA."""
     try:
         p = os.path.realpath(os.path.expanduser(path))
     except (TypeError, ValueError):
         return False
-    if repo_isa_dir(p) or is_project_isa(p):
+    if is_project_isa(p):
         return True
     h = os.path.realpath(home())
     if not (p + os.sep).startswith(h + os.sep):
@@ -149,10 +122,17 @@ def is_task_isa(path):
     return is_master_isa(path) and not is_project_isa(path)
 
 
-def isa_repo(isa_path):
-    """The repo a repo-filed ISA belongs to (the parent of its `.isa/`), or None."""
-    d = repo_isa_dir(isa_path)
-    return os.path.dirname(d) if d else None
+def project_isa_of(isa_path):
+    """The project ISA (`<repo>/ISA.md`) of the git repo holding the task ISA's `root:`, or None (no `root:`,
+    a relative one, or a root outside any repo)."""
+    root = frontmatter(isa_path).get("root")
+    if not isinstance(root, str) or not root:
+        return None
+    root = os.path.expanduser(root)
+    if not os.path.isabs(root):
+        return None
+    repo = repo_root(root)
+    return os.path.join(repo, "ISA.md") if repo else None
 
 
 def new_isa_path(cwd, slug="task"):
@@ -179,22 +159,16 @@ def frontmatter(path):
 
 
 def isa_home_key(isa_path):
-    """The project folder an ISA was filed under (its real location, not a link); a repo ISA → its repo's key."""
+    """The project folder an ISA was filed under (its real location, not a link)."""
     real = os.path.realpath(isa_path)
-    repo = isa_repo(real)
-    if repo:
-        return project_key(repo)
     return os.path.basename(os.path.dirname(os.path.dirname(real)))
 
 
 def note_project(isa_path, key):
     """Record that the session bound to `isa_path` changed files in project `key`. The ISA stays filed in
     its home project; every other project gets a link `~/.isa/<key>/<slug>` → the ISA folder, so
-    `isa ls` there lists it. Idempotent. → True when `key` was new for this ISA.
-    A repo ISA links nowhere: it lives in the repo of its `root` only (SPEC-v2 § 13.1)."""
+    `isa ls` there lists it. Idempotent. → True when `key` was new for this ISA."""
     folder = os.path.dirname(os.path.realpath(isa_path))
-    if isa_repo(isa_path):
-        return False
     index = os.path.join(folder, ".projects.json")
     try:
         with open(index) as f:

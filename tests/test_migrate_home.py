@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 
 from tests.test_evidence import read
@@ -16,33 +17,61 @@ from tests.test_hooks import ROOT, TEST_KEY
 from tests.test_m12 import TASK, RepoCase
 
 sys.path.insert(0, os.path.join(ROOT, "runtime"))
-from isa import crypt, evidence, fingerprint, state  # noqa: E402
+from isa import commands, crypt, evidence, fingerprint, state  # noqa: E402
 
 COMMIT = 'git rm -r --cached .isa && git add .gitattributes && git commit -m "Move task ISAs out of git"'
 LEDGER_REF = re.compile(r"\(ledger: ([0-9a-f]{10})\)")
 
 
 class HomeCase(RepoCase):
-    """A repo holding two committed task ISAs: `shout` (root `.`, verified, with an ephemeral slice) and
-    `sub` (root `sub`)."""
+    """A repo holding two committed task ISAs in the SPEC-v2 § 13 layout that P2 found in the four repos:
+    `shout` (root `.`, verified, with an ephemeral slice) and `sub` (root `sub`)."""
 
     def setUp(self):
         super().setUp()
         self.put("ok1", "")
         self.put("ok2", "")
         self.put("sub/keep.txt", "x\n")
-        self.isa_a = self.task()
-        rc, out = self.isa("verify", self.isa_a)
+        home_a = self.task(TASK.replace("root: .", f"root: {os.path.realpath(self.proj)}"))
+        rc, out = self.isa("verify", home_a)
         self.assertEqual(rc, 0, out)
-        self.put("_ephemeral/feat.md", "# slice\n", base=os.path.dirname(self.isa_a))
-        self.isa_b = self.new_isa("sub")
-        with open(self.isa_b, "w") as f:
+        home_b = self.new_isa("sub")
+        with open(home_b, "w") as f:
             f.write(TASK.replace("root: .", "root: sub")
-                    .replace("slug: 20260101-000000_t", f"slug: {self.slug(self.isa_b)}"))
+                    .replace("slug: 20260101-000000_t", f"slug: {self.slug(home_b)}"))
+        self.isa_a, self.isa_b = self.to_repo(home_a), self.to_repo(home_b)
+        self.put("_ephemeral/feat.md", "# slice\n", base=os.path.dirname(self.isa_a))
+        crypt.setup_repo(self.proj, out=lambda *_: None)
         r = self.commit_all()
         self.assertEqual(r.returncode, 0, r.stderr)
         self.key = state.project_key(self.proj)
         self.dest = os.path.join(self.home, self.key)
+
+    def to_repo(self, path):
+        """`isa new` writes to ISA_HOME now (P3): move the ISA into `<repo>/.isa/<slug>/` as § 13 kept it —
+        `root: .`, the ledger beside it with repo-relative paths and the asks as keyed HMACs, ids unchanged."""
+        repo = os.path.realpath(self.proj)
+        dest = os.path.join(repo, ".isa", self.slug(path), "ISA.md")
+        rows, led = evidence.rows(path), evidence.ledger_path(path)
+        os.makedirs(os.path.dirname(os.path.dirname(dest)), exist_ok=True)
+        shutil.move(os.path.dirname(path), os.path.dirname(dest))
+        if os.path.exists(led):
+            os.remove(led)
+        k = base64.b64decode(TEST_KEY)
+        with open(os.path.join(os.path.dirname(dest), "evidence.jsonl"), "w") as f:
+            for row in rows:
+                for kk in ("root", "cwd"):
+                    if isinstance(row.get(kk), str) and os.path.isabs(row[kk]):
+                        row[kk] = os.path.relpath(row[kk], repo)
+                if row.get("kind") == "asks":
+                    row["asks"] = [crypt.tag(str(a), k) for a in row["asks"]]
+                f.write(json.dumps(row) + "\n")
+        with open(dest) as f:
+            text = f.read()
+        with open(dest, "w") as f:
+            f.write(text.replace(f"root: {repo}\n", "root: .\n"))
+        commands._rebind({os.path.realpath(path): os.path.realpath(dest)})
+        return dest
 
     def slug(self, path):
         return os.path.basename(os.path.dirname(path))

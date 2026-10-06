@@ -11,7 +11,6 @@ state. Standard library only.
 Every command recomputes `progress`, syncs nested parents and drops orphaned generated lines first
 (isafile.normalize), and refuses to run probes before the ISA passes articulation lint.
 """
-import contextlib
 import hashlib
 import json
 import os
@@ -21,7 +20,7 @@ import shutil
 import subprocess
 import time
 
-from . import config, crypt, evidence, fingerprint, isafile, jev, lint, logs, problems, quotes, rules, state
+from . import config, crypt, evidence, fingerprint, isafile, jev, lint, logs, problems, rules, state
 
 TAIL = evidence.TAIL_CHARS
 VAGUE = {"make", "this", "that", "good", "better", "thing", "things", "stuff", "please", "just", "with", "from",
@@ -70,15 +69,12 @@ def root_for(cwd):
 
 def resolve_root(text, cwd, path=None):
     """(root, text, error) for an existing ISA: its `root:`, or — a v1 ISA — cwd's project root, written in.
-    A relative `root` (a repo ISA, § 13.3) is relative to the repo the ISA lives in."""
+    `root` is absolute (spec 2026-10-06 § A.1)."""
     root = isafile.fm(text).get("root")
     if root:
         root = os.path.expanduser(str(root))
         if not os.path.isabs(root):
-            repo = state.isa_repo(path) if path else None
-            if not repo:
-                return None, text, f"root `{root}` is relative, but this ISA is not inside a repo's .isa/"
-            root = os.path.normpath(os.path.join(repo, root))
+            return None, text, f"root `{root}` is relative — write the project's absolute path"
         return (root, text, None) if os.path.isdir(root) else (None, text, f"root `{root}` is not a directory")
     if _inside_isa_home(cwd):
         return None, text, "no root: run it from the project (an ISA without `root:` takes the project of the cwd)"
@@ -131,12 +127,6 @@ def new(args, cwd=None, out=print):
             i += 1
     slug = " ".join(words) or "task"
     path = state.new_isa_path(cwd, slug)
-    repo = None if path_only else state.repo_root(cwd)
-    if repo and not path.startswith(os.path.join(repo, ".isa") + os.sep):
-        repo = None
-    if repo and not crypt.key():  # Option A (SPEC-v2 § 13.7): a repo ISA's prompts need the key
-        out(f"isa new: {crypt.NO_KEY}")
-        return 2
     if path_only:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         out(path)
@@ -170,11 +160,6 @@ def new(args, cwd=None, out=print):
     if goal is None:
         comment = ("# stated_goal: copy a verbatim span of the user's prompt (≥ 6 words), or leave it null "
                    "and log the candidate in Decisions")
-    repo = state.isa_repo(path)
-    if repo:  # a repo ISA: `root` is repo-relative, so the committed ISA works on every machine (§ 13.3)
-        rr = os.path.realpath(repo)
-        rel = os.path.relpath(os.path.realpath(root), rr)
-        root = "." if rel == "." else rel if not rel.startswith("..") else root
     stamp = isafile.now_iso()
     folder = os.path.basename(os.path.dirname(path))
     lines = ["---", 'task: ""', f"slug: {folder}", f"effort: {tier}", "phase: observe", "progress: 0/0",
@@ -189,8 +174,8 @@ def new(args, cwd=None, out=print):
     lines += ["---", ""]
     os.makedirs(os.path.dirname(path), exist_ok=True)
     isafile.write_atomic(path, "\n".join(lines))
-    if repo:
-        crypt.setup_repo(repo, out)
+    repo = state.repo_root(cwd)
+    if repo:  # the repo's project ISA, when it has none yet (spec 2026-10-06 § A.4)
         project_isa(repo, out)
     logs.note(isa=path)
     out(path)
@@ -295,19 +280,19 @@ def verify_project(path, timeout=600, out=print):
 
 
 def promote_issues(path, parsed):
-    """`promote: true` criteria of a task ISA with no line `(from <slug> ISC-N)` in the project ISA (§ 13.2)."""
+    """`promote: true` criteria of a task ISA with no line `(from <slug> ISC-N)` in the project ISA of the repo
+    holding its `root:` (spec 2026-10-06 § A.4)."""
     want = [i for i, e in parsed["test_strategy"].items() if isinstance(e, dict) and e.get("promote") is True]
     if not want:
         return []
-    repo = state.isa_repo(path)
-    proj = os.path.join(repo, "ISA.md") if repo else None
+    proj = state.project_isa_of(path)
     try:
         ptext = _read(proj) if proj else ""
     except OSError:
         ptext = ""
     slug = os.path.basename(os.path.dirname(os.path.realpath(path)))
     return [f"{i}: `promote: true` but the project ISA has no line `(from {slug} {i})` — copy the claim into "
-            f"{'the repo' + chr(39) + 's ISA.md' if proj else 'a project ISA (this ISA is not in a repo)'}"
+            f"{proj if proj else 'a project ISA (this ISA' + chr(39) + 's root is not in a git repo)'}"
             for i in want if f"(from {slug} {i})" not in ptext]
 
 
@@ -399,9 +384,7 @@ def _asks_snapshot(path, parsed):
     if any(r.get("kind") == "asks" for r in evidence.rows(path)):
         return
     asks = parsed["fm"].get("asks") if isinstance(parsed["fm"].get("asks"), list) else []
-    k = crypt.key() if state.isa_repo(path) else None  # a committed ledger never holds the words (§ 13.5)
-    evidence.record(path, [{"v": 2, "t": time.time(), "kind": "asks",
-                            "asks": [crypt.tag(str(a), k) if k else str(a) for a in asks]}])
+    evidence.record(path, [{"v": 2, "t": time.time(), "kind": "asks", "asks": [str(a) for a in asks]}])
 
 
 def _strategy_snapshot(path, parsed):
@@ -519,10 +502,6 @@ def verify(path, select=(), red=False, attest=None, cwd=None, timeout=600, out=p
     cwd = cwd or os.getcwd()
     if state.is_project_isa(path):
         return verify_project(path, timeout, out)
-    refused = _no_key(path)
-    if refused:
-        out(f"isa verify: {refused}")
-        return 2
     try:
         text = _read(path)
     except OSError as e:
@@ -642,32 +621,10 @@ def _attest(path, text, parsed, pr, select, evidence_text, stamp, out):
 
 # ------------------------------------------------------------------ close
 
-def _no_key(path):
-    """Option A (§ 13.7): a repo task ISA is verified and closed only with the key (keyed HMACs, readable quotes).
-    The first command in a clone also registers the filter (and re-checks out what it can now decrypt)."""
-    repo = state.isa_repo(path)
-    if not repo:
-        return None
-    crypt.ensure_filter(repo)
-    k = crypt.key()
-    if not k:
-        return crypt.NO_KEY
-    try:
-        other = crypt.unreadable(_read(path), k)
-    except OSError:
-        return None
-    return (f"this ISA holds values encrypted under key {', '.join(other)}, not your key {crypt.keyid(k)} — "
-            "`isa key import FILE` with that key") if other else None
-
-
 def close(path, cwd=None, timeout=600, out=print):
     cwd = cwd or os.getcwd()
     if state.is_project_isa(path):
         out("isa close: the project ISA never closes — `isa verify ISA.md` re-proves its standing claims")
-        return 2
-    refused = _no_key(path)
-    if refused:
-        out(f"isa close: {refused}")
         return 2
     try:
         original = _read(path)
@@ -817,8 +774,6 @@ def lint_cmd(args, out=print):
             out(f"{p}: cannot read ({e})")
             total += 1
             continue
-        if state.isa_repo(p) and crypt.ensure_filter(state.isa_repo(p)):
-            text = _read(p)  # the clone's first command: the filter decrypted it
         if state.is_project_isa(p):
             errs = lint_project(p, text)
             total += len(errs)
@@ -954,116 +909,7 @@ def jev_close_advice(path, text, results=None, marks=None):
     return "\nJev (advisory — never blocks the close):\n" + "\n".join(lines) + ("\n" + "\n".join(msgs) if msgs else "")
 
 
-# ------------------------------------------------------------------ migrate (SPEC-v2 § 13.9)
-
-OLD_REF = re.compile(r"\(ledger: [^)#]*#L(\d+)\)")
-
-
-def _migratable():
-    """[(old ISA path, repo)] for every ISA under ISA_HOME whose `root` lies inside a git repo."""
-    out, home = [], state.home()
-    if not os.path.isdir(home):
-        return out
-    for key in sorted(os.listdir(home)):
-        d = os.path.join(home, key)
-        if key == "_state" or not os.path.isdir(d) or os.path.islink(d):
-            continue
-        for slug in sorted(os.listdir(d)):
-            folder = os.path.join(d, slug)
-            p = os.path.join(folder, "ISA.md")
-            if os.path.islink(folder) or not os.path.isfile(p):
-                continue
-            root = state.frontmatter(p).get("root")
-            if not root:
-                continue
-            root = os.path.expanduser(str(root))
-            repo = state.repo_root(root) if os.path.isabs(root) and os.path.isdir(root) else None
-            if repo:
-                out.append((p, repo))
-    return out
-
-
-def migrate(args, out=print):
-    dry = "--dry-run" in args
-    todo = _migratable()
-    if not todo:
-        out("isa migrate: nothing to move (no ISA under the ISA home has a `root` inside a git repo)")
-        return 0
-    k = crypt.key()
-    if not k and not dry:
-        out(f"isa migrate: {crypt.NO_KEY}")
-        return 2
-    moved, repos = {}, set()
-    for old, repo in todo:
-        slug = os.path.basename(os.path.dirname(old))
-        new = os.path.join(repo, ".isa", slug, "ISA.md")
-        if os.path.exists(os.path.dirname(new)):
-            out(f"skip  {old} — {os.path.dirname(new)} exists")
-            continue
-        out(f"{'would move' if dry else 'move'}  {os.path.dirname(old)} → {os.path.dirname(new)}")
-        if dry:
-            continue
-        old_ledger = evidence.ledger_path(old)
-        old_rows = []
-        try:
-            with open(old_ledger) as f:
-                for line in f:
-                    try:
-                        old_rows.append(json.loads(line))
-                    except ValueError:
-                        old_rows.append(None)
-        except OSError:
-            pass
-        text = _read(old)
-        words = quotes.spans(text)
-        prompts = [r.get("text") or "" for r in project_prompts(state.project_key(repo))]
-        os.makedirs(os.path.join(repo, ".isa"), exist_ok=True)
-        shutil.move(os.path.dirname(old), os.path.dirname(new))
-        for junk in (".stated_goal.sha256", ".projects.json"):
-            with contextlib.suppress(OSError):
-                os.remove(os.path.join(os.path.dirname(new), junk))
-        ids, new_rows = {}, []
-        for n, row in enumerate(old_rows, 1):
-            if not isinstance(row, dict):
-                continue
-            row = {kk: vv for kk, vv in row.items() if kk != "id"}
-            for kk in ("root", "cwd"):
-                if isinstance(row.get(kk), str) and os.path.isabs(row[kk]):
-                    row[kk] = evidence._rel(row[kk], repo)
-            for kk in evidence.REDACTED:
-                if isinstance(row.get(kk), str):
-                    row[kk] = quotes.redact(row[kk], words)
-            if row.get("kind") == "asks":
-                row["asks"] = [a if str(a).startswith("hmac:") else crypt.tag(str(a), k) for a in row.get("asks") or []]
-            row.setdefault("machine", evidence.MACHINE)
-            row["id"] = evidence.row_id(row)
-            ids[n] = row["id"]
-            new_rows.append(row)
-        with open(evidence.ledger_path(new), "w") as f:
-            for row in new_rows:
-                f.write(json.dumps(row) + "\n")
-        with contextlib.suppress(OSError):
-            os.remove(old_ledger)
-        text = OLD_REF.sub(lambda m: f"(ledger: {ids.get(int(m.group(1)), '?')})", text)
-        rel = os.path.relpath(os.path.realpath(os.path.expanduser(str(state.frontmatter(new).get("root")))),
-                              os.path.realpath(repo))
-        text = isafile.fm_set(text, "root", "." if rel == "." else rel)
-        isafile.write_atomic(new, text)
-        verified = [w for w in words if any(w in p for p in prompts)]
-        if verified:
-            rules.mark_verified(new, verified)
-        moved[os.path.realpath(old)] = os.path.realpath(new)
-        repos.add(repo)
-    if dry:
-        return 0
-    for repo in sorted(repos):
-        crypt.setup_repo(repo, out)
-        project_isa(repo, out)
-    _rebind(moved)
-    _drop_links(moved)
-    out(f"isa migrate: {len(moved)} ISA(s) moved into {len(repos)} repo(s); nothing committed")
-    return 0
-
+# ------------------------------------------------------------------ session rebinding
 
 def _rebind(moved):
     d = os.path.join(state.home(), "_state", "sessions")
@@ -1084,20 +930,6 @@ def _rebind(moved):
             with open(p + ".tmp", "w") as f:
                 json.dump(st, f)
             os.replace(p + ".tmp", p)
-
-
-def _drop_links(moved):
-    """Links `note_project` made in other projects' folders to a moved ISA folder (§ 13.1: they go away)."""
-    home = state.home()
-    olds = {os.path.dirname(o) for o in moved}
-    for key in os.listdir(home):
-        d = os.path.join(home, key)
-        if not os.path.isdir(d) or key == "_state":
-            continue
-        for slug in os.listdir(d):
-            p = os.path.join(d, slug)
-            if os.path.islink(p) and os.readlink(p) in olds:
-                os.remove(p)
 
 
 # ------------------------------------------------------------------ migrate --home (spec 2026-10-06 § A.5)

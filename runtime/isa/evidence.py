@@ -35,11 +35,8 @@ def ledger_dir():
 
 
 def ledger_path(isa_path):
-    """A repo ISA's ledger sits beside it, committed with it (`<repo>/.isa/<slug>/evidence.jsonl`, § 13.3);
-    any other ISA's lives under ISA_HOME/_state/evidence/."""
+    """Every ISA's ledger lives under ISA_HOME/_state/evidence/ (spec 2026-10-06 § A.1)."""
     real = os.path.realpath(isa_path)
-    if state.repo_isa_dir(real):
-        return os.path.join(os.path.dirname(real), "evidence.jsonl")
     slug = os.path.basename(os.path.dirname(real))[:60]
     return os.path.join(ledger_dir(), f"{slug}-{hashlib.sha256(real.encode()).hexdigest()[:12]}.jsonl")
 
@@ -50,8 +47,6 @@ def is_ledger_path(path):
     except (TypeError, ValueError):
         return False
     d = os.path.realpath(os.path.join(state.home(), "_state", "evidence"))
-    if os.path.basename(p) == "evidence.jsonl" and state.repo_isa_dir(p):
-        return True
     return p == d or p.startswith(d + os.sep)
 
 
@@ -86,21 +81,11 @@ def record(isa_path, rows):
                 for k in REDACTED:
                     row[k] = quotes.redact(row.get(k), words) if k in row else row.get(k)
                 row = {k: v for k, v in row.items() if v is not None or k not in REDACTED}
-            repo = state.isa_repo(isa_path)
-            if repo:  # paths differ between machines: a committed ledger stores them repo-relative (§ 13.3)
-                for k in ("root", "cwd"):
-                    if isinstance(row.get(k), str) and os.path.isabs(row[k]):
-                        row[k] = _rel(row[k], repo)
             row.setdefault("machine", MACHINE)
             row["id"] = row_id(row)
             ids.append(row["id"])
             f.write(json.dumps(row) + "\n")
     return ids
-
-
-def _rel(p, repo):
-    rp, rr = os.path.realpath(p), os.path.realpath(repo)
-    return os.path.relpath(rp, rr) if rp == rr or rp.startswith(rr + os.sep) else p
 
 
 def _user_words(isa_path):

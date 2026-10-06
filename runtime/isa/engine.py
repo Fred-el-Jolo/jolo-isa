@@ -33,7 +33,6 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 import time
 
 from . import changes, classify, config, crypt, evidence, isafile, jev, lint, logs, problems, rules, skills, state
@@ -64,28 +63,23 @@ def _goal_ok_file(isa_path):
 
 
 def _lint(isa_path, moment, harness, session):
-    """Lint with the verbatim-goal check. A goal verified once (in any session) stays verified: for a repo ISA as
-    a keyed `quote-verified` ledger row (it travels with the repo, § 13.4), otherwise in a local digest file."""
+    """Lint with the verbatim-goal check. A goal verified once (in any session) stays verified, in a local
+    digest file beside the ISA."""
     fm = state.frontmatter(isa_path)
     goal = fm.get("stated_goal") if isinstance(fm.get("stated_goal"), str) else None
     prompts = None
     if goal and not goal.startswith("enc:v1:"):
-        if state.isa_repo(isa_path):
+        digest = hashlib.sha256(goal.encode()).hexdigest()
+        try:
+            verified = open(_goal_ok_file(isa_path)).read().strip() == digest
+        except OSError:
+            verified = False
+        if not verified:
             prompts = state.prompts(harness, session)
-            if rules.quote_ok(isa_path, goal, prompts):
+            if any(goal in p for p in prompts):
+                with open(_goal_ok_file(isa_path), "w") as f:
+                    f.write(digest + "\n")
                 prompts = None
-        else:
-            digest = hashlib.sha256(goal.encode()).hexdigest()
-            try:
-                verified = open(_goal_ok_file(isa_path)).read().strip() == digest
-            except OSError:
-                verified = False
-            if not verified:
-                prompts = state.prompts(harness, session)
-                if any(goal in p for p in prompts):
-                    with open(_goal_ok_file(isa_path), "w") as f:
-                        f.write(digest + "\n")
-                    prompts = None
     try:
         text = isafile.normalize(open(isa_path, encoding="utf-8").read())
     except OSError:
@@ -140,27 +134,6 @@ def _project_listing(cwd, exclude=None):
 def _bound(st):
     p = st.get("bound")
     return p if p and os.path.isfile(p) else None
-
-
-def _missing_bound(st):
-    """The bound repo ISA a checkout removed (another branch, § 13.4b): the session keeps the path, and the
-    binding holds again when the file comes back."""
-    p = st.get("bound")
-    return p if p and not os.path.isfile(p) and state.repo_isa_dir(p) else None
-
-
-def _branch(path):
-    try:
-        r = subprocess.run(["git", "-C", os.path.dirname(path) if os.path.isdir(os.path.dirname(path)) else
-                            state.project_root(os.path.dirname(os.path.dirname(os.path.dirname(path)))),
-                            "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, timeout=5)
-        return r.stdout.strip() or "?"
-    except (OSError, subprocess.TimeoutExpired):
-        return "?"
-
-
-def _not_on_branch(path):
-    return f"ISA: the bound ISA {os.path.basename(os.path.dirname(path))} is not on this branch ({_branch(path)})"
 
 
 def _isa_touched(st):
@@ -418,9 +391,8 @@ def _scaffold(path):
 def _needs_isa(st, bound, pid):
     """True when an ON turn may not end yet for lack of an ISA; "scaffold" when the clarify-first
     scaffold may end it (only on the prompt that created it); False otherwise."""
-    if not bound:
-        # a bound ISA a checkout removed: no `no-isa` block, unless this prompt was judged work (§ 13.4b)
-        return not (_missing_bound(st) and st.get("needs_isa_since") != pid)
+    if not bound:  # nothing bound, or a bound path that no longer exists (it reads as nothing bound)
+        return True
     if _new_task_pending(st, bound):
         return True
     phase = state.frontmatter(bound).get("phase")
@@ -503,12 +475,6 @@ def _prompt(ev):
     if not str(prompt or "").strip():
         return {}
     if mode == "on" and not bound:
-        with state.session(ev["harness"], ev["session"]) as st:
-            missing = _missing_bound(st)
-        if missing:  # judged as with no ISA bound; the binding returns with the file
-            res = _q1(ev, "off", None, prompt, context)
-            res["warn"] = (_not_on_branch(missing) + "\n" + res.get("warn", "")).strip()
-            return res
         return {"context": "ISA: ON — no ISA bound yet: write it before the work (`isa new <slug> --goal \"…\"`)."}
     if _mode_env() == "on":
         return {"context": _status_line(bound) + (". A new task gets a new ISA (or a reopen of this finished one)."
@@ -594,9 +560,6 @@ def _q1_yes(ev, mode, bound, label):
         st["needs_isa_since"] = pid  # this prompt is work: an ISA is required (read by Stop, § 13.4b)
         note(outcome="on", mode_after="on")
     out = {"warn": f"ISA gate — {label} → ON", "context": _on_block(cwd)}
-    if state.repo_root(cwd) and not crypt.key():  # Option A (§ 13.7): this repo's task ISA will need the key
-        out["warn"] += f"\nISA: {crypt.NO_KEY}"
-        out["context"] += f"\n\nISA: {crypt.NO_KEY} Tell the user; `isa new` refuses until they do."
     return out
 
 
@@ -772,17 +735,11 @@ KEY_CMD = re.compile(r"(^|[\s;&|(/])isa\s+key\s+(new|import|export)\b")
 
 
 def _key_refusal(ev):
-    """SPEC-v2 § 13.8: the model never handles the key (only `isa key status`); a repo task ISA can't be
-    written without one (Option A, § 13.7)."""
+    """SPEC-v2 § 13.8: the model never handles the key (only `isa key status`)."""
     tool, ti = ev.get("tool", ""), ev.get("tool_input") or {}
     if tool in classify.SHELL_TOOLS and KEY_CMD.search(str(ti.get("command", ""))):
         return ("ISA: `isa key new|import|export` is the user's to run, in their own terminal (or as `! isa key …`) "
                 "— the key must never pass through the model. `isa key status` is fine.")
-    if tool in classify.FILE_TOOLS and not crypt.key():
-        for p in classify.tool_paths(ti):
-            full = os.path.join(ev.get("cwd") or "", os.path.expanduser(p))
-            if state.is_task_isa(full) and state.isa_repo(full):
-                return f"ISA: {crypt.NO_KEY}"
     return None
 
 

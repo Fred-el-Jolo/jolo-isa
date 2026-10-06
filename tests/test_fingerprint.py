@@ -165,7 +165,7 @@ class TestRowsCarryFingerprint(GitCommandCase):
         self.verify(path, "ISC-2")
         [row] = [r for r in evidence.rows(path) if r.get("kind") == "verify"]
         self.assertEqual(row["fingerprint"], fingerprint.of(self.proj))
-        self.assertEqual(row["root"], ".")  # a repo ISA's ledger stores paths repo-relative (§ 13.3)
+        self.assertEqual(row["root"], os.path.realpath(self.proj))
         v1 = {"t": 1.0, "isc": "ISC-1", "tool_sha": "x", "ok": True}  # a v1 row: no `v`, no fingerprint
         self.assertIsNone(evidence.row_fingerprint(v1))
         self.assertEqual(evidence.row_fingerprint(row), row["fingerprint"])

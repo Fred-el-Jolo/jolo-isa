@@ -23,7 +23,6 @@
                                  (ISA_KEY or $ISA_HOME/key; SPEC-v2 § 13.8) — never printed into an agent session
     isa crypt clean|smudge|process
                                  the git filter driver (registered per clone by `isa new`)
-    isa migrate [--dry-run]      move ISA_HOME's ISAs of git repos into each repo's .isa/ (SPEC-v2 § 13.9)
     isa migrate --home [--dry-run]
                                  run in a repo: move its .isa/ task ISAs and ledgers back to ISA_HOME, drop
                                  the .isa git filter; prints the commit to run, commits nothing
@@ -95,7 +94,10 @@ def _dispatch(cmd, args):
     if cmd == "migrate":
         if "--home" in args:
             return commands.migrate_home([a for a in args if a != "--home"])
-        return commands.migrate(args)
+        out = "isa migrate: moving ISAs into a repo's .isa/ is gone (task ISAs live in ~/.isa); " \
+              "`isa migrate --home` moves a repo's .isa/ back"
+        print(out, file=sys.stderr)
+        return 2
     if cmd == "purge-logs":
         return logs.purge_cmd(args)
     if cmd == "where":
@@ -106,7 +108,7 @@ def _dispatch(cmd, args):
 
 
 def _ls(args):
-    """The current project's ISAs (`<repo>/.isa/`, or ISA_HOME/<key>); `--all` adds every ISA_HOME folder."""
+    """The current project's ISAs (ISA_HOME/<key>); `--all` adds every ISA_HOME folder."""
     here = state.project_dir(os.getcwd())
     folders = [(state.project_key(os.getcwd()), here)]
     if "--all" in args and os.path.isdir(state.home()):
@@ -125,13 +127,6 @@ def _ls(args):
             print(f"  {os.path.basename(os.path.dirname(p)):<52} {str(fm.get('effort', '?')):<3} "
                   f"{str(label or fm.get('phase', '?')):<10} {str(fm.get('progress', '?')):<7} {fm.get('task', '')}"
                   + (f"  (filed in {state.isa_home_key(p)})" if linked else ""))
-    for var, h in (("CLAUDE_CODE_SESSION_ID", "claude"), ("PI_SESSION_ID", "pi")):
-        sid = os.environ.get(var)
-        bound = state.read_session(h, sid).get("bound") if sid else None
-        if bound and not os.path.isfile(bound) and state.repo_isa_dir(bound):
-            n += 1
-            print(f"  {os.path.basename(os.path.dirname(bound)):<52} (not on this branch) — bound to this session")
-            break
     if not n:
         print(f"no ISAs under {state.project_dir(os.getcwd())}")
     return 0

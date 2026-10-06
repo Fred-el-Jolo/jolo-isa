@@ -16,8 +16,8 @@ import subprocess
 import time
 
 GIT_TIMEOUT = 5
-# a repo's own ISA files (SPEC-v2 § 13.3): written by `isa` commands and hooks, never a project change
-ISA_FILES = (":(top,exclude).isa", ":(top,exclude)ISA.md")
+# the repo's project ISA: written by `isa` commands and the model as ISA content, never a project change
+ISA_FILES = (":(top,exclude)ISA.md",)
 WALK_CAP = 5000  # files looked at under one untracked directory, or in a non-git project
 
 
