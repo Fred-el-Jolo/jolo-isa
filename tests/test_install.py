@@ -28,7 +28,8 @@ class TestInstall(unittest.TestCase):
                       open(self.settings, "w"))
         os.makedirs(os.path.join(self.tmp, "pi", "extensions"))
         self.args = ["--claude-settings", self.settings, "--prefix", os.path.join(self.tmp, "local"),
-                     "--skills-dir", os.path.join(self.tmp, "skills"), "--pi-dir", os.path.join(self.tmp, "pi")]
+                     "--skills-dir", os.path.join(self.tmp, "skills"), "--pi-dir", os.path.join(self.tmp, "pi"),
+                     "--isa-home", os.path.join(self.tmp, "isa-home")]
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -109,7 +110,8 @@ class TestStatusline(unittest.TestCase):
         self.prefix = os.path.join(self.tmp, "local")
         self.sl = os.path.join(self.prefix, "share", "isa", "statusline")
         self.args = ["--claude-settings", self.settings, "--prefix", self.prefix, "--no-skill",
-                     "--skills-dir", os.path.join(self.tmp, "skills"), "--pi-dir", os.path.join(self.tmp, "nopi")]
+                     "--skills-dir", os.path.join(self.tmp, "skills"), "--pi-dir", os.path.join(self.tmp, "nopi"),
+                     "--isa-home", os.path.join(self.tmp, "isa-home")]
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -250,8 +252,31 @@ class TestStatusline(unittest.TestCase):
         self.assertTrue(any("ISC-2" in l for l in lines[1:]), p.stdout)
 
 
+class TestLegacyHome(unittest.TestCase):
+    """Spec 2026-10-06-gate-close-issues S9:A5: the old ~/.isa is moved aside, nothing old is kept in it."""
+
+    def test_moved_aside(self):
+        tmp = tempfile.mkdtemp(prefix="isa-legacy-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        home = os.path.join(tmp, "isa-home")
+        for rel in ("_state/evidence/x.jsonl", "_state/prompts/p.jsonl", "dev-x/20260101-000000_t/ISA.md"):
+            p = os.path.join(home, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            open(p, "w").close()
+        args = ["--claude-settings", os.path.join(tmp, "claude", "settings.json"), "--prefix", os.path.join(tmp, "local"),
+                "--skills-dir", os.path.join(tmp, "skills"), "--pi-dir", os.path.join(tmp, "pi"), "--isa-home", home]
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "install.py"), *args], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertFalse(os.path.exists(os.path.join(home, "_state", "evidence")))
+        self.assertFalse(os.path.exists(os.path.join(home, "dev-x")))
+        moved = [n for n in os.listdir(tmp) if n.startswith("isa-home.legacy-")]
+        self.assertEqual(len(moved), 1, os.listdir(tmp))
+        self.assertTrue(os.path.isfile(os.path.join(tmp, moved[0], "_state", "evidence", "x.jsonl")))
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "install.py"), *args], capture_output=True, text=True)
+        self.assertEqual(len([n for n in os.listdir(tmp) if n.startswith("isa-home.legacy-")]), 1)
+
+
 BLOCK_FILE = os.path.join(ROOT, "skill", "global-rules.md")
-SPEC = os.path.join(ROOT, "docs", "spec", "2026-10-06-local-isas-spec-driven.md")
 BEGIN, END = "<!-- isa:spec-driven:begin -->", "<!-- isa:spec-driven:end -->"
 USER = "# Global Instructions\n\nThese apply to **every** project and session.\n\n- Propose, don't impose.\n"
 REAL_FILES = [os.path.expanduser("~/.claude/CLAUDE.md"), os.path.expanduser("~/.pi/agent/AGENTS.md")]
@@ -287,7 +312,7 @@ class TestRuleBlock(unittest.TestCase):
         self.agents = os.path.join(self.pi, "AGENTS.md")
         self.args = ["--claude-settings", os.path.join(self.claude_dir, "settings.json"),
                      "--prefix", os.path.join(self.tmp, "local"), "--skills-dir", os.path.join(self.tmp, "skills"),
-                     "--pi-dir", self.pi]
+                     "--pi-dir", self.pi, "--isa-home", os.path.join(self.tmp, "isa-home")]
         sys.path.insert(0, ROOT)
         import install
         self.install = install
@@ -395,13 +420,22 @@ class TestRuleBlock(unittest.TestCase):
         self.run_install("--uninstall", "--dry-run")
         self.assertEqual(snapshot([self.claude_md, self.agents]), before)
 
-    def test_block_is_spec_draft(self):
-        with open(SPEC) as f:
-            spec = f.read()
-        draft = spec[spec.index(BEGIN):spec.index(END) + len(END)]
-        self.assertEqual(block(), draft)
+    def test_block_names_only_commands(self):
+        import re
+        sys.path.insert(0, os.path.join(ROOT, "runtime"))
+        from isa import cli
+        b = block()
+        self.assertTrue(b.startswith(BEGIN) and b.endswith(END))
+        named = set(re.findall(r"`isa ([a-z][a-z-]*)", b))
+        self.assertTrue(named)
+        self.assertLessEqual(named, set(cli.COMMANDS))
 
     def test_real_files_untouched(self):
+        real_home = os.path.expanduser("~/.isa")
+        siblings = lambda: sorted(n for n in os.listdir(os.path.expanduser("~")) if n.startswith(".isa."))  # noqa: E731
+        homes = (os.path.isdir(real_home) and sorted(os.listdir(real_home)), siblings())
+        self.addCleanup(lambda: self.assertEqual((os.path.isdir(real_home) and sorted(os.listdir(real_home)),
+                                                  siblings()), homes, "an installer test moved the real ~/.isa"))
         before = snapshot(REAL_FILES)
         self.with_pi()
         self.run_install()

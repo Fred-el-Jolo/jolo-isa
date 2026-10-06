@@ -4,8 +4,8 @@ Supported: block mappings, block lists of scalars or mappings, flow lists of
 scalars (`[a, b]`), plain / single- / double-quoted scalars, `|` `|-` `>` `>-`
 block scalars, comments, and int / float / bool / null plain scalars.
 Not supported (raises YamlError): anchors, tags, flow mappings, multi-document
-streams, complex keys. That is enough for frontmatter, `## Test Strategy` and
-`## Features`; anything fancier is a format error in an ISA anyway.
+streams, complex keys. That is enough for frontmatter and `## Test Strategy`;
+anything fancier is a format error in an ISA anyway.
 """
 import re
 

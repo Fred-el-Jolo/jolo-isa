@@ -1,13 +1,11 @@
 <!-- isa:spec-driven:begin -->
-## Spec-driven work
+## ISA work
 
-Work goes spec → (plan) → ISA → code, in every project. Pick the work tier first (E1–E5, ISA skill § Picking the tier) and say it.
+Work with several dependent steps follows one lifecycle, in every project. Pick the tier first and say it (ISA skill, References/Foundations.md):
 
-- **E1**: no spec. ISA only.
-- **E2–E3**: write `docs/spec/YYYY-MM-DD-<slug>.md` at the project root (template: ISA skill, References/SpecDriven.md). Ask the user to acknowledge it. Then implement it with ISAs linked to its sections (`isa new --spec docs/spec/…#S<n>`).
-- **E4–E5**: check the outline with the user, write the spec, ack. Then `docs/plan/YYYY-MM-DD-<slug>.md` (same basename): ISA-sized steps, each one future ISA. Ack the plan. Then one ISA per step, created when the step starts (`isa new --plan …#P<n>`).
+- **E0**: a quick exchange, or a 1–3 step action whose failure is obvious: no ISA.
+- **E1**: `isa new <slug> --tier E1` → write it (one level of criteria) → build → `isa close`.
+- **E2–E4**: `isa spec new <slug> --tier E2` (or E3, E4) → write the spec → the user's `Spec ack` → `isa ack <spec>` → `isa new --spec <spec>` → write the ISA (2, 3, 4+ levels of criteria) → the user's `ISA ack` → `isa ack <ISA>` → build → `isa close` (it writes the plan and commits).
 
-Writing rules and red flags: ISA skill, References/SpecDriven.md. In a git repo, commit the spec (and the plan) right after its ack, that file only.
-
-No ISA before the ack: the ISA depends on the spec. An acknowledgement is the user's explicit go for exactly what it covers. Never acknowledge on the user's behalf, and never start code before it. If the build shows the spec is wrong, edit the spec and ask again; don't let the ISA drift from it. Specs, plans and the root `ISA.md` are committed in a git repo. Task ISAs live in `~/.isa` and are not.
+ISAs, specs, plans and ~/.isa are written only by `isa` commands (`isa --help`). An ack is the user's click, never yours, and no code starts before it. If the build shows the spec is wrong, `isa reopen` it and ask the user again.
 <!-- isa:spec-driven:end -->

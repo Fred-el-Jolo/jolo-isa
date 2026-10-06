@@ -1,16 +1,14 @@
-"""Is a tool call a read or a mutation? Harness-neutral, standard library only.
+"""What a tool call does: read, an `isa` command, a project write, unknown — or a guarded write.
 
-Five answers:
-    "read"            never gated (reading, searching, asking, planning)
-    "isa-cmd"         `isa new|lint|verify|close`: the commands that write an ISA's engine-owned state —
-                      always allowed, never a project change (they are how the model gets out of a refusal)
-    "unknown"         can't tell — gated before an ISA exists (fail closed), not counted as stale
-    "write"           a known mutation — gated, and counts toward "ISA is stale"
-    "isa-shell-edit"  a shell command writing onto an ISA.md (`sed -i`, `tee`, `>`, `cp`/`mv` onto it) —
-                      refused: an ISA is edited with Write/Edit, so its engine-owned fields can be checked
+    read      never gated (reading, searching, asking)
+    isa-cmd   an `isa` command: the only writer of ISA entities, always allowed (it checks itself)
+    write     a known project change: allowed in BUILD only
+    unknown   can't tell (a script, a build tool): treated as a project change
+    guarded   touches an ISA, a spec, a plan or anything under ~/.isa other than by reading or by `isa`:
+              refused in every stage (FOUNDATION_2)
 
-Paths decide first: anything inside an ISA folder is "isa" (always allowed, and an
-edit of an ISA.md binds it); anything under a temp dir is "temp" (allowed, not counted).
+Paths decide first: ISA_HOME and `docs/YYYY-MM-DD-<slug>-0{1-spec,2-plan}.md` are guarded; temp dirs and the
+agent's own memory folder are free; everything else belongs to the project.
 """
 import os
 import re
@@ -18,15 +16,11 @@ import shlex
 
 from . import state
 
-# ------------------------------------------------------------------ tools
-
 READ_TOOLS = {
-    # Claude Code
     "Read", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "TodoWrite", "TodoRead", "Task", "Agent",
     "ToolSearch", "Skill", "AskUserQuestion", "ExitPlanMode", "EnterPlanMode", "ListMcpResourcesTool",
     "ReadMcpResourceTool", "Monitor", "TaskStop", "BashOutput", "KillShell", "SendMessage", "ListAgents",
     "ScheduleWakeup", "SendFeedback", "ReportFindings", "EnterWorktree", "ExitWorktree",
-    # pi
     "read", "grep", "find", "ls",
 }
 FILE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "write", "edit"}
@@ -35,41 +29,33 @@ _READ_VERB = re.compile(r"(^|[_.-])(read|get|list|search|query|fetch|find|view|s
                         r"guide|status|info|count|check|preview|download|export|authenticate)", re.I)
 _WRITE_VERB = re.compile(r"(^|[_.-])(write|edit|create|update|delete|remove|send|post|push|set|put|"
                          r"move|rename|upload|insert|publish|merge|commit|deploy|batch|apply)", re.I)
+DOC_REF = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+-0(?:1-spec|2-plan)\.md")
 
 
 def tool_paths(tool_input):
     ti = tool_input or {}
-    out = []
-    for k in ("file_path", "notebook_path", "path"):
-        v = ti.get(k)
-        if isinstance(v, str) and v:
-            out.append(v)
-    return out
+    return [ti[k] for k in ("file_path", "notebook_path", "path") if isinstance(ti.get(k), str) and ti.get(k)]
 
 
 def path_kind(path, cwd, temp_dirs=()):
     p = os.path.expanduser(path)
     if not os.path.isabs(p):
         p = os.path.join(cwd or os.getcwd(), p)
-    if state.is_spec_path(p):
-        return "spec"  # a spec or plan (plan P6); a write onto it is still a project write until P9
-    if state.is_isa_path(p):
-        return "isa"
+    if state.is_isa_path(p) or state.is_doc_path(p):
+        return "guarded"
     rp = os.path.realpath(p)
     if is_agent_memory(rp):
-        return "temp"  # the agent's own memory notes: agent state, not project work
+        return "temp"
     root = state.project_root(cwd)
     if (rp + os.sep).startswith(root + os.sep) and root != os.path.realpath(os.path.expanduser("~")):
-        return "project"  # a project that lives under /tmp is still a project
-    for t in _temp_roots(temp_dirs):
-        if (rp + os.sep).startswith(t + os.sep):
-            return "temp"
+        return "project"
+    if any((rp + os.sep).startswith(t + os.sep) for t in _temp_roots(temp_dirs)):
+        return "temp"
     return "project"
 
 
 def is_agent_memory(real_path):
-    """~/.claude/projects/<project>/memory/… (Claude Code's per-project memory). Override the parent
-    with ISA_AGENT_MEMORY_ROOT (tests)."""
+    """~/.claude/projects/<project>/memory/… (the agent's notes; ISA_AGENT_MEMORY_ROOT overrides the parent)."""
     base = os.path.realpath(os.path.expanduser(os.environ.get("ISA_AGENT_MEMORY_ROOT", "~/.claude/projects")))
     if not (real_path + os.sep).startswith(base + os.sep):
         return False
@@ -84,27 +70,20 @@ def _temp_roots(extra=()):
 
 
 def classify(tool, tool_input, cwd, temp_dirs=()):
-    """→ (kind, isa_paths) where kind is read|spec|write|unknown and isa_paths lists ISA files touched. `spec`: a
-    file-tool write of a spec or plan — articulation, never a project change (plan P9; a shell write stays `write`)."""
     ti = tool_input or {}
     if tool in FILE_TOOLS:
-        kinds = [(p, path_kind(p, cwd, temp_dirs)) for p in tool_paths(ti)]
-        isa = [p for p, k in kinds if k == "isa"]
-        if kinds and all(k in ("isa", "temp") for _, k in kinds):
-            return "read", isa
-        if kinds and all(k in ("isa", "temp", "spec") for _, k in kinds):
-            return "spec", isa
-        return "write", isa
+        kinds = [path_kind(p, cwd, temp_dirs) for p in tool_paths(ti)]
+        if "guarded" in kinds:
+            return "guarded"
+        return "read" if kinds and all(k == "temp" for k in kinds) else "write"
     if tool in SHELL_TOOLS:
         return bash(ti.get("command", ""), cwd, temp_dirs)
     if tool in READ_TOOLS:
-        return "read", []
+        return "read"
     name = tool.split("__")[-1] if tool.startswith("mcp__") else tool
     if _WRITE_VERB.search(name):
-        return "unknown", []
-    if _READ_VERB.search(name):
-        return "read", []
-    return "unknown", []
+        return "unknown"
+    return "read" if _READ_VERB.search(name) else "unknown"
 
 
 # ------------------------------------------------------------------ bash
@@ -117,7 +96,7 @@ READ_CMDS = {
     "false", "nl", "od", "xxd", "hexdump", "strings", "bat", "batcat", "cal", "uptime", "free", "lsblk",
     "sleep", "seq", "expr", "comm", "paste", "fold", "fmt", "tac", "rev", "man", "tldr", "help", "awk",
     "gawk", "mawk", "eza", "exa", "cd", "pushd", "popd", "export", "unset", "set", "shopt", "wait",
-    "isa", "sed", "find", "git", "gh", "command", "local", "declare", "read", "shasum", "lsof", "pgrep",
+    "sed", "find", "git", "gh", "command", "local", "declare", "read", "shasum", "lsof", "pgrep",
     "whatis", "apropos", "getconf", "locale", "tput", "stty", "ugrep", "zcat", "zgrep", "pdfinfo",
     "identify", "soxi", "ffprobe", "xmllint", "cloc", "tokei",
 }
@@ -127,7 +106,6 @@ WRITE_CMDS = {
     "bun", "pip", "pip3", "uv", "cargo", "go", "make", "apt", "apt-get", "brew", "mise", "docker", "kubectl",
     "terraform", "wget", "scp", "systemctl", "crontab", "kill", "pkill", "killall",
 }
-# file commands judged by their path arguments: all in temp dirs / ~/.isa → not a project mutation
 PATH_CMDS = {"rm", "rmdir", "mv", "cp", "mkdir", "touch", "ln", "chmod", "chown", "chgrp", "tee",
              "truncate", "install", "rsync", "mktemp"}
 WRAPPERS = {"time", "nice", "nohup", "env", "timeout", "xargs", "stdbuf", "ionice", "caffeinate", "exec"}
@@ -140,6 +118,8 @@ GH_READ_VERBS = {"view", "list", "status", "diff", "checks", "search", "browse"}
 SEPARATORS = {";", "&&", "||", "|", "&", "\n", "(", ")", "|&", ";;", "{", "}"}
 REDIRECTS = {">", ">>", ">|", "&>", "&>>", ">&"}
 SAFE_TARGETS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}
+ORDER = {"read": 0, "isa-cmd": 1, "unknown": 2, "write": 3, "guarded": 4}
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
 
 def _tokens(cmd):
@@ -149,40 +129,73 @@ def _tokens(cmd):
     return list(lex)
 
 
-def bash(cmd, cwd, temp_dirs=()):
-    if not cmd or not cmd.strip():
-        return "read", []
-    cmd = _drop_heredoc_bodies(cmd)
-    if ">(" in cmd:
-        return "unknown", []
-    cmd = cmd.replace("<(", " ; ")  # process substitution: judge the inner command on its own
-    outside = _without_single_quoted(cmd)  # inside '…' a backtick or $( is plain text
-    if "$(" in outside or "`" in outside:
-        # command substitution can hide anything; judge the visible parts, never better than unknown
-        visible = re.sub(r"\$\([^)]*\)|`[^`]*`", "X", cmd)
-        k, isa = bash(visible, cwd, temp_dirs) if visible != cmd else ("unknown", [])
-        return ("write" if k == "write" else "unknown"), isa
-    try:
-        toks = _tokens(cmd.replace("\\\n", " ").replace("\n", " ; "))
-    except ValueError:
-        return "unknown", []
-    worst, isa = "read", []
-    seg = []
+def _worse(a, b):
+    return a if ORDER[a] >= ORDER[b] else b
+
+
+def _drop_heredoc_bodies(cmd):
+    lines, out, pending = cmd.split("\n"), [], []
+    for line in lines:
+        if pending:
+            if line.strip() == pending[0]:
+                pending.pop(0)
+            continue
+        out.append(line)
+        pending = [m.group(2) for m in _HEREDOC.finditer(line)]
+    return "\n".join(out)
+
+
+def _refs(raw, cwd):
+    """Does the command's text (heredoc bodies and quotes included) name an ISA entity, or run inside ISA_HOME?"""
+    h = os.path.realpath(state.home())
+    if state.is_isa_path(cwd or os.getcwd()):
+        return True
+    return bool(h in raw or "~/.isa" in raw or "$ISA_HOME" in raw or "${ISA_HOME}" in raw or DOC_REF.search(raw))
+
+
+def _segments(cmd):
+    toks = _tokens(cmd.replace("\\\n", " ").replace("\n", " ; "))
+    seg, out = [], []
     for t in toks + [";"]:
         if t in SEPARATORS or all(c in ";&|()" for c in t):
             if seg:
-                k, i = _segment(seg, cwd, temp_dirs)
-                isa += i
-                worst = _worse(worst, k)
+                out.append(seg)
             seg = []
         else:
             seg.append(t)
-    return worst, isa
+    return out
+
+
+def bash(cmd, cwd, temp_dirs=()):
+    if not cmd or not cmd.strip():
+        return "read"
+    raw = cmd
+    cmd = _drop_heredoc_bodies(cmd)
+    if ">(" in cmd:
+        return "guarded" if _refs(raw, cwd) else "unknown"
+    cmd = cmd.replace("<(", " ; ")
+    subst = "$(" in _without_single_quoted(cmd) or "`" in _without_single_quoted(cmd)
+    try:
+        segs = _segments(re.sub(r"\$\([^)]*\)|`[^`]*`", "X", cmd) if subst else cmd)
+    except ValueError:
+        return "guarded" if _refs(raw, cwd) else "unknown"
+    worst = "read"
+    kinds = []
+    for seg in segs:
+        k = _segment(seg, cwd, temp_dirs)
+        kinds.append(k)
+        worst = _worse(worst, k)
+    if subst and worst != "guarded":
+        worst = _worse(worst, "unknown")
+    if worst != "guarded" and _refs(raw, cwd):
+        isa_only = all(k == "isa-cmd" for k in kinds)
+        heredoc = bool(_HEREDOC.search(cmd))
+        if not isa_only and (worst != "read" or heredoc or subst):
+            return "guarded"
+    return worst
 
 
 def _without_single_quoted(cmd):
-    """`cmd` with the contents of single-quoted spans removed. Double quotes are kept: the shell
-    still expands `…` and $( inside them. A backslash outside quotes escapes the next character."""
     out, i, n, dq = [], 0, len(cmd), False
     while i < n:
         c = cmd[i]
@@ -195,7 +208,7 @@ def _without_single_quoted(cmd):
         elif c == "'" and not dq:
             j = cmd.find("'", i + 1)
             if j < 0:
-                return cmd  # unbalanced: leave it to the tokenizer, which reports it
+                return cmd
             i = j + 1
             continue
         out.append(c)
@@ -203,96 +216,50 @@ def _without_single_quoted(cmd):
     return "".join(out)
 
 
-_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
-
-
-def _drop_heredoc_bodies(cmd):
-    """Keep `cat <<EOF > f` but drop the lines up to the delimiter — they are data, not commands."""
-    lines, out, pending = cmd.split("\n"), [], []
-    for line in lines:
-        if pending:
-            if line.strip() == pending[0]:
-                pending.pop(0)
-            continue
-        out.append(line)
-        pending = [m.group(2) for m in _HEREDOC.finditer(line)]
-    return "\n".join(out)
-
-
-ORDER = {"read": 0, "isa-cmd": 1, "unknown": 2, "write": 3, "isa-shell-edit": 4}
-ISA_CMDS = {"new", "lint", "verify", "close"}
-
-
-def _worse(a, b):
-    return a if ORDER[a] >= ORDER[b] else b
-
-
-def _master_isa(path, cwd):
-    p = os.path.expanduser(path)
-    if not os.path.isabs(p):
-        p = os.path.join(cwd or os.getcwd(), p)
-    return state.is_master_isa(p)
-
-
 def _segment(words, cwd, temp_dirs):
-    kind, isa = "read", []
-    # redirections anywhere in the segment
-    clean, i = [], 0
+    kind, clean, i = "read", [], 0
     while i < len(words):
         w = words[i]
         if w in REDIRECTS or re.match(r"^\d*(>>?|>\|)$", w) or w in ("<", "<<", "<<<"):
             target = words[i + 1] if i + 1 < len(words) else ""
-            if w in ("<", "<<", "<<<") or re.match(r"^&?\d+$", target) or target in SAFE_TARGETS:
-                pass
-            else:
+            if not (w in ("<", "<<", "<<<") or re.match(r"^&?\d+$", target) or target in SAFE_TARGETS):
                 pk = path_kind(target, cwd, temp_dirs)
-                if pk == "isa" and _master_isa(target, cwd):
-                    kind = "isa-shell-edit"
-                elif pk == "isa":
-                    isa.append(target)
-                elif pk in ("project", "spec"):
-                    kind = _worse(kind, "write")
+                kind = _worse(kind, "guarded" if pk == "guarded" else "write" if pk == "project" else "read")
             i += 2
-            continue
-        if re.match(r"^\d$", w) and i + 1 < len(words) and words[i + 1] in REDIRECTS | {">", ">>"}:
-            i += 1
             continue
         clean.append(w)
         i += 1
-    return _worse(kind, _command(clean, cwd, temp_dirs, isa)), isa
+    return _worse(kind, _command(clean, cwd, temp_dirs))
 
 
-def _command(words, cwd=None, temp_dirs=(), isa=None):
+def _command(words, cwd=None, temp_dirs=()):
     while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
         words = words[1:]
     if not words:
         return "read"
-    cmd = os.path.basename(words[0])
-    args = words[1:]
+    cmd, args = os.path.basename(words[0]), words[1:]
     if cmd in WRAPPERS:
         rest = [a for a in args if not a.startswith("-") and not re.match(r"^[A-Za-z_]\w*=|^\d+[smhd]?$", a)]
-        return _command(rest, cwd, temp_dirs, isa) if rest else "read"
+        return _command(rest, cwd, temp_dirs) if rest else "read"
+    if cmd == "isa":
+        return "isa-cmd"
     if args and all(a in ("--version", "-V", "--help", "-h", "version") for a in args):
         return "read"
     if cmd in PATH_CMDS:
         paths = [a for a in args if not a.startswith("-")]
         if cmd in ("chmod", "chown", "chgrp") and paths:
-            paths = paths[1:]  # mode / owner
-        onto = paths[-1:] if cmd in ("cp", "mv", "install", "rsync", "ln") else paths if cmd in ("tee", "truncate") else []
-        if any(_master_isa(p, cwd) for p in onto):
-            return "isa-shell-edit"
+            paths = paths[1:]
         kinds = [path_kind(p, cwd, temp_dirs) for p in paths]
-        if paths and all(k in ("temp", "isa") for k in kinds):
-            if isa is not None:
-                isa += [p for p, k in zip(paths, kinds) if k == "isa"]
-            return "read"
-        return "write"
+        if "guarded" in kinds:
+            return "guarded"
+        return "read" if paths and all(k == "temp" for k in kinds) else "write"
     if cmd in WRITE_CMDS:
         return "write"
     if cmd == "sed":
         if not any(a == "-i" or a.startswith("-i") or a.startswith("--in-place") for a in args):
             return "read"
-        return "isa-shell-edit" if any(_master_isa(a, cwd) for a in args if not a.startswith("-")) else "write"
+        return "guarded" if any(path_kind(a, cwd, temp_dirs) == "guarded" for a in args if not a.startswith("-")) \
+            else "write"
     if cmd == "find":
         return "write" if any(a in ("-delete", "-exec", "-execdir", "-ok", "-okdir") or a.startswith("-fprint")
                               or a == "-fls" for a in args) else "read"
@@ -302,8 +269,6 @@ def _command(words, cwd=None, temp_dirs=(), isa=None):
         return _git(args)
     if cmd == "gh":
         return _gh(args)
-    if cmd == "isa":
-        return "isa-cmd" if args and args[0] in ISA_CMDS else "read"
     if cmd in READ_CMDS:
         return "read"
     if cmd in ("curl", "http", "https"):
@@ -329,8 +294,9 @@ def _git(args):
     if sub in GIT_WRITE:
         return "write"
     if sub == "branch":
-        return "write" if any(a in ("-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "-u", "--set-upstream-to")
-                              for a in rest) or [a for a in rest if not a.startswith("-")] else "read"
+        return "write" if any(a in ("-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "-u",
+                                    "--set-upstream-to") for a in rest) or [a for a in rest if not a.startswith("-")] \
+            else "read"
     if sub == "tag":
         return "read" if not rest or rest[0] in ("-l", "--list", "-n") else "write"
     if sub == "stash":
@@ -341,8 +307,6 @@ def _git(args):
         return "read" if any(a in ("--get", "--get-all", "--list", "-l", "--get-regexp") for a in rest) else "write"
     if sub == "worktree":
         return "read" if rest[:1] == ["list"] else "write"
-    if sub == "fetch":
-        return "unknown"
     return "unknown"
 
 
@@ -357,49 +321,3 @@ def _gh(args):
     if words[:1] in (["auth"], ["status"], ["search"], ["browse"]):
         return "read"
     return "unknown"
-
-
-# ------------------------------------------------------------------ write targets (the ledger guard)
-
-ONTO_LAST = {"cp", "install", "rsync", "ln"}  # only the destination is written; `mv` also removes its sources
-
-
-def write_targets(cmd, cwd):
-    """Absolute paths a shell command visibly writes or removes: redirect targets, and the path arguments
-    of file commands (`rm`, `mv`, `tee`, the destination of `cp` …). What a script writes is not visible
-    here; engine.py compares the ledger before and after such a command instead (SPEC-v2 § 12.9)."""
-    try:
-        toks = _tokens(_drop_heredoc_bodies(cmd or "").replace("\\\n", " ").replace("\n", " ; "))
-    except ValueError:
-        return []
-    out, seg = [], []
-    for t in toks + [";"]:
-        if t in SEPARATORS or all(c in ";&|()" for c in t):
-            out += _segment_targets(seg)
-            seg = []
-        else:
-            seg.append(t)
-    base = cwd or os.getcwd()
-    return [os.path.join(base, os.path.expanduser(p)) if not os.path.isabs(os.path.expanduser(p))
-            else os.path.expanduser(p) for p in out]
-
-
-def _segment_targets(words):
-    targets, clean, i = [], [], 0
-    while i < len(words):
-        w = words[i]
-        if (w in REDIRECTS or re.match(r"^\d*(>>?|>\|)$", w)) and i + 1 < len(words):
-            if not re.match(r"^&?\d+$", words[i + 1]):
-                targets.append(words[i + 1])
-            i += 2
-            continue
-        clean.append(w)
-        i += 1
-    while clean and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", clean[0]):
-        clean = clean[1:]
-    while clean and os.path.basename(clean[0]) in WRAPPERS:
-        clean = [a for a in clean[1:] if not a.startswith("-")]
-    if clean and os.path.basename(clean[0]) in PATH_CMDS:
-        paths = [a for a in clean[1:] if not a.startswith("-")]
-        targets += paths[-1:] if os.path.basename(clean[0]) in ONTO_LAST else paths
-    return targets

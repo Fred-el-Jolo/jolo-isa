@@ -1,397 +1,120 @@
 // node --test adapters/pi/test/extension.test.ts   (Node ≥ 22.18 strips the types)
-// Drives the extension through a mock `pi` against the real engine in a throwaway ISA_HOME.
+// The pi adapter maps pi events to engine events and engine results back to pi — nothing else. These tests drive
+// it through a mock `pi` against a fake engine (the decisions are tested in Python, tests/test_foundations.py),
+// plus one call to the real engine: a guarded write is refused.
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync, rmSync } from "node:fs"
-import { tmpdir, homedir } from "node:os"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { execFileSync } from "node:child_process"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..")
 process.env.ISA_BIN = join(ROOT, "runtime", "bin", "isa")
 process.env.ISA_HOME = mkdtempSync(join(tmpdir(), "isa-pi-"))
-process.env.ISA_SKILL_DIR = join(ROOT, "skill", "ISA")
-process.env.ISA_JEV_BIN = join(process.env.ISA_HOME, "no-jev-here") // no test reaches the real `jev`
+process.env.ISA_JEV_BIN = join(process.env.ISA_HOME, "no-jev-here")
 delete process.env.ISA_MODE
-const { default: isaExtension } = await import("../isa.ts")
+const { default: isaExtension, callEngine } = await import("../isa.ts")
 
-const PROJ = mkdtempSync(join(homedir(), ".cache", "isa-pi-proj-"))
-mkdirSync(join(PROJ, ".git"))
-const E1 = readFileSync(join(ROOT, "skill/ISA/Examples/e1-minimal.md"), "utf8")
+type Result = Record<string, unknown>
 
-// a fake `jev` (SPEC-v2 § 12): answers every question of a preset with FAKE_JEV_P
-const FAKE_JEV = join(process.env.ISA_HOME!, "fake-jev")
-writeFileSync(FAKE_JEV, `#!/usr/bin/env python3
-import json, os, sys
-sys.stdin.read()
-preset = sys.argv[2]
-d = os.environ["JEV_KIT_PRESETS"].split(":")[0]
-qs = json.load(open(os.path.join(d, preset + ".json")))["questions"]
-p = float(os.environ.get("FAKE_JEV_P", "0.31"))
-print(json.dumps({"ok": True, "answers": {q: {"type": "noul", "answer": p} for q in qs}}))
-`, { mode: 0o755 })
-
-async function withJev(p: string | null, fn: () => Promise<void>) {
-  const saved = process.env.ISA_JEV_BIN
-  if (p !== null) { process.env.ISA_JEV_BIN = FAKE_JEV; process.env.FAKE_JEV_P = p }
-  try { await fn() } finally { process.env.ISA_JEV_BIN = saved; delete process.env.FAKE_JEV_P }
-}
-function harness(sessionId: string, engine?: Function, branch: unknown[] = [], ui: Record<string, Function> = {},
-                 hasUI = true) {
+function harness(answers: Record<string, Result | (() => Result)>, ui: Record<string, Function> = {}, hasUI = true) {
   const handlers: Record<string, Function> = {}
   const notes: string[] = []
+  const calls: Record<string, unknown>[] = []
+  const engine = (payload: Record<string, unknown>) => {
+    calls.push(payload)
+    const a = answers[payload.event as string]
+    return (typeof a === "function" ? a() : a) ?? {}
+  }
   const pi = { on: (name: string, fn: Function) => { handlers[name] = fn; return () => {} } }
   const ctx = {
-    cwd: PROJ, hasUI, mode: "tui",
+    cwd: "/tmp/proj", hasUI, mode: "tui",
     ui: { notify: (m: string) => notes.push(m), ...ui },
-    sessionManager: { getSessionId: () => sessionId, getBranch: () => branch },
+    sessionManager: { getSessionId: () => "s1", getBranch: () => [] },
   }
-  if (engine) isaExtension(pi as any, engine as any)
-  else isaExtension(pi as any)
+  isaExtension(pi as any, engine as any)
   const fire = (name: string, event: Record<string, unknown> = {}) => handlers[name]?.(event, ctx)
-  return { fire, notes }
+  return { fire, notes, calls }
 }
 
-function isaPath() {
-  const key = execFileSync("python3", [process.env.ISA_BIN!, "where"], { cwd: PROJ, encoding: "utf8" }).split(/\s+/)[2]
-  return join(process.env.ISA_HOME!, key, "20260101-000000_t", "ISA.md")
-}
-
-test("the gate: Jev below the line asks; a Jev yes injects the ON block once", async () => {
-  await withJev("0.5", async () => {
-    const select = async (_t: string, options: string[]) => options[0]
-    const { fire, notes } = harness("s-protocol", undefined, [], { select })
-    await fire("input", { text: "hello", source: "interactive" })
-    const cont = await fire("before_agent_start", { prompt: "hello" })
-    assert.match(cont.message.content, /Continue pass/)
-    assert.doesNotMatch(cont.message.content, /\[ISA: ON/)
-    assert.ok(notes.some((n) => /^ISA gate — Jev 0\.50 → asking you/.test(n)))
-    process.env.FAKE_JEV_P = "0.93"
-    await fire("input", { text: "Fix the bug in dates.py so the tests pass", source: "interactive" })
-    const on = await fire("before_agent_start", { prompt: "Fix the bug in dates.py so the tests pass" })
-    assert.match(on.message.content, /\[ISA: ON/)
-    assert.equal(on.message.display, false)
-    assert.ok(notes.some((n) => /^ISA gate — Jev 0\.93 → ON/.test(n)))
-    await fire("input", { text: "and add a test for it too please", source: "interactive" })
-    const again = await fire("before_agent_start", { prompt: "and add a test for it too please" })
-    assert.doesNotMatch(again.message.content, /\[ISA: ON/)
-  })
+test("input: session start once, then the gate; its context reaches the model at before_agent_start", async () => {
+  const h = harness({ session_start: { context: "PROTOCOL" }, prompt: { context: "GATE", warn: "ISA gate — Jev 0.93 → ON" } })
+  await h.fire("input", { text: "build it", source: "interactive" })
+  const res = await h.fire("before_agent_start", { prompt: "build it" })
+  assert.equal(res.message.content, "PROTOCOL\n\nGATE")
+  assert.equal(res.message.display, false)
+  assert.deepEqual(h.calls.map((c) => c.event), ["session_start", "prompt"])
+  assert.ok(h.notes.includes("ISA gate — Jev 0.93 → ON"))
+  await h.fire("input", { text: "more", source: "interactive" })
+  assert.deepEqual(h.calls.map((c) => c.event), ["session_start", "prompt", "prompt"])
 })
 
-test("prompt and stop carry the last assistant message; every call has the same limit", async () => {
-  const calls: { payload: Record<string, unknown>; timeout?: number }[] = []
-  const stub = (payload: Record<string, unknown>, timeout?: number) => { calls.push({ payload, timeout }); return {} }
-  const branch = [
-    { type: "message", message: { role: "user", content: [{ type: "text", text: "review it?" }] } },
-    { type: "message", message: { role: "assistant", content: [{ type: "text", text: "x".repeat(3000) + "I propose a review." }] } },
-    { type: "custom", customType: "isa" },
-  ]
-  const { fire } = harness("s-stub", stub, branch)
-  await fire("before_agent_start", { prompt: "go" })
-  fire("tool_call", { toolName: "read", input: { path: "x" } })
-  await fire("agent_before_settle", { outcome: "completed", context: { canContinue: true } })
-  const prompt = calls.find((c) => c.payload.event === "prompt")!
-  assert.equal((prompt.payload.context as string).length, 2000)
-  assert.match(prompt.payload.context as string, /I propose a review\.$/)
-  const stop = calls.find((c) => c.payload.event === "stop")!
-  assert.match(stop.payload.context as string, /I propose a review\.$/)
-  for (const c of calls) assert.equal(c.timeout, undefined) // callEngine's default: ISA_HOOK_TIMEOUT_MS (15 s)
+test("the gate's question: asked with select, the pick reported as ask_answer", async () => {
+  const picks: string[] = []
+  const select = async (_t: string, options: string[]) => { picks.push(options.join("|")); return options[1] }
+  const h = harness({ prompt: { ask: "ISA is not enabled for this prompt (Jev: 0.50). Continue?",
+                                options: ["Continue without ISA", "Enable ISA"] },
+                      ask_answer: { context: "ENABLED" } }, { select })
+  await h.fire("input", { text: "rename it", source: "interactive" })
+  const res = await h.fire("before_agent_start", { prompt: "rename it" })
+  assert.deepEqual(picks, ["Continue without ISA|Enable ISA"])
+  const ans = h.calls.find((c) => c.event === "ask_answer")!
+  assert.equal(ans.choice, "Enable ISA")
+  assert.match(res.message.content, /ENABLED/)
 })
 
-test("mutating tool is blocked until an ISA is bound", async () => {
-  const { fire } = harness("s-gate")
-  await fire("before_agent_start", { prompt: "edit x" }) // Jev unavailable: the model judges, the session is still OFF
-  const blocked = fire("tool_call", { toolName: "write", input: { path: join(PROJ, "x.py"), content: "x" } })
-  assert.equal(blocked.block, true)
-  assert.match(blocked.reason, /needs an ISA first/) // the write itself switches the session ON
-  assert.equal(fire("tool_call", { toolName: "read", input: { path: join(PROJ, "x.py") } }), undefined)
-  const p = isaPath(); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, E1)
-  const res = fire("tool_result", { toolName: "write", input: { path: p }, content: [{ type: "text", text: "ok" }], isError: false })
-  assert.match(res.content.at(-1).text, /lint ok/)
-  assert.equal(fire("tool_call", { toolName: "write", input: { path: join(PROJ, "x.py"), content: "x" } }), undefined)
+test("a message typed while the agent runs is not judged", async () => {
+  const h = harness({ prompt: { context: "GATE" } })
+  await h.fire("input", { text: "also this", source: "interactive", streamingBehavior: "steer" })
+  assert.equal(h.calls.length, 0)
 })
 
-const DONE = { outcome: "completed", context: { canContinue: true } }
-
-// a turn that leaves a real ISA problem (a lint error: no Anti ISC) after a project change
-async function problemTurn(fire: Function) {
-  await fire("before_agent_start", { prompt: "do it" })
-  const p = isaPath(); mkdirSync(dirname(p), { recursive: true })
-  writeFileSync(p, E1.replace("ISC-4: Anti:", "ISC-4:"))
-  fire("tool_result", { toolName: "write", input: { path: p }, content: [], isError: false })
-  fire("tool_result", { toolName: "edit", input: { path: join(PROJ, "x.py") }, content: [], isError: false })
-}
-
-test("real ISA problem: exactly one continuation per prompt", async () => {
-  const { fire, notes } = harness("s-settle")
-  await problemTurn(fire)
-  const first = await fire("agent_before_settle", DONE)
-  assert.equal(first.continue, true)
-  assert.match(first.entries[0].content, /no `Anti:` ISC/)
-  assert.equal(await fire("agent_before_settle", DONE), undefined)
-  assert.ok(notes.some((n) => /ending the turn anyway/.test(n)))
+test("tool_call: a deny blocks the tool with its reason", async () => {
+  const h = harness({ pre_tool: { deny: "ISA: written only by `isa` commands" } })
+  const res = await h.fire("tool_call", { toolName: "write", input: { path: "x" } })
+  assert.deepEqual(res, { block: true, reason: "ISA: written only by `isa` commands" })
+  assert.equal(h.calls[0].tool, "write")
 })
 
-test("a run the user aborted is never continued", async () => {
-  const { fire } = harness("s-aborted")
-  await problemTurn(fire)
-  assert.equal(await fire("agent_before_settle", { outcome: "aborted", context: { canContinue: true } }), undefined)
+test("tool_result: the tool's text goes to the engine, its context is appended", async () => {
+  const h = harness({ post_tool: { context: "ISA bound" } })
+  const res = await h.fire("tool_result", { toolName: "bash", input: { command: "isa new x --tier E1" },
+                                            content: [{ type: "text", text: "ISA: /h/x/ISA.md" }] })
+  assert.equal(h.calls[0].tool_output, "ISA: /h/x/ISA.md")
+  assert.equal(res.content.at(-1).text, "\n[ISA] ISA bound")
 })
 
-test("a run that ended in an error outcome is never continued", async () => {
-  const { fire } = harness("s-error")
-  await problemTurn(fire)
-  assert.equal(await fire("agent_before_settle", { outcome: "error", context: { canContinue: true } }), undefined)
-  assert.equal(await fire("agent_before_settle", { outcome: "completed", context: { canContinue: false } }), undefined)
+test("agent_before_settle: a block continues the run once; an aborted run is never checked", async () => {
+  const h = harness({ stop: { block: "ISA check: TRIAGE" } })
+  const res = await h.fire("agent_before_settle", { outcome: "completed" })
+  assert.equal(res.continue, true)
+  assert.equal(res.entries[0].content, "ISA check: TRIAGE")
+  await h.fire("agent_before_settle", { outcome: "aborted" })
+  assert.equal(h.calls.filter((c) => c.event === "stop").length, 1)
 })
 
-test("a resumed session (new pi process) still blocks its first turn", async () => {
-  const first = harness("s-resume")  // pi process 1
-  await problemTurn(first.fire)
-  assert.equal((await first.fire("agent_before_settle", DONE)).continue, true)
-  const again = harness("s-resume")  // pi process 2, same session id, prompt counter restarts
-  await problemTurn(again.fire)
-  assert.equal((await again.fire("agent_before_settle", DONE)).continue, true)
+test("the ack question: Esc is never an ack; the pick goes back with its kind and path", async () => {
+  const h = harness({ stop: { ask: "Acknowledge docs/x-01-spec.md?", options: ["Acknowledge", "Request changes"],
+                              ask_kind: "ack", ask_path: "/p/docs/x-01-spec.md" },
+                      ask_answer: { block: "revise it" } }, { select: async () => undefined })
+  const res = await h.fire("agent_before_settle", { outcome: "completed" })
+  const ans = h.calls.find((c) => c.event === "ask_answer")!
+  assert.deepEqual([ans.choice, ans.ask_kind, ans.ask_path], ["Request changes", "ack", "/p/docs/x-01-spec.md"])
+  assert.equal(res.continue, true)
 })
 
-test("engine failure fails open with a warning", () => {
-  process.env.ISA_FAULT_INJECT = "1"
-  try {
-    const { fire, notes } = harness("s-fault")
-    assert.equal(fire("tool_call", { toolName: "write", input: { path: join(PROJ, "y.py") } }), undefined)
-    assert.ok(notes.some((n) => /ISA hook error/.test(n)))
-  } finally {
-    delete process.env.ISA_FAULT_INJECT
-  }
+test("an engine failure fails open: a warning, no block", async () => {
+  const h = harness({ pre_tool: () => { throw new Error("boom") } })
+  const res = await h.fire("tool_call", { toolName: "write", input: { path: "x" } })
+  assert.equal(res, undefined)
+  assert.ok(h.notes.some((n) => /ISA hook error/.test(n) && /boom/.test(n)))
 })
 
-test.after(() => {
-  rmSync(PROJ, { recursive: true, force: true })
+test("the real engine refuses a write onto an ISA file", () => {
+  const isa = join(process.env.ISA_HOME!, "dev-x", "20260101-000000_t", "ISA.md")
+  const res = callEngine({ event: "pre_tool", session: "s1", cwd: tmpdir(), prompt_id: "p1", tool: "write",
+                           tool_input: { path: isa, content: "x" } })
+  assert.match(String(res.deny), /written only by `isa` commands/)
   rmSync(process.env.ISA_HOME!, { recursive: true, force: true })
-})
-
-const JUDGED_BRANCH = [
-  { type: "message", message: { role: "user", content: [{ type: "text", text: "what does cmd_list print?" }] } },
-  { type: "message", message: { role: "assistant", content: [{ type: "text", text: "ISA judge (model): no — a question about the code.\n\nIt prints each task." }] } },
-]
-
-test("the model's `no` asks the user, after it answered; Continue ends the turn", async () => {
-  const asked: { title: string; options: string[] }[] = []
-  const select = async (title: string, options: string[]) => { asked.push({ title, options }); return options[0] }
-  const { fire } = harness("s-ask-continue", undefined, JUDGED_BRANCH, { select })
-  const p = await fire("before_agent_start", { prompt: "what does cmd_list in todo.py print?" })
-  assert.match(p.message.content, /ISA judge \(model\)/)
-  assert.doesNotMatch(p.message.content, /AskUserQuestion/) // pi: the extension asks, not the model
-  const res = await fire("agent_before_settle", { outcome: "completed", context: { canContinue: true } })
-  assert.equal(asked.length, 1)
-  assert.equal(asked[0].title, "ISA is not enabled for this prompt (model: no — a question about the code.). Continue?")
-  assert.deepEqual(asked[0].options, ["Continue without ISA", "Enable ISA"])
-  assert.equal(res, undefined)
-})
-
-test("the model's `no` asks the user; Enable ISA continues the run with the ON block", async () => {
-  const select = async (_t: string, options: string[]) => options[1]
-  const { fire } = harness("s-ask-enable", undefined, JUDGED_BRANCH, { select })
-  await fire("before_agent_start", { prompt: "what does cmd_list in todo.py print?" })
-  const res = await fire("agent_before_settle", { outcome: "completed", context: { canContinue: true } })
-  assert.equal(res.continue, true)
-  assert.match(res.entries[0].content, /The user chose Enable ISA/)
-  assert.match(res.entries[0].content, /\[ISA: ON/)
-})
-
-test("no UI: nobody asks the user, the model's `no` stands", async () => {
-  let called = 0
-  const select = async () => { called += 1; return "Enable ISA" }
-  const { fire } = harness("s-ask-noui", undefined, JUDGED_BRANCH, { select }, false)
-  await fire("before_agent_start", { prompt: "what does cmd_list in todo.py print?" })
-  const res = await fire("agent_before_settle", { outcome: "completed", context: { canContinue: true } })
-  assert.equal(called, 0)
-  assert.equal(res, undefined)
-})
-
-const QUESTION = "what does cmd_list in todo.py print?"
-
-test("M11: below the line, pi asks at input before the model; Continue tells the model about the pass", async () => {
-  await withJev("0.31", async () => {
-    const asked: string[] = []
-    const select = async (title: string, options: string[]) => { asked.push(title); return options[0] }
-    const { fire } = harness("s-m11-continue", undefined, [], { select })
-    const r = await fire("input", { text: QUESTION, source: "interactive" })
-    assert.deepEqual(r, { action: "continue" })
-    assert.deepEqual(asked, ["ISA is not enabled for this prompt (Jev: 0.31). Continue?"])
-    // the model is told about the pick (TODO 2026-10-03), and the run is never restarted
-    const p = await fire("before_agent_start", { prompt: QUESTION })
-    assert.match(p.message.content, /the user chose Continue without ISA/)
-    assert.match(p.message.content, /no `ISA judge \(model\):` line/)
-    assert.equal(await fire("agent_before_settle", DONE), undefined)
-  })
-})
-
-test("M11: Enable ISA at input puts the ON block before the model", async () => {
-  await withJev("0.31", async () => {
-    const select = async (_t: string, options: string[]) => options[1]
-    const { fire } = harness("s-m11-enable", undefined, [], { select })
-    await fire("input", { text: QUESTION, source: "interactive" })
-    const p = await fire("before_agent_start", { prompt: QUESTION })
-    assert.match(p.message.content, /\[ISA: ON/)
-  })
-})
-
-test("M11: a Jev yes at input turns ON without asking", async () => {
-  await withJev("0.93", async () => {
-    let called = 0
-    const select = async () => { called += 1; return "Continue without ISA" }
-    const { fire } = harness("s-m11-yes", undefined, [], { select })
-    await fire("input", { text: "please check the flag files today", source: "interactive" })
-    assert.equal(called, 0)
-    assert.match((await fire("before_agent_start", { prompt: "please check the flag files today" })).message.content, /\[ISA: ON/)
-  })
-})
-
-test("M11: a message typed while the agent runs is not judged", async () => {
-  const calls: Record<string, unknown>[] = []
-  const stub = (payload: Record<string, unknown>) => { calls.push(payload); return {} }
-  const { fire } = harness("s-m11-steer", stub)
-  await fire("input", { text: "also do y", source: "interactive", streamingBehavior: "steer" })
-  await fire("input", { text: "and z", source: "interactive", streamingBehavior: "followUp" })
-  assert.equal(calls.filter((c) => c.event === "prompt").length, 0)
-})
-
-test("M11: a slash prompt reaches the engine raw, at input", async () => {
-  const calls: Record<string, unknown>[] = []
-  const stub = (payload: Record<string, unknown>) => { calls.push(payload); return {} }
-  const { fire } = harness("s-m11-slash", stub)
-  await fire("input", { text: "/skill:demo-review utils.py", source: "interactive" })
-  await fire("before_agent_start", { prompt: "expanded skill text …" })
-  const prompts = calls.filter((c) => c.event === "prompt")
-  assert.equal(prompts.length, 1)
-  assert.equal(prompts[0].prompt, "/skill:demo-review utils.py")
-})
-
-test("M11: Jev unavailable → the model judges; pi asks at settle after its `no`", async () => {
-  await withJev(null, async () => {
-    const asked: string[] = []
-    const select = async (title: string, options: string[]) => { asked.push(title); return options[0] }
-    const branch = [{ type: "message", message: { role: "assistant", content: [{ type: "text",
-      text: "ISA judge (model): no — a question about the code.\n\nIt prints each task." }] } }]
-    const { fire } = harness("s-m11-model", undefined, branch, { select })
-    await fire("input", { text: QUESTION, source: "interactive" })
-    assert.deepEqual(asked, [])
-    assert.match((await fire("before_agent_start", { prompt: QUESTION })).message.content, /ISA judge \(model\)/)
-    assert.equal(await fire("agent_before_settle", DONE), undefined)
-    assert.deepEqual(asked, ["ISA is not enabled for this prompt (model: no — a question about the code.). Continue?"])
-  })
-})
-
-test("M11.1: Continue at input lets the prompt's changes through", async () => {
-  await withJev("0.2", async () => {
-    const select = async (_t: string, options: string[]) => options[0]
-    const { fire } = harness("s-m111-pass", undefined, [], { select })
-    await fire("input", { text: "commit and push", source: "interactive" })
-    await fire("before_agent_start", { prompt: "commit and push" })
-    assert.equal(fire("tool_call", { toolName: "write", input: { path: join(PROJ, "z.py"), content: "x" } }), undefined)
-  })
-})
-
-test("M11.2: below jev_quiet, pi asks nothing at input (quiet)", async () => {
-  await withJev("0.1", async () => {
-    let called = 0
-    const select = async (_t: string, options: string[]) => { called += 1; return options[0] }
-    const { fire, notes } = harness("s-m112-quiet", undefined, [], { select })
-    await fire("input", { text: "commit and push", source: "interactive" })
-    assert.equal(called, 0)
-    assert.ok(notes.some((n) => /continue without ISA \(below 0\.30\)/.test(n)))
-  })
-})
-
-// Plan P8 (spec § 5.6 questions 3–5, pi column): the spec / plan ack, asked at agent_before_settle
-const ACK = { ask: "Acknowledge ~/p/docs/spec/2026-10-06-help.md?", options: ["Acknowledge", "Request changes"],
-  ask_kind: "ack", ask_path: "/p/docs/spec/2026-10-06-help.md" }
-
-function ackStub(stopResult: Record<string, unknown> = ACK) {
-  const calls: Record<string, unknown>[] = []
-  const stub = (payload: Record<string, unknown>) => {
-    calls.push(payload)
-    if (payload.event === "stop") return stopResult
-    if (payload.event === "ask_answer" && payload.ask_kind === "ack" && payload.choice === "Acknowledge")
-      return { block: "Set the status line." }
-    return {}
-  }
-  return { calls, stub, answer: () => calls.find((c) => c.event === "ask_answer") }
-}
-
-test("P8 settle asks the ack and reports the answer with its kind and path", async () => {
-  const { stub, answer } = ackStub()
-  const asked: { title: string; options: string[] }[] = []
-  const select = async (title: string, options: string[]) => { asked.push({ title, options }); return "Acknowledge" }
-  const { fire } = harness("s-p8-ask", stub, [], { select })
-  await fire("before_agent_start", { prompt: "go" })
-  const res = await fire("agent_before_settle", DONE)
-  assert.deepEqual(asked, [{ title: ACK.ask, options: ACK.options }])
-  const a = answer()!
-  assert.deepEqual([a.choice, a.ask_kind, a.ask_path], ["Acknowledge", "ack", ACK.ask_path])
-  assert.equal(res.continue, true)
-  assert.equal(res.entries[0].content, "Set the status line.")
-})
-
-test("P8 Esc on the ack question reports Request changes", async () => {
-  const { stub, answer } = ackStub()
-  const { fire } = harness("s-p8-esc", stub, [], { select: async () => undefined })
-  await fire("before_agent_start", { prompt: "go" })
-  assert.equal(await fire("agent_before_settle", DONE), undefined)
-  assert.deepEqual([answer()!.choice, answer()!.ask_kind], ["Request changes", "ack"])
-})
-
-test("P8 a select error on the ack question reports Request changes", async () => {
-  const { stub, answer } = ackStub()
-  const select = async () => { throw new Error("dialog closed") }
-  const { fire, notes } = harness("s-p8-err", stub, [], { select })
-  await fire("before_agent_start", { prompt: "go" })
-  assert.equal(await fire("agent_before_settle", DONE), undefined)
-  assert.equal(answer()!.choice, "Request changes")
-  assert.ok(notes.some((n) => /could not ask/.test(n) && !/continuing without an ISA/.test(n)))
-})
-
-test("P8 no UI: the ack is not asked and nothing is reported", async () => {
-  const { stub, answer } = ackStub()
-  let called = 0
-  const { fire } = harness("s-p8-noui", stub, [], { select: async () => { called += 1; return "Acknowledge" } }, false)
-  await fire("before_agent_start", { prompt: "go" })
-  assert.equal(await fire("agent_before_settle", DONE), undefined)
-  assert.equal(called, 0)
-  assert.equal(answer(), undefined)
-})
-
-test("P8 Esc on the gate question still reports Continue without ISA", async () => {
-  const { stub, answer } = ackStub({ ask: "ISA is not enabled for this prompt (model: no — x). Continue?",
-    options: ["Continue without ISA", "Enable ISA"] })
-  const { fire } = harness("s-p8-gate", stub, [], { select: async () => undefined })
-  await fire("before_agent_start", { prompt: "go" })
-  await fire("agent_before_settle", DONE)
-  assert.equal(answer()!.choice, "Continue without ISA")
-  assert.equal("ask_kind" in answer()!, false)
-})
-
-test("P8 Acknowledge at settle records the ack and continues the run", async () => {
-  await withJev("0.1", async () => {
-    const spec = execFileSync("python3", ["-c", "from tests.test_specdoc import E3; print(E3, end='')"],
-      { cwd: ROOT, encoding: "utf8" })
-    const path = join(PROJ, "docs", "spec", "2026-10-06-help.md")
-    const asked: string[] = []
-    const select = async (title: string, options: string[]) => { asked.push(title); return options[0] }
-    const { fire } = harness("s-p8-real", undefined, [], { select })
-    await fire("input", { text: "draft the spec for the help screen", source: "interactive" })
-    await fire("before_agent_start", { prompt: "draft the spec for the help screen" })
-    assert.deepEqual(asked, []) // below jev_quiet: no gate question
-    mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, spec)
-    fire("tool_result", { toolName: "write", input: { path, content: spec }, content: [], isError: false })
-    const res = await fire("agent_before_settle", DONE)
-    assert.equal(asked.length, 1)
-    assert.match(asked[0], /^Acknowledge .*docs\/spec\/2026-10-06-help\.md\?$/)
-    assert.equal(res.continue, true)
-    assert.match(res.entries[0].content, /status: acked \d{4}-\d\d-\d\d #[0-9a-f]{8}/)
-    const rows = readFileSync(join(process.env.ISA_HOME!, "_state", "acks.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l))
-    assert.deepEqual(rows.map((r) => [r.path, r.harness, r.session]), [[realpathSync(path), "pi", "s-p8-real"]])
-  })
 })

@@ -20,9 +20,11 @@ What it does:
             adapters/claude-statusline/ → ~/.local/share/isa/statusline (config.json kept), and the
             settings.json statusLine: an existing one (e.g. ccstatusline) is kept as `_isaInnerCommand`
             and shown above the ISA rows; --uninstall puts it back
+  legacy    a ~/.isa from before the foundations (its old ledger, prompt logs or project proofs) is moved whole to
+            ~/.isa.legacy-<time>/ once, for the user to delete
 
-Paths can be redirected for tests: --claude-settings, --pi-dir, --prefix, --skills-dir, --claude-md (default:
-CLAUDE.md beside --claude-settings).
+Paths can be redirected for tests: --claude-settings, --pi-dir, --prefix, --skills-dir, --isa-home, --claude-md
+(default: CLAUDE.md beside --claude-settings).
 """
 import argparse
 import json
@@ -293,11 +295,28 @@ def copy_tree(src, dst, dry):
     print(f"  copied     {dst}")
 
 
+LEGACY_MARKERS = ("evidence", "prompts", "project")
+
+
+def move_legacy(home, dry):
+    """A ~/.isa from before the foundations (its ledger, prompt logs or project-ISA proofs) is moved aside whole,
+    once: `<home>.legacy-<time>/`, for the user to delete. Nothing old is converted."""
+    if not any(os.path.exists(os.path.join(home, "_state", m)) for m in LEGACY_MARKERS):
+        return
+    dst = f"{home.rstrip(os.sep)}.legacy-{time.strftime('%Y%m%d-%H%M%S')}"
+    print(f"  {'would move' if dry else 'moved'}      {home} → {dst} (the pre-foundations ISAs and state; delete it "
+          "when you no longer need it)")
+    if not dry:
+        os.rename(home, dst)
+        os.makedirs(home)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--uninstall", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--prefix", default=os.path.join(H, ".local"))
+    ap.add_argument("--isa-home", default=os.environ.get("ISA_HOME", ISA_DIR))
     ap.add_argument("--claude-settings", default=os.path.join(H, ".claude", "settings.json"))
     ap.add_argument("--skills-dir", default=os.path.join(H, ".claude", "skills"))
     ap.add_argument("--pi-dir", default=os.path.join(H, ".pi", "agent"))
@@ -372,7 +391,9 @@ def main(argv=None):
     else:
         print(f"  skipped pi (no {a.pi_dir})")
     install_rules(claude_md, a.pi_dir, a.dry_run)
-    os.makedirs(os.path.join(os.environ.get("ISA_HOME", os.path.join(H, ".isa"))), exist_ok=True)
+    move_legacy(a.isa_home, a.dry_run)
+    if not a.dry_run:
+        os.makedirs(a.isa_home, exist_ok=True)
     print("Done. New Claude Code and pi sessions are gated; running sessions pick it up on restart.")
     return 0
 

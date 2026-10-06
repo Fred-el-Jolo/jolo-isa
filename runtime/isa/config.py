@@ -1,26 +1,23 @@
-"""`~/.isa/config.json` (`$ISA_HOME/config.json`): the user's system-wide ISA settings (SPEC-v2 § 11).
+"""`~/.isa/config.json` (`$ISA_HOME/config.json`): the user's ISA settings.
 
-    {"ask_without_isa": true}    ask the user before a prompt goes on without an ISA (default: true)
-    {"jev": true}                Jev judgments through jev-kit (default: true; false = no Jev call at all)
-    {"jev_gate": 0.8}            Jev's Q1/Q2 line: at or above it, an ISA is required (SPEC-v2 § 12.2)
-    {"jev_quiet": 0.3}           below it (and below jev_gate), a prompt goes on without an ISA silently —
-                                 no question, the Continue pass granted (SPEC-v2 § 12.4, M11.2)
-    {"jev_doubt": 0.5}           the advisory line: a red-exempt probe, a goal or an ask Jev rates below it
-                                 is flagged (§ 11.2)
+    {"ask_without_isa": true}   ask the user whenever the gate does not say yes (default: true)
+    {"jev": true}               Jev judges the gate (default: true; false = no Jev call at all)
+    {"jev_gate": 0.8}           at or above it, the prompt is ISA work
+    {"jev_quiet": 0.3}          below it, the prompt goes on without an ISA and without a question
+    {"jev_doubt": 0.5}          the advisory line: a probe, goal or ask Jev rates below it is flagged
+    {"debug": false}            DEBUG: write the debug log (`ISA_DEBUG=1` overrides)
 
-A missing file, unreadable JSON or a missing key means the default: a broken config never stops ISA,
-and the parse error is noted in the debug log. Read on every use; nothing is cached across calls.
+A missing file, unreadable JSON or a missing key means the default: a broken config never stops ISA.
 """
 import json
 import os
 
-from . import state
-
-DEFAULTS = {"ask_without_isa": True, "jev": True, "jev_gate": 0.8, "jev_quiet": 0.3, "jev_doubt": 0.5}
+DEFAULTS = {"ask_without_isa": True, "jev": True, "jev_gate": 0.8, "jev_quiet": 0.3, "jev_doubt": 0.5,
+            "debug": False}
 
 
 def path():
-    return os.path.join(state.home(), "config.json")
+    return os.path.join(os.path.expanduser(os.environ.get("ISA_HOME", "~/.isa")), "config.json")
 
 
 def load():
@@ -43,10 +40,8 @@ def get(key):
 
 
 def number(key):
-    """A threshold in [0, 1] → (value, error or None). Out of range or not a number → the default, and the
-    error says why (callers note it in the debug log)."""
-    settings, err = load()
-    value = settings.get(key, DEFAULTS[key])
+    """A threshold in [0, 1]; out of range or not a number → the default."""
+    value = load()[0].get(key, DEFAULTS[key])
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
-        return DEFAULTS[key], f"{key}: {value!r} is not a number in [0, 1]; using {DEFAULTS[key]}"
-    return float(value), err
+        return DEFAULTS[key]
+    return float(value)

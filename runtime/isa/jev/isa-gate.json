@@ -1,7 +1,7 @@
 {
   "name": "isa-gate",
-  "version": 2,
-  "description": "ISA gate, Q1: is this prompt work that needs an ISA? (SPEC-v2 § 12.3; asked of every prompt with no ISA bound or a finished one)",
+  "version": 3,
+  "description": "ISA gate, Q1: is this prompt work that needs an ISA? (FOUNDATION_1: asked of every prompt with no open ISA or spec bound)",
   "model": "jev-1.13.0",
   "state": {
     "template": "The assistant's previous message (may be empty; a short reply like \"go\" approves what it proposed):\n{{context}}\n\nThe skill the message invokes (empty when none):\n{{skill}}\n\nThe user's message:\n{{prompt}}"
@@ -9,7 +9,7 @@
   "questions": {
     "work": {
       "type": "noul",
-      "instructions": "The user's message (and, if it invokes a skill, that skill's description) — does it ask for a deliverable that could be done wrong in ways the reply alone would not reveal? Yes: changing code, files, configuration or systems; fixing a bug; reviewing or auditing something; writing a plan, spec, design or report as a document; comparing options and recommending one in writing; finding out why something in the user's own project or system is slow, failing or wrong; deploying or publishing something whose result can be broken while every command succeeds; any task that needs choosing what to include or where to change (splitting commits, selecting files, renaming across a codebase); running a skill whose description is one of these. No: the user explicitly asks to work without an ISA. Also anything the reply itself settles: looking something up; showing or listing what a file, log or command contains; explaining how something works or what code does; general knowledge; opinions; discussing an idea or a design in conversation, without a written deliverable; greetings and small talk. Also no: straightforward operations whose steps are evident and whose failure the tool reports by itself (an error, a non-zero exit), even with a few steps or details: commit (with or without a given message), commit and push, run the tests, install dependencies, rename a branch, tag and push a tag. A short reply (\"go\", \"yes do it\") counts as whatever it approves in the assistant's previous message."
+      "instructions": "Does this message ask for work with several dependent steps, where a mistake in one step could carry into the final result unnoticed unless each step is checked — as opposed to a quick exchange, or a 1–3 step action whose failure would be immediate and evident? Yes: a feature, a change across several places, a fix whose cause must be found first, a refactor, a review or audit with findings, a written plan, spec or report, a migration or a deployment whose result can break while every command succeeds; running a skill whose description is one of these. No: a question, an explanation, a lookup, showing what a file or a command contains, a discussion, small talk; a 1–3 step action whose failure the tool reports at once (commit, push, run the tests, install, rename one thing); the user asking to work without an ISA. A short reply (\"go\", \"yes do it\") counts as whatever it approves in the assistant's previous message."
     }
   }
 }

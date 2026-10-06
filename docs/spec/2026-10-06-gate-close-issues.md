@@ -1,5 +1,5 @@
 ---
-status: acked 2026-10-07 #5b712a52
+status: done 2026-10-07 #5b712a52
 effort: E3
 ---
 
@@ -63,60 +63,67 @@ Subagents and parallel children (only the field that will allow them, `parallel:
 3. A new engine beside the old one: two systems to keep in step while the old one is retired. Rejected.
 
 ## S1 — FOUNDATION_0: the entities
+Done: 2026-10-07 — 3/3 accepted (ISAs 20261007-005757_foundations)
 One reference, `skill/ISA/References/Foundations.md`, defines every entity once: TASK (the unit of work, one TASK ISA at `~/.isa/<project>/<stamp>_<slug>/ISA.md`), tier (E0–E4), ISC (`- [ ] ISC-3:` for a leaf, `- [2/3] ISC-3:` for a parent, `Anti:` for what must not happen), probe (the `tool:` of a leaf's Test Strategy entry), SPEC, PLAN (the record written at close), ack, session, gate, lifecycle. SKILL.md links it and repeats none of it.
 Accepted when:
-- [ ] A1: `Foundations.md` defines exactly these entities, each in one entry, and SKILL.md names no other entity
-- [ ] A2: the project ISA, ephemeral slices, hierarchies (`parent:`, `children:`, Dependencies, Bridge Criteria), Features, plan steps, `promote:`, `--no-spec` and the evidence ledger are gone from `runtime/`, `skill/` and `install.py`
-- [ ] A3: the commands that served them are gone (`isa verify ISA.md` on a project ISA, `isa migrate`, the Reconcile workflow, `IsaHierarchy.md`)
+- [x] A1: `Foundations.md` defines exactly these entities, each in one entry, and SKILL.md names no other entity  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A2: the project ISA, ephemeral slices, hierarchies (`parent:`, `children:`, Dependencies, Bridge Criteria), Features, plan steps, `promote:`, `--no-spec` and the evidence ledger are gone from `runtime/`, `skill/` and `install.py`  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A3: the commands that served them are gone (`isa verify ISA.md` on a project ISA, `isa migrate`, the Reconcile workflow, `IsaHierarchy.md`)  (2026-10-07, ISA 20261007-005757_foundations)
 
 ## S2 — Tiers and criteria levels
+Done: 2026-10-07 — 4/4 accepted (ISAs 20261007-005757_foundations)
 The tier sets the documents and the depth of the criteria tree: E0 no ISA; E1 ISA only, one level; E2 spec and ISA, up to 2 levels; E3 up to 3; E4 4 levels or more. A parent ISC has no probe: its box shows its children's progress, `[done/total]`, and it is complete when they all are. Children run in order. `parallel: true` is reserved on a child, for later: a child marked so may run alongside its parallel siblings while the others keep their order (subagents, out of scope); lint refuses it for now.
 Accepted when:
-- [ ] A1: lint refuses an ISC nested deeper than its tier allows (E1 1, E2 2, E3 3; E4 has no cap), naming the ISC and the limit
-- [ ] A2: lint refuses a Test Strategy entry for a parent ISC, and a leaf without one
-- [ ] A3: `isa verify` writes a parent's box as `[done/total]` from its leaves, and `[x]` once all are done
-- [ ] A4: lint refuses `effort: E5`, an E1 ISA holding Vision, Out of scope, Constraints or Features, and an E2–E4 ISA missing one of its sections
+- [x] A1: lint refuses an ISC nested deeper than its tier allows (E1 1, E2 2, E3 3; E4 has no cap), naming the ISC and the limit  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A2: lint refuses a Test Strategy entry for a parent ISC, and a leaf without one  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A3: `isa verify` writes a parent's box as `[done/total]` from its leaves, and `[x]` once all are done  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A4: lint refuses `effort: E5`, an E1 ISA holding Vision, Out of scope, Constraints or Features, and an E2–E4 ISA missing one of its sections  (2026-10-07, ISA 20261007-005757_foundations)
 
 ## S3 — FOUNDATION_1: the gate and the lifecycle
+Done: 2026-10-07 — 4/4 accepted (ISAs 20261007-005757_foundations)
 The gate asks one question of every prompt: "Does this message ask for work with several dependent steps, where a mistake in one step could carry into the final result unnoticed unless each step is checked — as opposed to a quick exchange, or a 1–3 step action whose failure would be immediate and evident?" Yes → ON (tier E1 or more); otherwise the user decides as today, and E0 means nothing is enforced. While ON, the lifecycle is fixed:
 - E1: ISA DRAFT → BUILD → CLOSED.
 - E2–E4: SPEC DRAFT → SPEC ACKED → ISA DRAFT → ISA ACKED → BUILD → CLOSED.
 A spec reopened during BUILD sends the task back to SPEC DRAFT; after its re-ack the ISA is refined and acked again before BUILD resumes.
 Accepted when:
-- [ ] A1: the `isa-gate` preset and the model's judge instruction ask exactly that question
-- [ ] A2: in each lifecycle stage, PreToolUse refuses every project change the stage does not allow, naming the stage and the next command
-- [ ] A3: a prompt whose gate question is due can't end its turn unanswered, even when an ISA was bound during the turn
-- [ ] A4: an E2–E4 ISA can't be created without an acked spec, and can't enter BUILD without its own ack
+- [x] A1: the `isa-gate` preset and the model's judge instruction ask exactly that question  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A2: in each lifecycle stage, PreToolUse refuses every project change the stage does not allow, naming the stage and the next command  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A3: a prompt whose gate question is due can't end its turn unanswered, even when an ISA was bound during the turn  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A4: an E2–E4 ISA can't be created without an acked spec, and can't enter BUILD without its own ack  (2026-10-07, ISA 20261007-005757_foundations)
 
 ## S4 — SPEC
+Done: 2026-10-07 — 6/6 accepted (ISAs 20261007-005757_foundations)
 `<cwd>/docs/YYYY-MM-DD-<slug>-01-spec.md`, from E2, committed in a git repo: Problem, Goal (Said / Assumed), Out of scope, Constraints, Approaches (from E3), then `## S<n> — <part>` sections with their "Accepted when" lines. Its status is `draft` or `acked YYYY-MM-DD #<hash8>`. It is the TASK ISA's source; an ISA links it (`spec:`) and its ISCs anchor to its sections.
 Accepted when:
-- [ ] A1: `isa spec new` writes the file at that path from the template, `status: draft`, and binds it
-- [ ] A2: spec lint holds the shape rules and refuses a checkbox, an id or a done mark in "Accepted when"
-- [ ] A3: an acked spec can change only after `isa reopen`, which sets it back to `draft` and keeps the acked text for the summary
-- [ ] A4: before a re-ack, `isa diff` prints the spec's title and one line per section added, removed or changed since its last ack, and nothing else
-- [ ] A5: while a spec is reopened, or acked again but its ISA not yet refined, PreToolUse refuses every project change
-- [ ] A6: `isa new --spec X` builds a new ISA from an acked spec when none exists for it here, binds the existing one when it does, and refuses when the spec's plan file exists (the spec is finished)
+- [x] A1: `isa spec new` writes the file at that path from the template, `status: draft`, and binds it  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A2: spec lint holds the shape rules and refuses a checkbox, an id or a done mark in "Accepted when"  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A3: an acked spec can change only after `isa reopen`, which sets it back to `draft` and keeps the acked text for the summary  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A4: before a re-ack, `isa diff` prints the spec's title and one line per section added, removed or changed since its last ack, and nothing else  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A5: while a spec is reopened, or acked again but its ISA not yet refined, PreToolUse refuses every project change  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A6: `isa new --spec X` builds a new ISA from an acked spec when none exists for it here, binds the existing one when it does, and refuses when the spec's plan file exists (the spec is finished)  (2026-10-07, ISA 20261007-005757_foundations)
 
 ## S5 — The TASK ISA and its proof
+Done: 2026-10-07 — 6/6 accepted (ISAs 20261007-005757_foundations)
 The ISA is written through `isa write`, never by Write/Edit: each section once as a block, then Criteria and Test Strategy only one ISC at a time (`isa write <ISA> ISC-3.12 "<text>"`, `--probe "<command>"` for its Test Strategy entry, a new id to add one, `isa drop <ISA> ISC-3.12 "<why>"` for a tombstone). Once the ISA is acked, any change to an ISC breaks the ack until the user acks again, shown the change by `isa diff`. Its Test Strategy holds one entry per leaf: `isc`, `anchors_to`, `kind`, `tool`, and `fails-when` where no red run applies. `isa verify` runs probes and writes, in the ISA's Verification, one line per run (red or green); there is no separate ledger. From E2, before its ack, `isa show <ISA> --to Criteria` prints every section down to Criteria for the user.
 Accepted when:
-- [ ] A1: `isa write <ISA> <section>` writes a section from stdin and lints the result; a second block write of Criteria or Test Strategy is refused
-- [ ] A2: `isa write <ISA> ISC-N` changes one ISC's text or probe, adds a new id whose parent exists and whose depth fits the tier, unticks only that ISC (its parents recount), and `isa drop` leaves a tombstone whose id is never reused
-- [ ] A3: after the ISA's ack, any `isa write` or `isa drop` on an ISC makes the ISA read "changed since its ack", and BUILD changes are refused until the user acks it again
-- [ ] A4: `isa verify --red` and `isa verify` write `ISC-N: red … exit N` and `ISC-N: verified … exit 0` lines into Verification, and no file under `~/.isa/_state/evidence/` exists
-- [ ] A5: a behaviour ISC ticks plainly only after a failed red line of the same probe; otherwise its line says `(no red baseline)`
-- [ ] A6: `isa show <ISA> --to Criteria` prints the sections from Problem through Criteria and nothing below
+- [x] A1: `isa write <ISA> <section>` writes a section from stdin and lints the result; a second block write of Criteria or Test Strategy is refused  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A2: `isa write <ISA> ISC-N` changes one ISC's text or probe, adds a new id whose parent exists and whose depth fits the tier, unticks only that ISC (its parents recount), and `isa drop` leaves a tombstone whose id is never reused  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A3: after the ISA's ack, any `isa write` or `isa drop` on an ISC makes the ISA read "changed since its ack", and BUILD changes are refused until the user acks it again  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A4: `isa verify --red` and `isa verify` write `ISC-N: red … exit N` and `ISC-N: verified … exit 0` lines into Verification, and no file under `~/.isa/_state/evidence/` exists  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A5: a behaviour ISC ticks plainly only after a failed red line of the same probe; otherwise its line says `(no red baseline)`  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A6: `isa show <ISA> --to Criteria` prints the sections from Problem through Criteria and nothing below  (2026-10-07, ISA 20261007-005757_foundations)
 
 ## S6 — Close, PLAN and commits
+Done: 2026-10-07 — 4/4 accepted (ISAs 20261007-005757_foundations)
 `isa close` re-runs every probe, then writes `<cwd>/docs/YYYY-MM-DD-<slug>-02-plan.md` (from E2, same basename as the spec) as the record of the work, then commits. The plan holds Problem, Vision, Out of scope, Principles, Constraints, Goal, Criteria, Test Strategy, Decisions, and Verification without its run lines. Commits follow the lifecycle: the spec after its ack (`isa ack`), the implementation and the plan after a passing close, in a git repo only. The implementation commit holds the files changed since `isa new` recorded the work tree, nothing else.
 Accepted when:
-- [ ] A1: a passing E2–E4 close writes the plan file with exactly those sections, from the ISA as closed, and no `verified`/`red` run line
-- [ ] A2: `isa ack <spec>` commits the spec alone, and a passing close commits the files changed since `isa new`, then the plan
-- [ ] A3: a failed close writes nothing and commits nothing; outside git nothing is committed
-- [ ] A4: a file the user changed before `isa new` is left out of the implementation commit
+- [x] A1: a passing E2–E4 close writes the plan file with exactly those sections, from the ISA as closed, and no `verified`/`red` run line  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A2: `isa ack <spec>` commits the spec alone, and a passing close commits the files changed since `isa new`, then the plan  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A3: a failed close writes nothing and commits nothing; outside git nothing is committed  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A4: a file the user changed before `isa new` is left out of the implementation commit  (2026-10-07, ISA 20261007-005757_foundations)
 
 ## S7 — FOUNDATION_2: `isa` commands are the only writers
+Done: 2026-10-07 — 3/3 accepted (ISAs 20261007-005757_foundations)
 Every action of the lifecycle has one command; the hooks refuse every other way to change an ISA, a spec, a plan or anything under `~/.isa` (Write, Edit, a redirect, a script).
 
 | Action | Command |
@@ -138,25 +145,27 @@ Every action of the lifecycle has one command; the hooks refuse every other way 
 | read | `isa ls`, `isa status`, `isa current`, `isa where`, `isa log` (DEBUG) |
 
 Accepted when:
-- [ ] A1: every action above runs through its command, and the protocol block and SKILL.md name only these commands
-- [ ] A2: PreToolUse refuses a Write or Edit of an ISA, a spec or a plan, and a shell command or script writing to one of them or under `~/.isa`, naming the command to use
-- [ ] A3: `isa ack <file>` refuses without the user's recorded click on that file's current hash
+- [x] A1: every action above runs through its command, and the protocol block and SKILL.md name only these commands  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A2: PreToolUse refuses a Write or Edit of an ISA, a spec or a plan, and a shell command or script writing to one of them or under `~/.isa`, naming the command to use  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A3: `isa ack <file>` refuses without the user's recorded click on that file's current hash  (2026-10-07, ISA 20261007-005757_foundations)
 
 ## S8 — Minimal state and DEBUG
+Done: 2026-10-07 — 3/3 accepted (ISAs 20261007-005757_foundations)
 Without DEBUG, `~/.isa` holds only the ISA folders, `<project>/acks.jsonl`, `config.json` and `_state/sessions/`. With `ISA_DEBUG=1` (or `"debug": true` in `config.json`), hooks and commands also write `_state/logs/YYYY-MM-DD.jsonl`.
 Accepted when:
-- [ ] A1: a full E2 lifecycle with DEBUG off creates no file outside the ISA folder, the spec, the plan, `acks.jsonl` and one session file
-- [ ] A2: with DEBUG off, no hook or command opens a log file, and the text the model receives is the same as with DEBUG on
-- [ ] A3: `_state/prompts/`, `_state/evidence/`, `_state/project/` and `.projects.json` are no longer written or read
+- [x] A1: a full E2 lifecycle with DEBUG off creates no file outside the ISA folder, the spec, the plan, `acks.jsonl` and one session file  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A2: with DEBUG off, no hook or command opens a log file, and the text the model receives is the same as with DEBUG on  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A3: `_state/prompts/`, `_state/evidence/`, `_state/project/` and `.projects.json` are no longer written or read  (2026-10-07, ISA 20261007-005757_foundations)
 
 ## S9 — Repo cleanup and tests
+Done: 2026-10-07 — 5/5 accepted (ISAs 20261007-005757_foundations)
 Everything the foundations make obsolete goes. The tests prove the foundations first; a test of a removed path is deleted, not rewritten.
 Accepted when:
-- [ ] A1: no file in the repo is 50 KB or more
-- [ ] A2: `tests/test_foundations.py` proves S2, S3, S5, S7 and S8 end to end through the hooks and the commands
-- [ ] A3: the design notes the foundations replace (`future/SPEC-v2.md`, `future/SKILL-SPLIT.md`, `future/ISA-HARDENING.md`, `future/project-isa/`) are deleted, and AGENTS.md describes only what exists, with § Later split into Issues and Future tasks
-- [ ] A4: the examples follow the foundations (E1–E4, no Features, specs without done marks), and every one lints `ok`
-- [ ] A5: after the new engine is installed, `~/.isa` holds no ISA, ledger, prompt log or session file from before it
+- [x] A1: no file in the repo is 50 KB or more  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A2: `tests/test_foundations.py` proves S2, S3, S5, S7 and S8 end to end through the hooks and the commands  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A3: the design notes the foundations replace (`future/SPEC-v2.md`, `future/SKILL-SPLIT.md`, `future/ISA-HARDENING.md`, `future/project-isa/`) are deleted, and AGENTS.md describes only what exists, with § Later split into Issues and Future tasks  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A4: the examples follow the foundations (E1–E4, no Features, specs without done marks), and every one lints `ok`  (2026-10-07, ISA 20261007-005757_foundations)
+- [x] A5: after the new engine is installed, `~/.isa` holds no ISA, ledger, prompt log or session file from before it  (2026-10-07, ISA 20261007-005757_foundations)
 
 ## Decisions
 - 2026-10-07: tier E3 under the engine as installed, not E4: an E4 there forces a plan, the entity these foundations remove. Lowering a draft's tier is allowed (§ 5.7 of the 2026-10-06 spec); the rule "the tier only goes up" exists to keep an ack from being skipped, and none is.

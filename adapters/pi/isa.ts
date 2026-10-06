@@ -20,10 +20,10 @@
 //                          `ask`: the extension asks here, after the answer; Enable ISA continues the run
 //                          with the ON block). One continuation per prompt, then a warning
 //                          (completed runs only — never after an abort or an error). When the bound spec or
-//                          plan changed this turn and lints clean, the engine answers the ack question instead
-//                          (`ask_kind: "ack"`, plan P8): Acknowledge / Request changes, Esc → Request changes;
-//                          the pick goes back with its `ask_kind` and `ask_path`, and Acknowledge continues the
-//                          run so the model writes the status line
+//                          ISA lints clean and waits for its ack, the engine answers the ack question instead
+//                          (`ask_kind: "ack"`): Acknowledge / Request changes, Esc → Request changes; the pick
+//                          goes back with its `ask_kind` and `ask_path`, and Acknowledge continues the run so the
+//                          model runs `isa ack <file>`
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { spawnSync } from "node:child_process"
 import { homedir } from "node:os"

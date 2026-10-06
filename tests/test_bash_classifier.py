@@ -1,9 +1,7 @@
 """Classifier table + randomized compositions. Run: python3 -m unittest tests.test_bash_classifier"""
 import os
 import random
-import shutil
 import sys
-import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "runtime"))
@@ -15,11 +13,12 @@ READ = [
     "grep -rn TODO . | wc -l", "find . -name '*.py' -type f", "head -20 x | tail -5", "jq .version package.json",
     "echo hello", "pwd", "which python3", "sed -n 1,20p file", "awk '{print $1}' f", "diff a b",
     "git show HEAD:README.md", "gh pr view 12", "gh api repos/o/r/pulls", "python3 --version",
-    "echo x > /dev/null 2>&1", "cat f 2>/dev/null", "ls > /tmp/listing.txt", "date +%F", "isa ls",
+    "echo x > /dev/null 2>&1", "cat f 2>/dev/null", "ls > /tmp/listing.txt", "date +%F",
     "cd src && ls", "FOO=1 printenv FOO", "timeout 5 cat f", "tree -L 2", "wc -l < f", "stat f",
     "git branch", "git branch -a", "git remote -v", "git config --get user.name", "git stash list",
     "diff <(ls a) <(ls b)", "cp -r /tmp/a /tmp/b", "mkdir -p /tmp/x/y", "rm -rf /tmp/scratch",
-    "mkdir -p ~/.isa/dev-x/1_a", "cat f | tee /tmp/copy", "touch /tmp/stamp", "cat <<'EOF'\nrm -rf /\nEOF", "sort f | uniq -c | sort -rn | head",
+    "cat f | tee /tmp/copy", "touch /tmp/stamp", "cat <<'EOF'\nrm -rf /\nEOF", "sort f | uniq -c | sort -rn | head",
+    "cat ~/.isa/dev-x/1_a/ISA.md", "grep -n ISC ~/.isa/dev-x/1_a/ISA.md",
 ]
 WRITE = [
     "rm -rf build", "mv a b", "cp a b", "mkdir -p x", "touch f", "echo x > out.txt", "echo x >> log.md",
@@ -35,13 +34,20 @@ UNKNOWN = [
     "some-new-tool --flag", "awk '{print > \"out\"}' f", "git fetch", "cat x | python3 -c 'print(1)'",
     "echo `rm x`", "echo \"$(rm x)\"", "grep 'a' `cat list`", "ls \"`pwd`\"",
 ]
+GUARDED = [
+    "cat > ~/.isa/dev-x/1_a/ISA.md <<'EOF'\nx\nEOF", "mkdir -p ~/.isa/dev-x/1_a", "rm -rf ~/.isa/_state",
+    "sed -i s/a/b/ docs/2026-10-07-x-01-spec.md", "echo x >> docs/2026-10-07-x-02-plan.md",
+    "python3 -c \"open('/home/u/.isa/x/ISA.md', 'w')\"".replace("/home/u", os.path.expanduser("~")),
+    "python3 - <<'EOF'\nopen('docs/2026-10-07-x-01-spec.md', 'w').write('x')\nEOF",
+    "git add docs/2026-10-07-x-01-spec.md",
+]
+ISA_CMDS = ["isa ls", "isa write ~/.isa/dev-x/1_a/ISA.md Goal <<'EOF'\nThe goal.\nEOF", "isa verify ~/.isa/x/ISA.md"]
 
 
 class TestTable(unittest.TestCase):
     def check(self, cmds, want):
         for c in cmds:
-            got, _ = classify.bash(c, CWD)
-            self.assertEqual(got, want, c)
+            self.assertEqual(classify.bash(c, CWD), want, c)
 
     def test_read(self):
         self.check(READ, "read")
@@ -52,27 +58,25 @@ class TestTable(unittest.TestCase):
     def test_unknown(self):
         self.check(UNKNOWN, "unknown")
 
-    def test_quoted_substitution_is_text(self):
-        # inside single quotes `…` and $( are plain text, e.g. grepping markdown for `code`
-        self.check([
-            "grep -n 'no `root`' SPEC.md", "rg -n 'uses `isa verify`' docs/", "grep -c '$(' f",
-            "grep 'a `b`' f && grep -n 'x' g", "echo 'it''s `fine`'",
-        ], "read")
+    def test_guarded(self):
+        self.check(GUARDED, "guarded")
 
-    def test_isa_redirect(self):
-        # SPEC-v2 § 3.3: an ISA.md is written with Write/Edit (checked against the engine-owned fields),
-        # never from a shell; other files in an ISA folder stay free
-        k, _ = classify.bash("cat > ~/.isa/dev-x/1_a/ISA.md <<'EOF'\nx\nEOF", CWD)
-        self.assertEqual(k, "isa-shell-edit")
-        k, isa = classify.bash("cat > ~/.isa/dev-x/1_a/notes.md <<'EOF'\nx\nEOF", CWD)
-        self.assertEqual((k, len(isa)), ("read", 1))
+    def test_isa_cmds(self):
+        self.check(ISA_CMDS, "isa-cmd")
+
+    def test_quoted_substitution_is_text(self):
+        self.check(["grep -n 'no `root`' SPEC.md", "rg -n 'uses `isa verify`' docs/", "grep -c '$(' f",
+                    "grep 'a `b`' f && grep -n 'x' g", "echo 'it''s `fine`'"], "read")
 
     def test_tools(self):
-        c = lambda t, ti=None: classify.classify(t, ti or {}, CWD)[0]
+        c = lambda t, ti=None: classify.classify(t, ti or {}, CWD)  # noqa: E731
         self.assertEqual(c("Write", {"file_path": "x.py"}), "write")
         self.assertEqual(c("Write", {"file_path": "/tmp/x.py"}), "read")
         self.assertEqual(c("edit", {"path": "src/a.ts"}), "write")
         self.assertEqual(c("Read", {"file_path": "x"}), "read")
+        self.assertEqual(c("Write", {"file_path": "~/.isa/dev-x/1_a/ISA.md"}), "guarded")
+        self.assertEqual(c("Edit", {"file_path": "docs/2026-10-07-x-01-spec.md"}), "guarded")
+        self.assertEqual(c("Write", {"file_path": "docs/spec/x.md"}), "write")
         self.assertEqual(c("mcp__claude_ai_Gmail__send_message"), "unknown")
         self.assertEqual(c("mcp__claude_ai_Claude_Docs__read"), "read")
         self.assertEqual(c("SomeFutureTool"), "unknown")
@@ -84,7 +88,7 @@ class TestCompositions(unittest.TestCase):
     def test_random(self):
         rnd = random.Random(1234)
         order = {"read": 0, "unknown": 1, "write": 2}
-        pools = [(c, "read") for c in READ if "\n" not in c and "<(" not in c] + \
+        pools = [(c, "read") for c in READ if "\n" not in c and "<(" not in c and ".isa" not in c] + \
                 [(c, "write") for c in WRITE if "\n" not in c] + \
                 [(c, "unknown") for c in UNKNOWN if "$(" not in c]
         for _ in range(500):
@@ -93,42 +97,7 @@ class TestCompositions(unittest.TestCase):
             for c, _k in parts[1:]:
                 joined += rnd.choice([" ; ", " && ", " || ", " | "]) + c
             want = max((k for _, k in parts), key=order.get)
-            got, _ = classify.bash(joined, CWD)
-            self.assertEqual(got, want, joined)
-
-
-class TestSpecKind(unittest.TestCase):
-    """Plan P6: specs and plans are their own path kind. Plan P9: a file-tool write onto one is `spec`
-    (articulation, never a project change); a shell write onto one stays a write."""
-
-    def test_spec(self):
-        for rel in ("docs/spec/2026-10-06-x.md", "docs/plan/2026-10-06-x.md"):
-            self.assertEqual(classify.path_kind(rel, CWD), "spec", rel)
-            self.assertEqual(classify.path_kind(os.path.join(CWD, rel), CWD), "spec", rel)
-
-    def test_near_miss(self):
-        for rel in ("docs/specs/x.md", "docs/spec/x.txt", "SPEC.md", "docs/spec/sub/x.md"):
-            self.assertEqual(classify.path_kind(rel, CWD), "project", rel)
-
-    def test_spec_under_isa_home(self):
-        home = tempfile.mkdtemp(prefix="isa-cls-home-", dir=os.path.expanduser("~/.cache"))
-        old = os.environ.get("ISA_HOME")
-        os.environ["ISA_HOME"] = home
-        try:
-            p = os.path.join(home, "_home", "docs", "spec", "2026-10-06-x.md")
-            self.assertEqual(classify.path_kind(p, os.path.expanduser("~")), "spec")
-            self.assertEqual(classify.path_kind(os.path.join(home, "_home", "20261006-1_t", "ISA.md"), CWD), "isa")
-        finally:
-            os.environ.pop("ISA_HOME") if old is None else os.environ.__setitem__("ISA_HOME", old)
-            shutil.rmtree(home, ignore_errors=True)
-
-    def test_spec_file_tools(self):
-        self.assertEqual(classify.classify("Write", {"file_path": "docs/spec/x.md", "content": "x"}, CWD)[0], "spec")
-        self.assertEqual(classify.classify("Edit", {"file_path": "docs/plan/x.md"}, CWD)[0], "spec")
-        self.assertEqual(classify.classify("edit", {"path": "docs/spec/x.md", "edits": []}, CWD)[0], "spec")
-        self.assertEqual(classify.classify("Write", {"file_path": "docs/specs/x.md", "content": "x"}, CWD)[0], "write")
-        self.assertEqual(classify.bash("echo x > docs/spec/x.md", CWD)[0], "write")
-        self.assertEqual(classify.bash("cat <<EOF > docs/plan/x.md\nhi\nEOF", CWD)[0], "write")
+            self.assertEqual(classify.bash(joined, CWD), want, joined)
 
 
 if __name__ == "__main__":
