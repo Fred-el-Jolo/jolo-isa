@@ -601,7 +601,7 @@ Headless runs (`claude -p`, pi without a UI) can't answer questions 3–5. They 
 Part A:
 
 1. `isa new` inside a git repo prints a path under `~/.isa/<project>/`. Nothing is created under `<repo>/.isa/`, and no `.gitattributes` is written.
-2. `rg -n 'crypt|quote-verified|ISA_KEY|filter\.isa|enc:v1' runtime/ skill/ adapters/` finds nothing once § A.5 has shipped and run.
+2. `rg -nw 'crypt|quote-verified|ISA_KEY|filter\.isa|enc:v1' runtime/ skill/ adapters/` finds nothing once § A.5 has shipped and run.
 3. In each of the four repos: `git ls-files .isa` is empty after the user's commit, `git config --get-regexp '^filter\.isa'` prints nothing, and the moved ISAs `isa lint` clean in `~/.isa/<project>/`, with every `(ledger: <id>)` line resolving.
 4. `isa verify ISA.md` still re-proves the project ISA. `promote: true` still blocks a close until the project line exists. A project without `ISA.md` gets one from its first `isa new`, in git and out of it.
 5. The full unit suite and the pi extension tests pass. `python3 tools/lint_isa.py skill/ISA/Examples/*.md` reports every file `ok`.

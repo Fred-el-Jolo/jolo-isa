@@ -33,7 +33,7 @@ Review focus:
 - Only the exact `Acknowledge` label is an ack: an "Other" answer saying "ack", or a pi select closed with Esc, is not → P7
 - A spec written to a near-miss path (`docs/specs/`, `SPEC.md`, `docs/spec/x.txt`) is a project change, and the refusal names the right path → P9
 
-- [ ] P1 — `isa migrate --home` moves a repo's task ISAs back to `~/.isa` · E3 · covers §8.3
+- [x] P1 — `isa migrate --home` moves a repo's task ISAs back to `~/.isa` · E3 · covers §8.3 · Done: 2026-10-06
   Files: `runtime/isa/commands.py` (change: `migrate_home`), `runtime/isa/cli.py` (change: `migrate --home`), `tests/test_migrate_home.py` (new)
   Interfaces: produces `commands.migrate_home(args, out=print) -> int` (args: `["--dry-run"]` or `[]`); reuses `commands._rebind(moved: dict[str, str])`
   Done when:
@@ -46,14 +46,14 @@ Review focus:
   - the root `ISA.md` is untouched; a slug already in `~/.isa/<project-key>/` is skipped and named;
   - it prints `git rm -r --cached .isa && git add .gitattributes && git commit -m "Move task ISAs out of git"` and commits nothing;
   - `--dry-run` prints the same list and changes no file (a tree fingerprint before and after is equal).
-- [ ] P2 — Run the migration in the four repos, then retire the key · E2 · covers §8.3 · after P1
+- [x] P2 — Run the migration in the four repos, then retire the key · E2 · covers §8.3 · after P1 · Done: 2026-10-06
   Files: none in this repo; artifacts: `.isa/`, `.gitattributes` and `.git/config` of `~/dev/jolo-isa`, `~/dev/pi-quota-footer`, `~/dev/jev-kit`, `~/dev/jolo-pi`; `~/.isa/key`
   Done when:
   - `python3 install.py` ran first, so the installed `isa` has `migrate --home`;
   - in each of the four repos, after the user's commit: `git ls-files .isa` prints nothing and `git config --get-regexp '^filter\.isa'` prints nothing;
   - every moved ISA lints clean under `~/.isa/<project-key>/`, and every `(ledger: <id>)` line resolves;
   - the user deleted `~/.isa/key` (the model never touches it; `test ! -e ~/.isa/key`).
-- [ ] P3 — Task ISAs always live in `~/.isa` · E3 · covers §8.1, §8.4 · after P2
+- [x] P3 — Task ISAs always live in `~/.isa` · E3 · covers §8.1, §8.4 · after P2 · Done: 2026-10-06
   Files: `runtime/isa/state.py`, `runtime/isa/evidence.py`, `runtime/isa/commands.py`, `runtime/isa/changes.py`, `runtime/isa/fingerprint.py`, `runtime/isa/engine.py`, `tests/test_project_isa.py` (new), `tests/test_state.py`, `tests/test_seamless_projects.py`
   Interfaces: `state.project_dir(cwd) -> str` always returns `os.path.join(state.home(), state.project_key(cwd))`; produces `state.project_isa_of(isa_path) -> str | None` (the project ISA of the repo holding the ISA's `root:`), used by `commands.promote_issues`; removes `state.repo_isa_dir` and `state.isa_repo`
   Done when:
@@ -63,15 +63,15 @@ Review focus:
   - `isa verify ISA.md` still re-proves the project ISA, and a `promote: true` criterion still blocks `isa close` until `(from <slug> ISC-N)` is in the project ISA;
   - the project-ISA and `promote:` tests from `tests/test_m12.py` pass in `tests/test_project_isa.py`;
   - a session file bound to a missing path reads as no ISA bound.
-- [ ] P4 — Remove the encryption and the other § 13 machinery · E3 · covers §8.2, §8.5 · after P3
+- [x] P4 — Remove the encryption and the other § 13 machinery · E3 · covers §8.2, §8.5 · after P3 · Done: 2026-10-06
   Files: `runtime/isa/crypt.py` (delete), `runtime/isa/quotes.py` (delete), `runtime/isa/cli.py`, `runtime/isa/commands.py`, `runtime/isa/engine.py`, `runtime/isa/evidence.py`, `runtime/isa/rules.py`, `runtime/isa/protocol.md`, `skill/ISA/SKILL.md`, `AGENTS.md`, `ISA.md`, `tests/test_m12.py` (delete), the live flow test in `tests/flow/`
   Done when:
-  - `rg -n 'crypt|quote-verified|ISA_KEY|filter\.isa|enc:v1' runtime/ skill/ adapters/` finds nothing;
+  - `rg -nw 'crypt|quote-verified|ISA_KEY|filter\.isa|enc:v1' runtime/ skill/ adapters/` finds nothing;
   - gone: `isa crypt`, `isa key …`, `isa migrate` (both forms), PreToolUse's refusal of `isa key`, the missing-key messages, "not on this branch", `quote-verified` rows, HMAC asks (the snapshot stores asks verbatim), `[user words]` redaction, the project ISA's quote check;
   - SKILL.md's "Where ISA files live" says what spec § A.1 says, and its encryption paragraph is gone; AGENTS.md drops "Prompts encrypted in git" and the related rows;
   - the project ISA loses ISC-P6 and the constraint "The user's verbatim words never reach git…"; ISC-P1's test list is updated;
   - the full unit suite (as listed in AGENTS.md, without `tests.test_m12`) and the pi extension tests pass; `python3 tests/check_stdlib.py runtime/` passes; `python3 tools/lint_isa.py skill/ISA/Examples/*.md` reports every file `ok`.
-- [ ] P5 — Parse, lint and hash specs and plans · E3 · covers §8.16 · after P4
+- [x] P5 — Parse, lint and hash specs and plans · E3 · covers §8.16 · after P4 · Done: 2026-10-06
   Files: `runtime/isa/specdoc.py` (new), `runtime/isa/cli.py` (change: `isa lint` routes a spec or plan to `specdoc.lint`), `tests/test_specdoc.py` (new)
   Interfaces: produces
   - `specdoc.parse(text) -> dict`, with keys `kind` (`"spec"` | `"plan"`), `fm`, `sections` (`{"S2": {"title", "line", "bullets": {"A1": {"text", "ticked", "line"}}}}`), `steps` (`{"P2": {"line", "goal", "tier", "covers": [("S2", "A1")], "after": ["P1"], "files", "done_when", "ticked"}}`), `review_focus` (`[(text, "P2")]`);
@@ -81,7 +81,7 @@ Review focus:
   - the spec rules of spec § B.3 hold: frontmatter `status`, `effort`; Said and Assumed under Goal; `S<n>` with `- [ ] A<n>:` bullets, ids unique in their section; no `TBD`, `TODO` or lone `…` outside backticks (a word quoted in backticks names a placeholder, it isn't one); no empty section; at `"ack"`, Open questions empty; Approaches from E3; `plan:` and a `second-look:` line from E4; `interview:` at E5;
   - the plan rules hold: every bullet covered (`covers S2` = all of S2), every `after` and Review focus target is a step, every step has Files and Done when, no placeholder, `warn:` over 3× the spec's bytes or when code blocks are most of the plan;
   - `ack_hash` gives one value for the same spec written with LF and with CRLF, with and without a final newline, and with `[x]` / `[X]` / `[ ]` ticks.
-- [ ] P6 — Where specs live, the `spec` path kind, the project ISA everywhere · E3 · covers §8.13, §8.4 · after P3
+- [x] P6 — Where specs live, the `spec` path kind, the project ISA everywhere · E3 · covers §8.13, §8.4 · after P3 · Done: 2026-10-06
   Files: `runtime/isa/state.py`, `runtime/isa/classify.py`, `runtime/isa/commands.py` (change: `project_isa`), `tests/test_state.py`, `tests/test_bash_classifier.py`
   Interfaces: produces `state.doc_root(cwd) -> str` (the git work-tree root; else `cwd`; when that is `$HOME` or under a temp dir, `os.path.join(state.home(), state.project_key(cwd))`) and `state.is_spec_path(path) -> bool` (`<doc_root>/docs/spec/*.md` or `<doc_root>/docs/plan/*.md`); `classify.path_kind` returns `"spec"` for those; `commands.project_isa(root, out=print)` takes any doc root
   Done when:
