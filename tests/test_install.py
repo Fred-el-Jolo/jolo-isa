@@ -250,5 +250,167 @@ class TestStatusline(unittest.TestCase):
         self.assertTrue(any("ISC-2" in l for l in lines[1:]), p.stdout)
 
 
+BLOCK_FILE = os.path.join(ROOT, "skill", "global-rules.md")
+SPEC = os.path.join(ROOT, "docs", "spec", "2026-10-06-local-isas-spec-driven.md")
+BEGIN, END = "<!-- isa:spec-driven:begin -->", "<!-- isa:spec-driven:end -->"
+USER = "# Global Instructions\n\nThese apply to **every** project and session.\n\n- Propose, don't impose.\n"
+REAL_FILES = [os.path.expanduser("~/.claude/CLAUDE.md"), os.path.expanduser("~/.pi/agent/AGENTS.md")]
+
+
+def block():
+    with open(BLOCK_FILE) as f:
+        return f.read().rstrip("\n")
+
+
+def snapshot(paths):
+    out = {}
+    for p in paths:
+        try:
+            st = os.stat(p)
+            with open(p, "rb") as f:
+                out[p] = (f.read(), st.st_mtime_ns)
+        except FileNotFoundError:
+            out[p] = None
+    return out
+
+
+class TestRuleBlock(unittest.TestCase):
+    """Plan P13 (spec § B.8, Q4): the spec-driven rule block in ~/.claude/CLAUDE.md and ~/.pi/agent/AGENTS.md."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="isa-p13-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.claude_dir = os.path.join(self.tmp, "claude")
+        self.pi = os.path.join(self.tmp, "pi")
+        os.makedirs(self.claude_dir)
+        self.claude_md = os.path.join(self.claude_dir, "CLAUDE.md")
+        self.agents = os.path.join(self.pi, "AGENTS.md")
+        self.args = ["--claude-settings", os.path.join(self.claude_dir, "settings.json"),
+                     "--prefix", os.path.join(self.tmp, "local"), "--skills-dir", os.path.join(self.tmp, "skills"),
+                     "--pi-dir", self.pi]
+        sys.path.insert(0, ROOT)
+        import install
+        self.install = install
+
+    def with_pi(self, text=USER):
+        os.makedirs(os.path.join(self.pi, "extensions"), exist_ok=True)
+        with open(self.agents, "w") as f:
+            f.write(text)
+
+    def put_claude(self, text):
+        with open(self.claude_md, "w") as f:
+            f.write(text)
+
+    def read(self, p):
+        with open(p) as f:
+            return f.read()
+
+    def run_install(self, *extra):
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "install.py"), *self.args, *extra],
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return p.stdout
+
+    def backups(self, p):
+        d, name = os.path.dirname(p), os.path.basename(p)
+        return sorted(n for n in os.listdir(d) if n.startswith(name + ".isa-backup-")) if os.path.isdir(d) else []
+
+    def test_merge_appends(self):
+        b = block()
+        self.assertEqual(self.install.merge_block(USER, b), USER + "\n" + b + "\n")
+        self.assertEqual(self.install.merge_block("", b), b + "\n")
+        self.assertEqual(self.install.merge_block("no newline", b), "no newline\n\n" + b + "\n")
+
+    def test_merge_replaces(self):
+        b = block()
+        old = f"top\n\n{BEGIN}\nold rules\n{END}\n\nbottom\n"
+        self.assertEqual(self.install.merge_block(old, b), f"top\n\n{b}\n\nbottom\n")
+        self.assertEqual(self.install.merge_block(self.install.merge_block(USER, b), b),
+                         self.install.merge_block(USER, b))
+
+    def test_strip_only_block(self):
+        b = block()
+        for text in (USER, "", "x\n\n\ny\n"):
+            self.assertEqual(self.install.strip_block(self.install.merge_block(text, b)), text, repr(text))
+        self.assertEqual(self.install.strip_block(f"top\n\n{b}\n\nbottom\n"), "top\n\nbottom\n")
+        self.assertEqual(self.install.strip_block(USER), USER)
+
+    def test_writes_claude_md(self):
+        self.run_install()
+        self.assertEqual(self.read(self.claude_md), block() + "\n")
+
+    def test_writes_pi_agents(self):
+        self.with_pi()
+        self.run_install()
+        after = self.read(self.agents)
+        self.assertTrue(after.startswith(USER), after)
+        self.assertEqual(after, USER + "\n" + block() + "\n")
+
+    def test_no_pi_dir(self):
+        self.run_install()
+        self.assertFalse(os.path.exists(self.pi))
+
+    def test_backs_up(self):
+        self.put_claude("mine\n")
+        self.with_pi()
+        self.run_install()
+        for p, before in ((self.claude_md, "mine\n"), (self.agents, USER)):
+            baks = self.backups(p)
+            self.assertEqual(len(baks), 1, baks)
+            self.assertEqual(self.read(os.path.join(os.path.dirname(p), baks[0])), before)
+
+    def test_rerun_unchanged(self):
+        self.with_pi()
+        self.run_install()
+        self.assertIn(BEGIN, self.read(self.claude_md))
+        for p in (self.claude_md, self.agents):
+            os.utime(p, ns=(1_000_000_000, 1_000_000_000))
+        before = snapshot([self.claude_md, self.agents])
+        baks = self.backups(self.agents)
+        self.run_install()
+        self.assertEqual(snapshot([self.claude_md, self.agents]), before)
+        self.assertEqual(self.backups(self.agents), baks)
+
+    def test_uninstall_strips(self):
+        self.put_claude("mine\n")
+        self.with_pi()
+        self.run_install()
+        self.assertTrue(BEGIN in self.read(self.claude_md) and BEGIN in self.read(self.agents))
+        self.run_install("--uninstall")
+        self.assertEqual((self.read(self.claude_md), self.read(self.agents)), ("mine\n", USER))
+        os.remove(self.claude_md)
+        self.run_install()
+        self.assertTrue(os.path.exists(self.claude_md))
+        self.run_install("--uninstall")
+        self.assertFalse(os.path.exists(self.claude_md))
+
+    def test_dry_run_writes_nothing(self):
+        self.with_pi()
+        out = self.run_install("--dry-run")
+        self.assertIn(f"would update {self.claude_md}", out)
+        self.assertFalse(os.path.exists(self.claude_md))
+        self.assertEqual((self.read(self.agents), self.backups(self.agents)), (USER, []))
+        self.run_install()
+        before = snapshot([self.claude_md, self.agents])
+        self.run_install("--uninstall", "--dry-run")
+        self.assertEqual(snapshot([self.claude_md, self.agents]), before)
+
+    def test_block_is_spec_draft(self):
+        with open(SPEC) as f:
+            spec = f.read()
+        draft = spec[spec.index(BEGIN):spec.index(END) + len(END)]
+        self.assertEqual(block(), draft)
+
+    def test_real_files_untouched(self):
+        before = snapshot(REAL_FILES)
+        self.with_pi()
+        self.run_install()
+        self.run_install("--uninstall")
+        TestInstall.setUp(self)  # the existing installer tests' own redirected paths
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.run_install()
+        self.assertEqual(snapshot(REAL_FILES), before)
+
+
 if __name__ == "__main__":
     unittest.main()

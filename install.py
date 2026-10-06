@@ -12,12 +12,17 @@ What it does:
   claude    ~/.claude/settings.json: adds the ISA hook entries and permissions, keeps every other
             entry, backs the file up first (settings.json.isa-backup-<time>) — only when it changes
   pi        adapters/pi/isa.ts  → ~/.pi/agent/extensions/isa.ts (only when ~/.pi/agent exists)
+  rules     skill/global-rules.md (spec-driven work, between <!-- isa:spec-driven:begin/end --> markers)
+            → ~/.claude/CLAUDE.md (created when missing) and ~/.pi/agent/AGENTS.md (only when ~/.pi/agent
+            exists); the text around the block is never touched, each file is backed up before it changes
+            (<file>.isa-backup-<time>), and --uninstall removes only the block
   statusline (opt-in: --statusline; refreshed by every later install once wired)
             adapters/claude-statusline/ → ~/.local/share/isa/statusline (config.json kept), and the
             settings.json statusLine: an existing one (e.g. ccstatusline) is kept as `_isaInnerCommand`
             and shown above the ISA rows; --uninstall puts it back
 
-Paths can be redirected for tests: --claude-settings, --pi-dir, --prefix, --skills-dir.
+Paths can be redirected for tests: --claude-settings, --pi-dir, --prefix, --skills-dir, --claude-md (default:
+CLAUDE.md beside --claude-settings).
 """
 import argparse
 import json
@@ -187,6 +192,97 @@ def write_json_if_changed(path, new, dry):
     return True
 
 
+BLOCK_BEGIN, BLOCK_END = "<!-- isa:spec-driven:begin -->", "<!-- isa:spec-driven:end -->"
+BLOCK_FILE = os.path.join(REPO, "skill", "global-rules.md")
+
+
+def _block_span(text):
+    """(start, end) of the marked block, end past the end marker; None when there is none."""
+    s = text.find(BLOCK_BEGIN)
+    e = text.find(BLOCK_END, s + 1) if s >= 0 else -1
+    return (s, e + len(BLOCK_END)) if s >= 0 and e >= 0 else None
+
+
+def merge_block(text: str, block: str) -> str:
+    """The text with `block` (markers included) in place of its marked block, or appended after a blank line."""
+    block = block.strip("\n")
+    span = _block_span(text)
+    if span:
+        return text[:span[0]] + block + text[span[1]:]
+    return (text.rstrip("\n") + "\n\n" if text.strip() else "") + block + "\n"
+
+
+def strip_block(text: str) -> str:
+    """The text without its marked block and the blank line `merge_block` put before it."""
+    span = _block_span(text)
+    if not span:
+        return text
+    before, after = text[:span[0]], text[span[1]:]
+    if after.strip():  # the block sits between the user's lines: keep one blank line between them
+        return before.rstrip("\n") + ("\n\n" if before.strip() else "") + after.lstrip("\n")
+    return before.rstrip("\n") + "\n" if before.strip() else ""
+
+
+def write_text_if_changed(path, new, dry):
+    """Write `new` to `path` (None: remove the file), backing an existing file up first."""
+    try:
+        with open(path) as f:
+            old = f.read()
+    except FileNotFoundError:
+        old = None
+    if new == old or (new is None and old is None):
+        print(f"  unchanged  {path}")
+        return False
+    if dry:
+        print(f"  would {'remove' if new is None else 'update'} {path}")
+        return True
+    if old is not None:
+        bak = f"{path}.isa-backup-{time.strftime('%Y%m%d-%H%M%S')}"
+        shutil.copy2(path, bak)
+        print(f"  backup     {bak}")
+    if new is None:
+        os.remove(path)
+        print(f"  removed    {path}")
+        return True
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".isa-tmp"
+    with open(tmp, "w") as f:
+        f.write(new)
+    if old is not None:
+        shutil.copymode(path, tmp)
+    os.replace(tmp, path)
+    print(f"  updated    {path}")
+    return True
+
+
+def rule_files(claude_md, pi_dir):
+    """The global instruction files the block goes in: CLAUDE.md always, pi's AGENTS.md when pi is there."""
+    return [claude_md] + ([os.path.join(pi_dir, "AGENTS.md")] if os.path.isdir(pi_dir) else [])
+
+
+def _read_or_empty(path):
+    try:
+        with open(path) as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+
+
+def install_rules(claude_md, pi_dir, dry):
+    with open(BLOCK_FILE) as f:
+        block = f.read()
+    for p in rule_files(claude_md, pi_dir):
+        write_text_if_changed(p, merge_block(_read_or_empty(p), block), dry)
+
+
+def uninstall_rules(claude_md, pi_dir, dry):
+    for p in rule_files(claude_md, pi_dir):
+        if not os.path.isfile(p):
+            continue
+        new = strip_block(_read_or_empty(p))
+        write_text_if_changed(p, new if new else None, dry)  # a file left empty was the install's own
+
+
 def copy_tree(src, dst, dry):
     if dry:
         print(f"  would copy {src} → {dst}")
@@ -205,10 +301,12 @@ def main(argv=None):
     ap.add_argument("--claude-settings", default=os.path.join(H, ".claude", "settings.json"))
     ap.add_argument("--skills-dir", default=os.path.join(H, ".claude", "skills"))
     ap.add_argument("--pi-dir", default=os.path.join(H, ".pi", "agent"))
+    ap.add_argument("--claude-md", default=None, help="the global CLAUDE.md (default: beside --claude-settings)")
     ap.add_argument("--no-skill", action="store_true", help="leave the installed skill alone")
     ap.add_argument("--statusline", action="store_true",
                     help="also wire the ISA statusLine (needs node >= 23.6), keeping an existing statusLine")
     a = ap.parse_args(argv)
+    claude_md = a.claude_md or os.path.join(os.path.dirname(os.path.abspath(a.claude_settings)), "CLAUDE.md")
 
     runtime = os.path.join(a.prefix, "share", "isa", "runtime")
     launcher = os.path.join(a.prefix, "bin", "isa")
@@ -225,6 +323,7 @@ def main(argv=None):
     if a.uninstall:
         print("Removing ISA enforcement (ISAs under ~/.isa are kept):")
         write_json_if_changed(a.claude_settings, strip_statusline(strip_settings(settings)), a.dry_run)
+        uninstall_rules(claude_md, a.pi_dir, a.dry_run)
         for p in (ext, launcher):
             if os.path.lexists(p):
                 print(f"  {'would remove' if a.dry_run else 'removed'}    {p}")
@@ -272,6 +371,7 @@ def main(argv=None):
             print(f"  copied     {ext}")
     else:
         print(f"  skipped pi (no {a.pi_dir})")
+    install_rules(claude_md, a.pi_dir, a.dry_run)
     os.makedirs(os.path.join(os.environ.get("ISA_HOME", os.path.join(H, ".isa"))), exist_ok=True)
     print("Done. New Claude Code and pi sessions are gated; running sessions pick it up on restart.")
     return 0
