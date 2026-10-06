@@ -5,14 +5,19 @@ is the template of spec § B.3; the lint checks only what a script can decide (s
 user checks the rest at the ack.
 
 Standard library only (frontmatter via `yamlish`). Entry points: `parse(text)`, `ack_hash(text)`,
-`lint(path, moment)`; the ack records (§ B.4): `record_ack`, `ack_recorded`, `acked`; the ISA links (§ B.5, plan
-P10): `resolve(link)`, `seed(link)`, `link_files(link)`.
+`lint(path, moment)`; the ack records (§ B.4): `record_ack`, `ack_recorded`, `acked`, `ack_holds`; the ISA links
+(§ B.5, plan P10): `resolve(link)`, `seed(link)`, `link_files(link)`; the done marks (§ B.6, plan P11):
+`mark_done(path, bullets, slug, date)`.
 """
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
+import tempfile
 import time
 
 from . import state, yamlish
@@ -23,7 +28,9 @@ STEP_RE = re.compile(r"^- \[( |x|X)\] (P\d+) — (.*)$")
 FOCUS_RE = re.compile(r"^- (.*?)\s*→\s*(P\d+)\s*$")
 COVERS_RE = re.compile(r"(S\d+)(?::(A\d+(?:\s*,\s*A\d+)*))?")
 STATUS_ACKED = re.compile(r"^status:\s*acked (\d{4}-\d{2}-\d{2}) #([0-9a-f]{8})(?:\s+#\s.*)?\s*$")
-STATUS_RE = re.compile(r"^(draft|acked \d{4}-\d{2}-\d{2} #[0-9a-f]{8}|done \d{4}-\d{2}-\d{2})$")
+# `isa close` keeps the ack hash on the done line, so a done document still reads as unchanged or edited
+STATUS_DONE = re.compile(r"^status:\s*done (\d{4}-\d{2}-\d{2}) #([0-9a-f]{8})(?:\s+#\s.*)?\s*$")
+STATUS_RE = re.compile(r"^(draft|acked \d{4}-\d{2}-\d{2} #[0-9a-f]{8}|done \d{4}-\d{2}-\d{2}(?: #[0-9a-f]{8})?)$")
 EFFORT_RE = re.compile(r"^E[1-5]$")
 # the marks `isa close` writes (§ B.6), which the ack hash leaves out
 ISA_SUFFIX = re.compile(r"  \(\d{4}-\d{2}-\d{2}, ISA [^)]*\)\s*$")
@@ -232,10 +239,10 @@ def _placeholders(d):
 def _status(d):
     raw = next((ln.split(":", 1)[1] for ln in d["_fm_lines"] if ln.startswith("status:")), None)
     if raw is None:
-        return ["frontmatter: `status` missing (draft | acked YYYY-MM-DD #<hash8> | done YYYY-MM-DD)"]
+        return ["frontmatter: `status` missing (draft | acked YYYY-MM-DD #<hash8> | done YYYY-MM-DD [#<hash8>])"]
     val = re.sub(r"\s+#\s.*$", "", raw).strip()
     if not STATUS_RE.match(val):
-        return [f"frontmatter: `status: {val}` is not draft | acked YYYY-MM-DD #<hash8> | done YYYY-MM-DD"]
+        return [f"frontmatter: `status: {val}` is not draft | acked YYYY-MM-DD #<hash8> | done YYYY-MM-DD [#<hash8>]"]
     return []
 
 
@@ -593,3 +600,157 @@ def acked(path):
         return False
     h = acked_hash(text)
     return bool(h) and h == ack_hash(text)
+
+
+def ack_holds(text):
+    """The text reads as unchanged since its ack: an `acked` status line, or the `done` line `isa close` wrote in
+    its place (which keeps the hash), whose hash matches the text now."""
+    line = status_line(text) or ""
+    m = STATUS_ACKED.match(line) or STATUS_DONE.match(line)
+    return bool(m) and m.group(2) == ack_hash(text)
+
+
+# ------------------------------------------------------------------ done marks (§ B.6: written by `isa close`)
+
+SUFFIX_SLUG = re.compile(r"  \(\d{4}-\d{2}-\d{2}, ISA ([^)]*)\)\s*$")
+
+
+@contextlib.contextmanager
+def doc_lock(path):
+    """Exclusive `flock` on `<path>.lock`, which the holder removes before letting go — no lock file stays in the
+    project. A waiter that wakes on a lock file removed meanwhile opens the new one and waits again."""
+    lock = os.path.realpath(path) + ".lock"
+    while True:
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            if os.stat(lock).st_ino == os.fstat(fd).st_ino:
+                break
+        except FileNotFoundError:
+            pass
+        except BaseException:
+            os.close(fd)
+            raise
+        os.close(fd)
+    try:
+        yield
+    finally:
+        try:
+            os.unlink(lock)
+        except OSError:
+            pass
+        os.close(fd)
+
+
+def _write_doc(path, text):
+    fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".", dir=os.path.dirname(path))
+    try:
+        os.chmod(tmp, stat.S_IMODE(os.stat(path).st_mode))
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _live(sec):
+    """A section's bullets that count: dropped ones (and every bullet of a dropped section) left out."""
+    if "[DROPPED" in sec["title"]:
+        return []
+    return [b for b in sec["bullets"].values() if not b["text"].startswith("[DROPPED")]
+
+
+def _section_end(d, sec, n_lines):
+    return min((n for n, ln in d["_body"] if n > sec["line"] and (ln.startswith("## ") or ln.startswith("# "))),
+               default=n_lines + 1)
+
+
+def _done_lines(lines, sids, date):
+    """Write, replace or remove the `Done:` line of each section in `sids`, on the bullets as `lines` hold them."""
+    d = _parse("\n".join(lines))
+    for sid in sorted(set(sids), key=lambda s: -d["sections"][s]["line"]):
+        sec = d["sections"][sid]
+        end = _section_end(d, sec, len(lines))
+        old = [n for n, ln in d["_body"] if sec["line"] < n < end and ln.startswith("Done:")]
+        live = _live(sec)
+        new = None
+        if live and all(b["ticked"] for b in live):
+            slugs = []
+            for b in live:
+                m = SUFFIX_SLUG.search(lines[b["line"] - 1])
+                if m and m.group(1) not in slugs:
+                    slugs.append(m.group(1))
+            new = f"Done: {date} — {len(live)}/{len(live)} accepted (ISAs {', '.join(slugs)})"
+        for n in reversed(old[1:] if new else old):
+            del lines[n - 1]
+        if new and old:
+            lines[old[0] - 1] = new
+        elif new:
+            lines.insert(sec["line"], new)
+    return lines
+
+
+def _all_done(d):
+    if d["kind"] == "plan":
+        return bool(d["steps"]) and all(s["ticked"] for s in d["steps"].values())
+    live = [b for sec in d["sections"].values() for b in _live(sec)]
+    return bool(live) and all(b["ticked"] for b in live)
+
+
+def mark_done(path, bullets, slug, date):
+    """Write the done marks of spec § B.6 into a spec or a plan, under `<path>.lock`, on the file as it is now
+    (re-read under the lock, so a close running next to this one loses no tick). For a spec, `bullets` are
+    `(S, A)` pairs: each is ticked with `  (<date>, ISA <slug>)` (a bullet ticked already keeps its suffix), and
+    each of their sections whose live bullets are now all ticked gets its one `Done: <date> — <n>/<n> accepted
+    (ISAs <slugs>)` line, the slugs read back from the bullets. For a plan, `bullets` are step ids, ticked with
+    ` · Done: <date>`. Once every live bullet (every step) is ticked — never on an empty set — the status becomes
+    `status: done <date> #<hash8>`, keeping the ack hash. Raises ValueError, writing nothing, when the file
+    changed since its ack or names no such bullet or step. Writes atomically; → the lines it wrote."""
+    path = os.path.realpath(path)
+    with doc_lock(path):
+        with open(path, encoding="utf-8", newline="") as f:
+            raw = f.read()
+        text = _norm(raw)
+        d = _parse(text)
+        if not ack_holds(text):
+            raise ValueError(f"{path}: {d['kind']} changed since its ack — ask the user to acknowledge it again")
+        old = text.split("\n")
+        lines = list(old)
+        if d["kind"] == "plan":
+            for pid in bullets:
+                st = d["steps"].get(pid)
+                if st is None:
+                    raise ValueError(f"{path}: no step {pid}")
+                if not st["ticked"]:
+                    line = re.sub(r"^- \[ \] ", "- [x] ", lines[st["line"] - 1].rstrip())
+                    lines[st["line"] - 1] = line if STEP_DONE.search(line) else f"{line} · Done: {date}"
+        else:
+            sids = []
+            for sid, aid in bullets:
+                b = d["sections"].get(sid, {}).get("bullets", {}).get(aid)
+                if b is None:
+                    raise ValueError(f"{path}: no bullet {sid}:{aid}")
+                if b["text"].startswith("[DROPPED"):
+                    continue
+                line = lines[b["line"] - 1].rstrip()
+                if not b["ticked"]:
+                    line = re.sub(r"^- \[ \] ", "- [x] ", ISA_SUFFIX.sub("", line)) + f"  ({date}, ISA {slug})"
+                elif not ISA_SUFFIX.search(line):
+                    line += f"  ({date}, ISA {slug})"
+                lines[b["line"] - 1] = line
+                sids.append(sid)
+            lines = _done_lines(lines, sids, date)
+        if _all_done(_parse("\n".join(lines))) and STATUS_ACKED.match(status_line(text) or ""):
+            i = old.index(status_line(text))
+            lines[i] = f"status: done {date} #{acked_hash(text)}"
+        if lines == old:
+            return []
+        before = set(old)
+        changed = [ln for ln in lines if ln not in before]
+        new = "\n".join(lines)
+        _write_doc(path, new.replace("\n", "\r\n") if "\r\n" in raw else new)
+        return changed

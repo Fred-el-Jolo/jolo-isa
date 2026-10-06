@@ -942,5 +942,400 @@ class SpecdocAcks(unittest.TestCase):
         self.assertFalse(specdoc.acked(self.path))
 
 
+# ------------------------------------------------------------------ plan P11: the done marks (spec § B.6)
+
+D1, D2 = "2026-10-08", "2026-10-09"
+SA, SB = "20261008-101500_first", "20261009-091200_second"
+# this repo's shape: a spec without `S<n>` sections, a plan whose steps cover `§8.N` items
+REPO_SPEC = """---
+status: draft
+effort: E4
+plan: docs/plan/2026-10-06-repo.md
+---
+
+# Repo spec
+
+## 8. Acceptance
+
+1. One holds.
+2. Two holds.
+"""
+REPO_PLAN = """---
+status: draft
+spec: docs/spec/2026-10-06-repo.md
+---
+
+# Plan — Repo
+
+Goal: both items hold.
+
+- [x] P1 — First · E3 · covers §8.1 · Done: 2026-10-06
+  Files: `a.txt`
+  Done when:
+  - one holds.
+- [ ] P2 — Second · E3 · covers §8.2 · after P1
+  Files: `a.txt`
+  Done when:
+  - two holds.
+- [ ] P3 — Third · E2 · covers §8.2 · after P2
+  Files: `a.txt`
+  Done when:
+  - three holds.
+"""
+
+
+def section(text, sid):
+    """The lines of `## <sid>` up to the next `## ` heading."""
+    out, inside = [], False
+    for line in text.split("\n"):
+        if line.startswith("## "):
+            inside = line.startswith(f"## {sid} ")
+            continue
+        if inside:
+            out.append(line)
+    return out
+
+
+def done_lines(text, sid):
+    return [ln for ln in section(text, sid) if ln.startswith("Done:")]
+
+
+def status_of(text):
+    return specdoc.status_line(text)
+
+
+class MarkDone(unittest.TestCase):
+    """Plan P11: `specdoc.mark_done(path, bullets, slug, date)` (spec § B.6)."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix="isa-p11-marks-", dir=os.path.expanduser("~/.cache"))
+        self.addCleanup(shutil.rmtree, self.base, True)
+        self.spec = self.put(SPEC, acked(E3))
+
+    def put(self, rel, text):
+        p = os.path.join(self.base, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write(text)
+        return p
+
+    def read(self, p):
+        with open(p) as f:
+            return f.read()
+
+    def plan(self, text=PLAN):
+        self.put(E4_SPEC, acked(E4))
+        return self.put(PLAN_DOC, acked(text))
+
+    def test_ticks_bullets(self):
+        specdoc.mark_done(self.spec, [("S1", "A1")], SA, D1)
+        t = self.read(self.spec)
+        self.assertIn(f"- [x] A1: `tool --help | wc -l` prints 24 or less  ({D1}, ISA {SA})\n", t)
+        self.assertIn("- [ ] A2: the first task listed is `tool sync`\n", t)
+        self.assertIn("- [ ] A1: every flag of the old help appears in `tool help --all`\n", t)
+
+    def test_done_line(self):
+        specdoc.mark_done(self.spec, [("S1", "A1")], SA, D1)
+        self.assertEqual(done_lines(self.read(self.spec), "S1"), [])
+        specdoc.mark_done(self.spec, [("S1", "A2")], SA, D1)
+        t = self.read(self.spec)
+        self.assertIn(f"## S1 — Summary screen\nDone: {D1} — 2/2 accepted (ISAs {SA})\nThe default", t)
+        self.assertEqual(done_lines(t, "S2"), [])
+
+    def test_done_line_replaced(self):
+        specdoc.mark_done(self.spec, [("S1", "A1"), ("S1", "A2")], SA, D1)
+        specdoc.mark_done(self.spec, [("S1", "A1"), ("S1", "A2")], SB, D2)
+        t = self.read(self.spec)
+        self.assertEqual(done_lines(t, "S1"), [f"Done: {D2} — 2/2 accepted (ISAs {SA})"])
+        self.assertEqual(len(re.findall(r"^Done:", t, re.M)), 1)
+
+    def test_done_names_earlier_isas(self):
+        spec = self.put(E4_SPEC, acked(E4))
+        specdoc.mark_done(spec, [("S2", "A1"), ("S2", "A2")], SA, D1)
+        self.assertEqual(done_lines(self.read(spec), "S2"), [])
+        specdoc.mark_done(spec, [("S2", "A3")], SB, D2)
+        self.assertEqual(done_lines(self.read(spec), "S2"), [f"Done: {D2} — 3/3 accepted (ISAs {SA}, {SB})"])
+
+    def test_ticks_step(self):
+        plan = self.plan()
+        specdoc.mark_done(plan, ["P1"], SA, D1)
+        t = self.read(plan)
+        self.assertIn(f"\n- [x] P1 — The schema · E2 · covers S1:A1,A2 · Done: {D1}\n", t)
+        self.assertIn("\n- [ ] P3 — The REST adapter · E3 · covers S3 · after P1, P2\n", t)
+
+    def test_spec_done(self):
+        h = specdoc.ack_hash(E3)
+        lines = specdoc.mark_done(self.spec, [("S1", "A1"), ("S1", "A2"), ("S2", "A1")], SA, D1)
+        t = self.read(self.spec)
+        self.assertEqual(status_of(t), f"status: done {D1} #{h}")
+        self.assertIn(f"status: done {D1} #{h}", lines)
+        # a dropped section doesn't hold the spec open
+        spec = self.put("docs/spec/2026-10-06-drop.md", acked(E3.replace(
+            "- [ ] A1: every flag of the old help appears in `tool help --all`", "- [ ] A1: [DROPPED — moved out]")))
+        specdoc.mark_done(spec, [("S1", "A1"), ("S1", "A2")], SA, D1)
+        self.assertTrue(status_of(self.read(spec)).startswith(f"status: done {D1} #"))
+
+    def test_plan_done(self):
+        plan = self.plan()
+        specdoc.mark_done(plan, ["P1"], SA, D1)
+        self.assertTrue(status_of(self.read(plan)).startswith("status: acked "))
+        specdoc.mark_done(plan, ["P3"], SB, D2)
+        self.assertEqual(status_of(self.read(plan)), f"status: done {D2} #{specdoc.ack_hash(PLAN)}")
+
+    def test_never_done_from_empty(self):
+        bare = self.put("docs/spec/2026-10-06-repo.md", acked(REPO_SPEC))
+        before = self.read(bare)
+        self.assertEqual(specdoc.mark_done(bare, [], SA, D1), [])
+        self.assertEqual(self.read(bare), before)
+        dropped = E3
+        for b in ("A1: `tool --help | wc -l` prints 24 or less", "A2: the first task listed is `tool sync`",
+                  "A1: every flag of the old help appears in `tool help --all`"):
+            dropped = dropped.replace(f"- [ ] {b}", f"- [ ] {b[:2]}: [DROPPED — not needed]")
+        spec = self.put("docs/spec/2026-10-06-dropped.md", acked(dropped))
+        specdoc.mark_done(spec, [], SA, D1)
+        self.assertTrue(status_of(self.read(spec)).startswith("status: acked "))
+
+    def test_open_keeps_status(self):
+        acked_line = status_of(self.read(self.spec))
+        specdoc.mark_done(self.spec, [("S1", "A1"), ("S1", "A2")], SA, D1)
+        self.assertEqual(status_of(self.read(self.spec)), acked_line)
+        plan = self.plan()
+        plan_line = status_of(self.read(plan))
+        specdoc.mark_done(plan, ["P1"], SA, D1)
+        self.assertEqual(status_of(self.read(plan)), plan_line)
+
+    def test_returns_changed_lines(self):
+        lines = specdoc.mark_done(self.spec, [("S1", "A1")], SA, D1)
+        self.assertEqual(lines, [f"- [x] A1: `tool --help | wc -l` prints 24 or less  ({D1}, ISA {SA})"])
+        os.utime(self.spec, ns=(1_000_000_000, 1_000_000_000))
+        self.assertEqual(specdoc.mark_done(self.spec, [("S1", "A1")], SA, D1), [])
+        self.assertEqual(os.stat(self.spec).st_mtime_ns, 1_000_000_000)
+
+    def test_keeps_hash_and_format(self):
+        text = acked(E3)
+        with open(self.spec, "wb") as f:
+            f.write(text.replace("\n", "\r\n").encode())
+        os.chmod(self.spec, 0o640)
+        specdoc.mark_done(self.spec, [("S1", "A1"), ("S1", "A2")], SA, D1)
+        with open(self.spec, "rb") as f:
+            raw = f.read()
+        self.assertIn(b"Done: ", raw)
+        self.assertEqual(raw.count(b"\n"), raw.count(b"\r\n"))
+        self.assertEqual(os.stat(self.spec).st_mode & 0o777, 0o640)
+        self.assertEqual(specdoc.ack_hash(raw.decode()), specdoc.ack_hash(text))
+        self.assertTrue(specdoc.acked(self.spec))
+
+    def test_waits_for_lock(self):
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); from isa import specdoc; "
+                "specdoc.mark_done(sys.argv[2], [('S1', 'A2')], sys.argv[3], sys.argv[4])")
+        with specdoc.doc_lock(self.spec):
+            p = subprocess.Popen([sys.executable, "-c", code, os.path.join(ROOT, "runtime"), self.spec, SB, D2])
+            time.sleep(0.6)
+            self.assertIsNone(p.poll(), "mark_done ran while another process held the lock")
+            self.assertEqual(self.read(self.spec), acked(E3))
+            # what the first close writes while it holds the lock
+            with open(self.spec, "w") as f:
+                f.write(acked(E3).replace("- [ ] A1: `tool --help | wc -l` prints 24 or less",
+                                          f"- [x] A1: `tool --help | wc -l` prints 24 or less  ({D1}, ISA {SA})"))
+        self.assertEqual(p.wait(timeout=20), 0)
+        t = self.read(self.spec)
+        self.assertIn(f"({D1}, ISA {SA})", t)
+        self.assertIn(f"({D2}, ISA {SB})", t)
+        self.assertEqual(done_lines(t, "S1"), [f"Done: {D2} — 2/2 accepted (ISAs {SA}, {SB})"])
+        self.assertFalse(os.path.exists(self.spec + ".lock"))
+
+    def test_refuses_changed(self):
+        self.put(SPEC, acked(E3).replace("24 or less", "30 or less"))
+        before = self.read(self.spec)
+        with self.assertRaisesRegex(ValueError, "spec changed since its ack — ask the user to acknowledge it again"):
+            specdoc.mark_done(self.spec, [("S1", "A1")], SA, D1)
+        self.assertEqual(self.read(self.spec), before)
+
+    def test_done_status_holds(self):
+        h = specdoc.ack_hash(E3)
+        done = E3.replace("status: draft", f"status: done {D1} #{h}")
+        self.put(SPEC, done)
+        self.assertEqual([m for m in specdoc.lint(self.spec, "ack") if "status" in m], [])
+        self.assertTrue(specdoc.ack_holds(done))
+        self.assertTrue(specdoc.ack_holds(acked(E3)))
+        self.assertFalse(specdoc.acked(self.spec))
+        self.assertFalse(specdoc.ack_holds(done.replace("24 or less", "30 or less")))
+        self.assertFalse(specdoc.ack_holds(E3))
+
+
+LINKED = """---
+task: "Prove the linked bullets"
+slug: {slug}
+effort: E2
+phase: build
+progress: 0/{n}
+started: 2026-01-01T00:00:00Z
+updated: 2026-01-01T00:00:00Z
+root: {root}
+{key}: {link}
+asks: []
+context_sufficient: true
+---
+
+## Problem
+
+See {link}
+
+## Goal
+
+The linked bullets hold.
+
+## Criteria
+
+{criteria}
+## Test Strategy
+
+```yaml
+{entries}```
+"""
+
+
+def flag(tag):
+    return "ok-" + tag.replace(":", "-")
+
+
+class CloseMarks(SpecCase):
+    """Plan P11: `isa close` writes the done marks of a linked ISA (spec § B.6, § 8 items 9–11)."""
+
+    def linked(self, key, link, tags, slug):
+        crit, entries = [], []
+        for i, tag in enumerate(tags + ["anti"], 1):
+            anti = tag == "anti"
+            crit.append(f"- [ ] ISC-{i}: " + ("Anti: the file `bad` exists." if anti else f"bullet {tag} holds."))
+            entries.append(f"- isc: ISC-{i}\n  anchors_to: \"{'Goal' if anti else tag}\"\n  type: bash\n"
+                           f"  kind: {'regression' if anti else 'file'}\n  check: flag file\n  threshold: exit 0\n"
+                           f"  tool: {'test ! -e bad' if anti else 'test -f ' + flag(tag)}\n"
+                           f"  fails-when: \"the flag file says otherwise\"\n")
+        text = LINKED.format(slug=slug, n=len(tags) + 1, root=os.path.realpath(self.proj), key=key, link=link,
+                             criteria="\n".join(crit) + "\n", entries="".join(entries))
+        path = self.write_isa(text, self.isa_path(slug))
+        for tag in tags:
+            self.put(flag(tag), "")
+        rc, out = self.isa("verify", path)
+        self.assertEqual(rc, 0, out)
+        with open(path) as f:
+            self.write_isa(f.read().rstrip("\n") + "\n- Goal: yes — every flag file is there\n", path)
+        return path
+
+    def close(self, path):
+        return self.isa("close", path)
+
+    def closed(self, key, link, tags, slug):
+        path = self.linked(key, link, tags, slug)
+        rc, out = self.close(path)
+        self.assertEqual(rc, 0, out)
+        return path
+
+    def doc_text(self, rel):
+        with open(os.path.join(self.proj, rel)) as f:
+            return f.read()
+
+    def test_close_ticks_section(self):
+        self.doc(SPEC, acked(E3))
+        self.closed("spec", f"{SPEC}#S1", ["S1:A1", "S1:A2"], SA)
+        t = self.doc_text(SPEC)
+        self.assertIn(f"- [x] A1: `tool --help | wc -l` prints 24 or less  ({today()}, ISA {SA})\n", t)
+        self.assertIn(f"- [x] A2: the first task listed is `tool sync`  ({today()}, ISA {SA})\n", t)
+        self.assertIn("- [ ] A1: every flag of the old help appears in `tool help --all`\n", t)
+
+    def test_close_one_done_line(self):
+        self.doc(SPEC, acked(E3))
+        self.closed("spec", f"{SPEC}#S1", ["S1:A1", "S1:A2"], SA)
+        t = self.doc_text(SPEC)
+        self.assertEqual(done_lines(t, "S1"), [f"Done: {today()} — 2/2 accepted (ISAs {SA})"])
+        self.assertTrue(status_of(t).startswith("status: acked "))
+
+    def test_second_close_replaces(self):
+        self.doc(SPEC, acked(E3))
+        self.closed("spec", f"{SPEC}#S1", ["S1:A1", "S1:A2"], SA)
+        self.closed("spec", f"{SPEC}#S1", ["S1:A1", "S1:A2"], SB)
+        t = self.doc_text(SPEC)
+        self.assertEqual(done_lines(t, "S1"), [f"Done: {today()} — 2/2 accepted (ISAs {SA})"])
+        self.assertEqual(len(re.findall(r"^Done:", t, re.M)), 1)
+
+    def test_shared_section_first(self):
+        self.doc(E4_SPEC, acked(E4))
+        self.closed("spec", f"{E4_SPEC}#S2:A1,A2", ["S2:A1", "S2:A2"], SA)
+        t = self.doc_text(E4_SPEC)
+        self.assertRegex(t, r"- \[x\] A1: each query returns the same data as its REST endpoint  \(")
+        self.assertRegex(t, r"- \[x\] A2: the N\+1 query count stays at 1 per list  \(")
+        self.assertIn("- [ ] A3: p95 latency under 200 ms\n", t)
+        self.assertEqual(done_lines(t, "S2"), [])
+
+    def test_shared_section_second(self):
+        self.doc(E4_SPEC, acked(E4))
+        self.closed("spec", f"{E4_SPEC}#S2:A1,A2", ["S2:A1", "S2:A2"], SA)
+        self.closed("spec", f"{E4_SPEC}#S2:A3", ["S2:A3"], SB)
+        t = self.doc_text(E4_SPEC)
+        self.assertEqual(done_lines(t, "S2"), [f"Done: {today()} — 3/3 accepted (ISAs {SA}, {SB})"])
+        self.assertEqual(specdoc.ack_hash(t), specdoc.ack_hash(E4))
+        self.assertTrue(specdoc.acked(os.path.join(self.proj, E4_SPEC)))
+
+    def test_plan_step(self):
+        self.doc(E4_SPEC, acked(E4))
+        self.doc(PLAN_DOC, acked(PLAN))
+        self.closed("plan", f"{PLAN_DOC}#P1", ["S1:A1", "S1:A2"], SA)
+        spec, plan = self.doc_text(E4_SPEC), self.doc_text(PLAN_DOC)
+        self.assertRegex(spec, r"- \[x\] A1: every REST resource has a GraphQL type  \(")
+        self.assertRegex(spec, r"- \[x\] A2: the schema passes `graphql-schema-linter`  \(")
+        self.assertEqual(done_lines(spec, "S1"), [f"Done: {today()} — 2/2 accepted (ISAs {SA})"])
+        self.assertIn(f"\n- [x] P1 — The schema · E2 · covers S1:A1,A2 · Done: {today()}\n", plan)
+        self.assertTrue(status_of(spec).startswith("status: acked "))
+        self.assertTrue(status_of(plan).startswith("status: acked "))
+
+    def test_step_without_bullets(self):
+        spec_rel, plan_rel = "docs/spec/2026-10-06-repo.md", "docs/plan/2026-10-06-repo.md"
+        spec_before = acked(REPO_SPEC)
+        self.doc(spec_rel, spec_before)
+        self.doc(plan_rel, acked(REPO_PLAN))
+        plan_before = self.doc_text(plan_rel)
+        self.closed("plan", f"{plan_rel}#P2", ["P2"], SA)
+        self.assertEqual(self.doc_text(spec_rel), spec_before)
+        old = "- [ ] P2 — Second · E3 · covers §8.2 · after P1"
+        self.assertEqual(self.doc_text(plan_rel),
+                         plan_before.replace(old, f"- [x] P2 — Second · E3 · covers §8.2 · after P1 · Done: {today()}"))
+        self.assertTrue(specdoc.acked(os.path.join(self.proj, spec_rel)))
+        self.assertTrue(specdoc.acked(os.path.join(self.proj, plan_rel)))
+
+    def test_failed_close_writes_nothing(self):
+        self.doc(SPEC, acked(E3))
+        path = self.linked("spec", f"{SPEC}#S1", ["S1:A1", "S1:A2"], SA)
+        before = self.doc_text(SPEC)
+        os.remove(os.path.join(self.proj, flag("S1:A2")))
+        rc, out = self.close(path)
+        self.assertNotEqual(rc, 0, out)
+        self.assertEqual(self.doc_text(SPEC), before)
+
+    def test_refuses_changed_spec(self):
+        self.doc(SPEC, acked(E3))
+        path = self.linked("spec", f"{SPEC}#S1", ["S1:A1", "S1:A2"], SA)
+        changed = acked(E3).replace("24 or less", "30 or less")
+        self.doc(SPEC, changed)
+        rc, out = self.close(path)
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("spec changed since its ack — ask the user to acknowledge it again", out)
+        self.assertEqual(self.doc_text(SPEC), changed)
+        self.assertNotEqual(state.frontmatter(path).get("phase"), "complete")
+
+    def test_two_processes_no_lost_tick(self):
+        self.doc(SPEC, acked(E3))
+        a = self.linked("spec", f"{SPEC}#S1:A1", ["S1:A1"], SA)
+        b = self.linked("spec", f"{SPEC}#S1:A2", ["S1:A2"], SB)
+        procs = [subprocess.Popen([sys.executable, ISA, "close", p], cwd=self.proj, env=self.env, text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT) for p in (a, b)]
+        outs = [p.communicate(timeout=60)[0] for p in procs]
+        self.assertEqual([p.returncode for p in procs], [0, 0], outs)
+        t = self.doc_text(SPEC)
+        self.assertIn(f"prints 24 or less  ({today()}, ISA {SA})\n", t)
+        self.assertIn(f"`tool sync`  ({today()}, ISA {SB})\n", t)
+        self.assertEqual(done_lines(t, "S1"), [f"Done: {today()} — 2/2 accepted (ISAs {SA}, {SB})"])
+        self.assertFalse(os.path.exists(os.path.join(self.proj, SPEC + ".lock")))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -726,6 +726,12 @@ def close(path, cwd=None, timeout=600, out=print):
         out(f"isa close: {err}")
         return 2
     parsed = lint.parse(text, path)
+    stale = _stale_docs(parsed["fm"], root)
+    if stale:  # nothing is run or written for a spec or plan the user has not acknowledged as it is now
+        out("isa close: not closed — the ISA file is unchanged:")
+        for m in stale:
+            out(f"  - {m}")
+        return 1
     pr = evidence.probes(parsed)
     _strategy_snapshot(path, parsed)
     stamp, run_t = isafile.now_iso(), time.time()
@@ -761,11 +767,80 @@ def close(path, cwd=None, timeout=600, out=print):
         for m in issues:
             out(f"  - {m}")
         return 1
+    # the done marks, after the proof and before `complete`: a mark that can't be written leaves the ISA open
+    try:
+        written = done_marks(path, p, root)
+    except (ValueError, OSError) as e:
+        out(f"isa close: not closed — {e}; the ISA file is unchanged")
+        return 1
     isafile.write_atomic(path, closing)
     # the close itself, also when no mechanical probe ran (all self-attested): Stop checks for it (problems.py)
     evidence.record(path, [{"v": 2, "t": time.time(), "kind": "closed", "probes": len(results)}])
-    out(summary(path, closing, results, fps, marks, run_t) + jev_close_advice(path, closing, results, marks))
+    done = ("\nDone marks written (spec § B.6):\n" + "\n".join(f"  - {_rel(f, root)}: {ln}" for f, ln in written)
+            if written else "")
+    out(summary(path, closing, results, fps, marks, run_t) + done + jev_close_advice(path, closing, results, marks))
     return 0
+
+
+def _doc_links(fm):
+    return [(key, str(x)) for key in ("spec", "plan")
+            for x in (fm.get(key) if isinstance(fm.get(key), list) else [fm.get(key)] if fm.get(key) else [])]
+
+
+def _stale_docs(fm, root):
+    """Why each spec or plan the ISA links to does not read as acknowledged as it is now (spec § 5.5 step 8)."""
+    out = []
+    for key, link in _doc_links(fm):
+        try:
+            files = specdoc.link_files(link, root=root)
+        except ValueError as e:
+            out.append(f"`{key}: {link}` — {e}")
+            continue
+        for f in files:
+            text = _read(f)
+            if specdoc.ack_holds(text):
+                continue
+            kind = specdoc.parse(text)["kind"]
+            if specdoc.STATUS_ACKED.match(specdoc.status_line(text) or "") or \
+                    specdoc.STATUS_DONE.match(specdoc.status_line(text) or ""):
+                out.append(f"{_tilde(f)}: {kind} changed since its ack — ask the user to acknowledge it again")
+            else:
+                out.append(f"{_tilde(f)}: {kind} not acknowledged yet — ask the user's ack first")
+    return out
+
+
+def done_marks(path, p, root):
+    """After a passing close (spec § B.6): tick each linked bullet whose anchored ISCs all passed (a waived or
+    unticked one keeps it open), write the sections' `Done:` lines, and tick a linked plan step once every bullet
+    it covers is ticked. → [(file, line written)]."""
+    fm = p["fm"]
+    slug = str(fm.get("slug") or os.path.basename(os.path.dirname(path)))
+    date = time.strftime("%Y-%m-%d")
+    by_tag = {}
+    for i, e in p["test_strategy"].items():
+        for t in re.split(r"[,\s]+", str(e.get("anchors_to") or "")):
+            if t and i in p["leaves"]:
+                by_tag.setdefault(t, []).append(i)
+    proven = lambda s, a: bool(by_tag.get(f"{s}:{a}")) and all(  # noqa: E731
+        i in p["counted"] and p["iscs"][i][0] for i in by_tag[f"{s}:{a}"])
+    specs, steps = {}, {}
+    for _key, link in _doc_links(fm):
+        files, bullets = specdoc.link_files(link, root=root), specdoc.resolve(link, root=root)
+        mine = specs.setdefault(files[-1], [])
+        mine += [b for b in bullets if proven(*b) and b not in mine]
+        if len(files) == 2:  # a plan link: `#P<n>`, in the plan files[0] over the spec files[-1]
+            steps.setdefault(files[0], []).append((link.partition("#")[2].strip(), files[-1], bullets))
+    written = []
+    for f, bullets in specs.items():
+        written += [(f, ln) for ln in specdoc.mark_done(f, bullets, slug, date)]
+    for f, items in steps.items():
+        ticked = []
+        for pid, sp, bullets in items:
+            secs = specdoc.parse(_read(sp))["sections"]
+            if all(secs[s]["bullets"][a]["ticked"] for s, a in bullets):
+                ticked.append(pid)
+        written += [(f, ln) for ln in specdoc.mark_done(f, ticked, slug, date)]
+    return written
 
 
 def _why_no_red(path, parsed, i, tool, before):
