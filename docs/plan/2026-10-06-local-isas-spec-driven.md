@@ -103,7 +103,7 @@ Review focus:
   - pi asks the ack at `agent_before_settle` when the bound spec or plan changed this turn and passes `specdoc.lint(path, "ack")`, and reports the answer to the engine;
   - a select closed with Esc (`undefined`) is reported as `Request changes`;
   - with no UI, nothing is asked and nothing is recorded.
-- [ ] P9 — The stage rules of spec § 5.2 in PreToolUse and Stop · E3 · covers §8.6 · after P7
+- [x] P9 — The stage rules of spec § 5.2 in PreToolUse and Stop · E3 · covers §8.6 · after P7 · Done: 2026-10-06
   Files: `runtime/isa/engine.py`, `runtime/isa/protocol.md`, `tests/test_spec_flow.py`
   Interfaces: produces `engine._stage(st, cwd) -> str`, one of `"off"`, `"triage"`, `"spec_draft"`, `"spec_acked"`, `"plan_draft"`, `"plan_acked"`, `"build"`
   Done when:
