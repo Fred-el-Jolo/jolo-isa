@@ -1,5 +1,5 @@
 ---
-status: acked 2026-10-06 #835d76a3
+status: acked 2026-10-06 #2b9e4f43
 effort: E4
 plan: docs/plan/2026-10-06-local-isas-spec-driven.md
 ---
