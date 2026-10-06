@@ -1,7 +1,9 @@
 """Classifier table + randomized compositions. Run: python3 -m unittest tests.test_bash_classifier"""
 import os
 import random
+import shutil
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "runtime"))
@@ -93,6 +95,37 @@ class TestCompositions(unittest.TestCase):
             want = max((k for _, k in parts), key=order.get)
             got, _ = classify.bash(joined, CWD)
             self.assertEqual(got, want, joined)
+
+
+class TestSpecKind(unittest.TestCase):
+    """Plan P6: specs and plans are their own path kind; until P9 a write onto one is still a write."""
+
+    def test_spec(self):
+        for rel in ("docs/spec/2026-10-06-x.md", "docs/plan/2026-10-06-x.md"):
+            self.assertEqual(classify.path_kind(rel, CWD), "spec", rel)
+            self.assertEqual(classify.path_kind(os.path.join(CWD, rel), CWD), "spec", rel)
+
+    def test_near_miss(self):
+        for rel in ("docs/specs/x.md", "docs/spec/x.txt", "SPEC.md", "docs/spec/sub/x.md"):
+            self.assertEqual(classify.path_kind(rel, CWD), "project", rel)
+
+    def test_spec_under_isa_home(self):
+        home = tempfile.mkdtemp(prefix="isa-cls-home-", dir=os.path.expanduser("~/.cache"))
+        old = os.environ.get("ISA_HOME")
+        os.environ["ISA_HOME"] = home
+        try:
+            p = os.path.join(home, "_home", "docs", "spec", "2026-10-06-x.md")
+            self.assertEqual(classify.path_kind(p, os.path.expanduser("~")), "spec")
+            self.assertEqual(classify.path_kind(os.path.join(home, "_home", "20261006-1_t", "ISA.md"), CWD), "isa")
+        finally:
+            os.environ.pop("ISA_HOME") if old is None else os.environ.__setitem__("ISA_HOME", old)
+            shutil.rmtree(home, ignore_errors=True)
+
+    def test_spec_is_write(self):
+        self.assertEqual(classify.classify("Write", {"file_path": "docs/spec/x.md", "content": "x"}, CWD)[0], "write")
+        self.assertEqual(classify.classify("Edit", {"file_path": "docs/plan/x.md"}, CWD)[0], "write")
+        self.assertEqual(classify.bash("echo x > docs/spec/x.md", CWD)[0], "write")
+        self.assertEqual(classify.bash("cat <<EOF > docs/plan/x.md\nhi\nEOF", CWD)[0], "write")
 
 
 if __name__ == "__main__":

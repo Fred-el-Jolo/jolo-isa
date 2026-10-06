@@ -419,6 +419,19 @@ class PlanLint(DocCase):
 
 
 class Cli(DocCase):
+    def setUp(self):
+        super().setUp()
+        # a /tmp folder is no doc root (plan P6): specs of a scratch project live under ISA_HOME/<key>/docs/
+        self.docs = os.path.join(self.tmp, "home", "_scratch")
+
+    def write(self, text, kind="spec", name=SPEC_NAME):
+        d = os.path.join(self.docs, "docs", kind)
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, name)
+        with open(p, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        return p
+
     def isa(self, *args):
         env = {k: v for k, v in os.environ.items() if not k.startswith("ISA_")}
         env["ISA_HOME"] = os.path.join(self.tmp, "home")
@@ -457,6 +470,19 @@ class Cli(DocCase):
         example = os.path.join(ROOT, "skill", "ISA", "Examples", "e1-minimal.md")
         rc, out = self.isa("lint", example)
         self.assertEqual((rc, out.splitlines()[0]), (0, f"{example}: ok"))
+
+    def test_lint_routes_by_doc_root(self):
+        spec = self.write(E3)  # ISA_HOME/<key>/docs/spec/: a spec path
+        rc, out = self.isa("lint", spec)
+        self.assertEqual((rc, out.strip()), (0, f"{spec}: ok (spec)"))
+        loose = os.path.join(self.tmp, "docs", "spec", SPEC_NAME)  # a /tmp folder is no doc root
+        os.makedirs(os.path.dirname(loose))
+        with open(loose, "w") as f:
+            f.write(E3)
+        rc, out = self.isa("lint", loose)
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn("(spec)", out)
+        self.assertIn("missing `## Criteria`", out)
 
 
 if __name__ == "__main__":

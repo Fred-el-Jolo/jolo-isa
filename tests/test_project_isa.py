@@ -261,6 +261,82 @@ class TestMissingBound(GitCase):
         self.assertFalse(os.path.exists(os.path.join(self.home, "_state", "errors.log")))
 
 
+class TestProjectIsaEverywhere(GitCase):
+    """Plan P6: the first `isa new`, or the first spec written, creates the project ISA at the doc root
+    (spec 2026-10-06 § A.4, § B.1), in git and out of it."""
+
+    def setUp(self):
+        super().setUp()
+        self.plain = tempfile.mkdtemp(prefix="isa-p6-plain-", dir=os.path.expanduser("~/.cache"))
+        self.scratch = tempfile.mkdtemp(prefix="isa-p6-tmp-", dir="/tmp")
+        self.addCleanup(shutil.rmtree, self.plain, True)
+        self.addCleanup(shutil.rmtree, self.scratch, True)
+
+    def fm_kind(self, path):
+        return state.frontmatter(path).get("kind")
+
+    def spec_write(self, root, cwd=None):
+        spec = os.path.join(root, "docs", "spec", "2026-10-06-x.md")
+        os.makedirs(os.path.dirname(spec), exist_ok=True)
+        with open(spec, "w") as f:
+            f.write("---\nstatus: draft\neffort: E2\n---\n\n# X\n")
+        rc, out, err = self.hook("PostToolUse", cwd=cwd or root, tool_name="Write",
+                                 tool_input={"file_path": spec, "content": "x"}, tool_response={"type": "create"})
+        self.assertEqual(rc, 0, err)
+        return out
+
+    def test_new_outside_git(self):
+        rc, out = self.isa("new", "x", cwd=self.plain)
+        self.assertEqual(rc, 0, out)
+        proj = os.path.join(self.plain, "ISA.md")
+        self.assertEqual(self.fm_kind(proj), "project")
+        self.assertNotIn("commit it", out)
+        self.assertTrue(out.strip().splitlines()[-1].startswith(self.home), out)
+
+    def test_new_in_temp(self):
+        rc, out = self.isa("new", "x", cwd=self.scratch)
+        self.assertEqual(rc, 0, out)
+        self.assertFalse(os.path.exists(os.path.join(self.scratch, "ISA.md")))
+        proj = os.path.join(self.home, state.project_key(self.scratch), "ISA.md")
+        self.assertEqual(self.fm_kind(proj), "project")
+        self.assertTrue(os.path.isfile(out.strip().splitlines()[-1]))
+
+    def test_new_in_git(self):
+        proj = os.path.join(self.proj, "ISA.md")
+        self.assertFalse(os.path.exists(proj))
+        self.new_isa()
+        self.assertEqual(self.fm_kind(proj), "project")
+
+    def test_spec_write_git(self):
+        out = self.spec_write(self.proj)
+        proj = os.path.join(self.proj, "ISA.md")
+        self.assertEqual(self.fm_kind(proj), "project")
+        self.assertIn("created the project ISA", json.dumps(out))
+
+    def test_spec_write_non_git(self):
+        self.spec_write(self.plain)
+        self.assertEqual(self.fm_kind(os.path.join(self.plain, "ISA.md")), "project")
+
+    def test_non_project_isa_md_untouched(self):
+        for root in (self.proj, self.plain):
+            with open(os.path.join(root, "ISA.md"), "w") as f:
+                f.write("# International Standard Atmosphere\n")
+        self.hook("UserPromptSubmit", prompt=PROMPT)
+        rc, out = self.isa("new", "x")
+        self.assertEqual(rc, 0, out)
+        self.spec_write(self.proj)
+        self.spec_write(self.plain)
+        for root in (self.proj, self.plain):
+            self.assertEqual(read(os.path.join(root, "ISA.md")), "# International Standard Atmosphere\n")
+
+    def test_spec_write_still_gated(self):
+        self.env["ISA_MODE"] = "on"
+        self.hook("UserPromptSubmit", prompt=PROMPT)
+        spec = os.path.join(self.proj, "docs", "spec", "2026-10-06-x.md")
+        out = self.pre_isa("Write", file_path=spec, content="x")
+        self.assertEqual(self.decision(out), "deny", out)
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()

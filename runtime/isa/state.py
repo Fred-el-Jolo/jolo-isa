@@ -87,14 +87,53 @@ def project_dir(cwd):
     return os.path.join(home(), project_key(cwd))
 
 
-def is_project_isa(path):
-    """`<repo>/ISA.md`: the repo's living spec — never bound, never closed (spec 2026-10-06 § A.4)."""
+def doc_root(cwd):
+    """Where cwd's project keeps its project ISA, specs and plans (spec 2026-10-06 § B.1): the git work-tree
+    root; else cwd itself; for `$HOME`, a scratch folder (non-git, under a temp root), a repo `repo_root`
+    refuses, or a folder inside ISA_HOME: `ISA_HOME/<project-key>`."""
+    d = os.path.realpath(cwd or os.getcwd())
+    h_isa = os.path.realpath(home())
+    if (d + os.sep).startswith(h_isa + os.sep):
+        return os.path.join(home(), project_key(d))
+    repo = repo_root(d)
+    if repo:
+        return repo
+    root = project_root(d)
+    if _is_repo(root) or root == os.path.realpath(os.path.expanduser("~")) or is_scratch_dir(root):
+        return os.path.join(home(), project_key(d))
+    return root
+
+
+def _is_doc_root(d):
+    """True when folder d is its own project's doc root (never ISA_HOME itself or its `_state`)."""
+    d, h_isa = os.path.realpath(d), os.path.realpath(home())
+    st = os.path.join(h_isa, "_state")
+    if d in (h_isa, st) or (d + os.sep).startswith(st + os.sep):
+        return False
+    return os.path.realpath(doc_root(d)) == d
+
+
+def is_spec_path(path):
+    """`<doc root>/docs/spec/*.md` or `<doc root>/docs/plan/*.md` (spec 2026-10-06 § B.1)."""
     try:
         p = os.path.realpath(os.path.expanduser(path))
     except (TypeError, ValueError):
         return False
-    d = os.path.dirname(p)
-    return os.path.basename(p) == "ISA.md" and _is_repo(d) and repo_root(d) == d
+    folder = os.path.dirname(p)
+    docs = os.path.dirname(folder)
+    return (p.endswith(".md") and os.path.basename(folder) in ("spec", "plan") and os.path.basename(docs) == "docs"
+            and _is_doc_root(os.path.dirname(docs)))
+
+
+def is_project_isa(path):
+    """`<doc root>/ISA.md`: the project's living spec — never bound, never closed (spec 2026-10-06 § A.4). In a
+    git repo that is `<repo>/ISA.md`; outside git `<dir>/ISA.md`; for `$HOME` and scratch folders
+    `ISA_HOME/<project-key>/ISA.md`."""
+    try:
+        p = os.path.realpath(os.path.expanduser(path))
+    except (TypeError, ValueError):
+        return False
+    return os.path.basename(p) == "ISA.md" and _is_doc_root(os.path.dirname(p))
 
 
 def is_isa_path(path):
@@ -106,6 +145,8 @@ def is_isa_path(path):
         return False
     if is_project_isa(p):
         return True
+    if is_spec_path(p):
+        return False  # a spec or plan of a project whose doc root is under ISA_HOME
     h = os.path.realpath(home())
     if not (p + os.sep).startswith(h + os.sep):
         return False

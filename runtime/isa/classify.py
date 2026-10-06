@@ -51,6 +51,8 @@ def path_kind(path, cwd, temp_dirs=()):
     p = os.path.expanduser(path)
     if not os.path.isabs(p):
         p = os.path.join(cwd or os.getcwd(), p)
+    if state.is_spec_path(p):
+        return "spec"  # a spec or plan (plan P6); a write onto it is still a project write until P9
     if state.is_isa_path(p):
         return "isa"
     rp = os.path.realpath(p)
@@ -245,7 +247,7 @@ def _segment(words, cwd, temp_dirs):
                     kind = "isa-shell-edit"
                 elif pk == "isa":
                     isa.append(target)
-                elif pk == "project":
+                elif pk in ("project", "spec"):
                     kind = _worse(kind, "write")
             i += 2
             continue

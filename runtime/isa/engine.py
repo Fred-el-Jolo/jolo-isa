@@ -913,7 +913,7 @@ def _target_base(ev):
         return None
     for p in classify.tool_paths(ev.get("tool_input")):
         full = p if os.path.isabs(os.path.expanduser(p)) else os.path.join(ev.get("cwd") or "", p)
-        if classify.path_kind(full, ev.get("cwd"), ev.get("temp_dirs", ())) == "project":
+        if classify.path_kind(full, ev.get("cwd"), ev.get("temp_dirs", ())) in ("project", "spec"):
             return os.path.dirname(os.path.realpath(os.path.expanduser(full)))
     return None
 
@@ -924,6 +924,18 @@ def _changed_projects(ev, kind):
         base = _target_base(ev)
         return [state.project_key(base)] if base else []
     return [state.project_key(ev.get("cwd"))]
+
+
+def _spec_project_isa(ev, out):
+    """The first spec or plan written creates the project ISA at its doc root (spec 2026-10-06 § A.4)."""
+    if ev.get("tool") not in classify.FILE_TOOLS:
+        return
+    for p in classify.tool_paths(ev.get("tool_input")):
+        full = p if os.path.isabs(os.path.expanduser(p)) else os.path.join(ev.get("cwd") or "", p)
+        if state.is_spec_path(full):
+            from . import commands  # only here: hooks stay light
+            root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(os.path.expanduser(full)))))
+            commands.project_isa(root, out.append)
 
 
 def _count_change(st, now, out):
@@ -1069,6 +1081,7 @@ def _post_tool(ev):
         elif kind == "write" or (kind == "unknown" and tool in classify.SHELL_TOOLS and _script_changed(ev, st)):
             _count_change(st, now, out)
             touched = _changed_projects(ev, kind)
+            _spec_project_isa(ev, out)
             if was_off and not st.get("pass") and _switch_on(st, "change", "a command changed project files"):
                 warn = "ISA: ON — a command changed project files; the turn needs an ISA before it ends"
         if kind == "unknown" and tool in classify.SHELL_TOOLS:

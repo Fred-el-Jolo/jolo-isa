@@ -173,9 +173,7 @@ def new(args, cwd=None, out=print):
     lines += ["---", ""]
     os.makedirs(os.path.dirname(path), exist_ok=True)
     isafile.write_atomic(path, "\n".join(lines))
-    repo = state.repo_root(cwd)
-    if repo:  # the repo's project ISA, when it has none yet (spec 2026-10-06 § A.4)
-        project_isa(repo, out)
+    project_isa(state.doc_root(cwd), out)  # the project ISA, when it has none yet (spec 2026-10-06 § A.4)
     logs.note(isa=path)
     out(path)
     return 0
@@ -192,22 +190,24 @@ updated: {stamp}
 ## Problem
 
 The living spec of `{name}`: the constraints and standing claims its code must keep satisfying. Task ISAs live in
-`.isa/`; a criterion that must hold forever is promoted here (`promote: true`).
+`~/.isa/<project>/`, never committed; a criterion that must hold forever is promoted here (`promote: true`).
 """
 
 
-def project_isa(repo, out=print):
-    """The repo's project ISA (SPEC-v2 § 13.2): created as a skeleton on the first `isa new`; an existing
-    root `ISA.md` of another kind is never touched."""
-    path = os.path.join(repo, "ISA.md")
+def project_isa(root, out=print):
+    """The project ISA at a doc root (`state.doc_root`, spec 2026-10-06 § A.4): created as a skeleton by the
+    first `isa new` or the first spec written; an existing `ISA.md` of another kind is never touched."""
+    path = os.path.join(root, "ISA.md")
     if os.path.exists(path):
         if state.frontmatter(path).get("kind") != "project":
-            out(f"isa new: {path} exists and is not a project ISA (no `kind: project`) — left untouched; this repo "
+            out(f"isa: {path} exists and is not a project ISA (no `kind: project`) — left untouched; this project "
                 "gets no project ISA")
         return
-    name = os.path.basename(repo)
+    os.makedirs(root, exist_ok=True)
+    name = os.path.basename(root)
+    committed = " — commit it with the code" if state.repo_root(root) == os.path.realpath(root) else ""
     isafile.write_atomic(path, PROJECT_SKELETON.format(task=f"Living spec of {name}", stamp=isafile.now_iso(), name=name))
-    out(f"isa: created the project ISA {path} (kind: project — commit it with the code)")
+    out(f"isa: created the project ISA {path} (kind: project{committed})")
 
 
 STANDING = re.compile(r"^\s*- (ISC-P\d+): (.*)$", re.M)

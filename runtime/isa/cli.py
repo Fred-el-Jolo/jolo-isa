@@ -90,14 +90,6 @@ def _dispatch(cmd, args):
     return 2
 
 
-def _spec_doc(p):
-    """A spec or plan: a `.md` directly under a `docs/spec/` or `docs/plan/` folder (until P6's
-    `state.is_spec_path`)."""
-    d = os.path.dirname(os.path.abspath(os.path.expanduser(p)))
-    return p.endswith(".md") and os.path.basename(d) in ("spec", "plan") \
-        and os.path.basename(os.path.dirname(d)) == "docs"
-
-
 def _lint(args):
     """`isa lint`: specs and plans go to `specdoc.lint`, every other file to the ISA lint, unchanged."""
     flags, files = [], list(args)
@@ -105,12 +97,12 @@ def _lint(args):
         flags, files = files[:1], files[1:]
     elif files[:1] == ["--moment"] and len(files) > 1:
         flags, files = files[:2], files[2:]
-    if not any(_spec_doc(p) for p in files):
+    if not any(state.is_spec_path(p) for p in files):
         return commands.lint_cmd(args)
     moment = "ack" if flags == ["--moment", "ack"] else "draft"
     rc = 0
     for p in files:
-        if not _spec_doc(p):
+        if not state.is_spec_path(p):
             rc = max(rc, commands.lint_cmd(flags + [p]))
             continue
         try:
