@@ -358,6 +358,8 @@ def _continue_text(gate, choice):
 
 def _ask_answer(ev):
     """pi: the adapter asked with its own dialog and reports the pick."""
+    if ev.get("ask_kind") == "ack":
+        return _pi_ack_answer(ev)
     choice = "enable" if ASK_ENABLE.lower() in str(ev.get("choice") or "").lower() else "continue"
     res = _record_choice(ev, choice)
     if choice != "enable":  # never `block`: at settle that would restart a run the user let end
@@ -415,7 +417,7 @@ def _bind_doc(st, ev, out):
             out.append(f"{kind.capitalize()} {_tilde(full)} bound to this session. Its ack: once `isa lint` on it is "
                        f"clean, ask with AskUserQuestion — header `{ACK_HEADER_SPEC if kind == 'spec' else ACK_HEADER_PLAN}`, "
                        f"question naming the file, options exactly `{ACK_YES}` and `{ACK_NO}`.")
-        st["doc"] = {"path": full, "kind": kind}
+        st["doc"] = {"path": full, "kind": kind, "pid": str(ev.get("prompt_id"))}  # pid: "changed this turn" (P8)
 
 
 def _ack_questions(ev):
@@ -507,6 +509,58 @@ def _record_ack(ev):
         note(ack="recorded")
         out.append(_ack_text(path, h))
     return {"context": "\n".join(out)} if out else {}
+
+
+def _pi_ack_due(ev, res):
+    """pi, at settle (plan P8): the ack question for the bound spec or plan, when it changed this turn (or a
+    question waits from an earlier settle), passes the ack lint, and its content is not acknowledged yet. The
+    gate question and an ISA problem go first: the ack then waits for the next completed run."""
+    if ev.get("harness") != "pi" or not ev.get("has_ui"):
+        return None
+    with state.session(ev["harness"], ev["session"]) as st:
+        doc = st.get("doc") or {}
+        path = doc.get("path")
+        if not path or (doc.get("pid") != str(ev.get("prompt_id")) and not doc.get("ack_wait")):
+            return None
+        try:
+            text = open(path, encoding="utf-8").read()
+        except (OSError, ValueError):
+            return None
+        if specdoc.acked(path) or specdoc.ack_recorded(path, specdoc.ack_hash(text)):
+            doc.pop("ack_wait", None)
+            return None
+        if [m for m in specdoc.lint(path, "ack") if not m.startswith("warn:")]:
+            return None
+        if res.get("ask") or res.get("block"):
+            doc["ack_wait"] = True
+            note(ack="deferred")
+            return None
+        doc.pop("ack_wait", None)
+        doc["pid"] = None  # asked: an unchanged doc is not asked again
+    note(ack="asked")
+    return {"ask": f"{ACK_YES} {_tilde(path)}?", "options": [ACK_YES, ACK_NO], "ask_kind": "ack", "ask_path": path}
+
+
+def _pi_ack_answer(ev):
+    """pi: the user's pick on the ack question. Exactly ACK_YES on the session's bound doc, still lint-clean, is
+    recorded, and the run continues with the status-line and commit instructions; anything else ends the turn
+    (the user's notes come in their next prompt)."""
+    st = state.read_session(ev["harness"], ev["session"])
+    path = ev.get("ask_path")
+    if not path or path != (st.get("doc") or {}).get("path") or not os.path.isfile(path):
+        note(ack="ignored", ignored="not the bound spec or plan")
+        return {}
+    if str(ev.get("choice") or "") != ACK_YES:
+        note(ack="declined")
+        return {}
+    errors = [m for m in specdoc.lint(path, "ack") if not m.startswith("warn:")]
+    if errors:
+        note(ack="lint")
+        return {"warn": f"ISA ack not recorded: {_tilde(path)} no longer passes the ack lint:\n{_fmt(errors)}"}
+    h = specdoc.record_ack(path, ev["harness"], ev["session"])
+    note(ack="recorded")
+    text = _ack_text(path, h)
+    return {"context": text, "block": text}
 
 
 def _status_refusal(ev):
@@ -1484,6 +1538,12 @@ def _stop_gate(ev, st, gate, pid):
 
 
 def _stop(ev):
+    res = _stop_checks(ev)
+    ack = _pi_ack_due(ev, res)
+    return dict(res, **ack) if ack else res
+
+
+def _stop_checks(ev):
     pid = str(ev.get("prompt_id") or "_")
     with state.session(ev["harness"], ev["session"]) as st:
         gate = st.get("gate") if (st.get("gate") or {}).get("pid") == str(ev.get("prompt_id")) else None

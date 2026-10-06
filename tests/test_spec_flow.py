@@ -7,12 +7,13 @@ Real git repos, a fake `jev`. Run: python3 -m unittest tests.test_spec_flow
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
 
-from tests.test_hooks import ROOT, calls, setup_fake
+from tests.test_hooks import ISA, ROOT, calls, setup_fake
 from tests.test_project_isa import GitCase
 from tests.test_specdoc import E3, E4, PLAN
 
@@ -77,14 +78,14 @@ class SpecCase(GitCase):
 class Binding(SpecCase):
     def test_spec_write_binds(self):
         p = self.write_doc(SPEC, E3)
-        self.assertEqual(self.st().get("doc"), {"path": os.path.realpath(p), "kind": "spec"})
+        self.assertEqual(self.st().get("doc"), {"path": os.path.realpath(p), "kind": "spec", "pid": self.pid})
 
     def test_plan_binds_and_rebinds(self):
         self.doc(E4_SPEC, E4)
         plan = self.write_doc(PLAN_DOC, PLAN)
-        self.assertEqual(self.st().get("doc"), {"path": os.path.realpath(plan), "kind": "plan"})
+        self.assertEqual(self.st().get("doc"), {"path": os.path.realpath(plan), "kind": "plan", "pid": self.pid})
         spec = self.write_doc(SPEC, E3)
-        self.assertEqual(self.st().get("doc"), {"path": os.path.realpath(spec), "kind": "spec"})
+        self.assertEqual(self.st().get("doc"), {"path": os.path.realpath(spec), "kind": "spec", "pid": self.pid})
 
     def test_isa_binding_kept(self):
         isa = self.task()
@@ -251,6 +252,170 @@ class StatusLine(SpecCase):
         out = self.hook("PreToolUse", tool_name="Bash", tool_input={"command": f"echo '{{}}' >> {acks}"})[1]
         self.assertEqual(self.decision(out), "deny", out)
         self.assertIn("acks.jsonl", self.reason(out))
+
+
+class PiAck(SpecCase):
+    """Plan P8 (spec § 5.6 questions 3–5, pi column; § 8 item 12): pi asks the ack at `agent_before_settle`."""
+
+    def setUp(self):
+        super().setUp()
+        setup_fake(self, isa_gate=0.1)  # below jev_quiet: no gate question, the prompt has the Continue pass
+
+    def pi(self, event, pid="p1", **kw):
+        d = {"event": event, "session": self.sid, "cwd": self.proj, "prompt_id": pid}
+        d.update(kw)
+        p = subprocess.run([sys.executable, ISA, "hook", "pi"], input=json.dumps(d), text=True,
+                           capture_output=True, env=self.env, timeout=20)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return json.loads(p.stdout or "{}")
+
+    def quiet(self, pid="p1", has_ui=True):
+        res = self.pi("prompt", pid, prompt="draft the spec for the help screen", has_ui=has_ui)
+        self.assertNotIn("ask", res)
+        return res
+
+    def pi_write(self, rel, text, pid="p1"):
+        p = self.doc(rel, text)
+        self.pi("post_tool", pid, tool="write", tool_input={"path": p, "content": text}, tool_output="")
+        return os.path.realpath(p)
+
+    def stop(self, pid="p1", has_ui=True, **kw):
+        return self.pi("stop", pid, has_ui=has_ui, **kw)
+
+    def ack(self, path, choice="Acknowledge", pid="p1"):
+        return self.pi("ask_answer", pid, choice=choice, ask_kind="ack", ask_path=path)
+
+    def pi_session(self):
+        with open(os.path.join(self.home, "_state", "sessions", f"pi-{self.sid}.json")) as f:
+            return json.load(f)
+
+    def assert_ack_ask(self, res, path, rel):
+        self.assertEqual((res.get("ask_kind"), res.get("ask_path")), ("ack", path), res)
+        self.assertEqual(res.get("options"), ["Acknowledge", "Request changes"])
+        self.assertTrue(res["ask"].startswith("Acknowledge ") and res["ask"].endswith(f"{rel}?"), res["ask"])
+
+    def test_settle_asks_spec(self):
+        self.quiet()
+        p = self.pi_write(SPEC, E3)
+        self.assertEqual(self.pi_session()["doc"]["pid"], "p1")
+        self.assert_ack_ask(self.stop(), p, SPEC)
+
+    def test_settle_asks_plan(self):
+        self.quiet()
+        self.doc(E4_SPEC, E4)
+        p = self.pi_write(PLAN_DOC, PLAN)
+        self.assert_ack_ask(self.stop(), p, PLAN_DOC)
+
+    def test_lint_fails_no_ask(self):
+        self.quiet()
+        self.pi_write(SPEC, E3.replace("Said:\n", ""))
+        self.assertNotIn("ask", self.stop())
+        p = self.pi_write(SPEC, E3)
+        self.assert_ack_ask(self.stop(), p, SPEC)
+
+    def test_unchanged_not_asked(self):
+        self.quiet()
+        p = self.pi_write(SPEC, E3)
+        self.assert_ack_ask(self.stop(), p, SPEC)
+        self.quiet("p2")
+        self.assertNotIn("ask", self.stop("p2"))
+
+    def test_acked_not_asked_again(self):
+        self.quiet()
+        p = self.pi_write(SPEC, E3)
+        self.assert_ack_ask(self.stop(), p, SPEC)
+        self.assertIn("block", self.ack(p))
+        self.assertNotIn("ask", self.stop())  # recorded, status line not written yet
+        line = f"status: acked {today()} #{specdoc.ack_hash(E3)}"
+        edits = [{"oldText": "status: draft", "newText": line}]
+        self.assertNotIn("deny", self.pi("pre_tool", tool="edit", tool_input={"path": p, "edits": edits}))
+        self.doc(SPEC, E3.replace("status: draft", line))
+        self.pi("post_tool", tool="edit", tool_input={"path": p, "edits": edits}, tool_output="")
+        self.assertTrue(specdoc.acked(p))
+        self.assertEqual(self.pi_session()["doc"]["pid"], "p1")  # written this prompt, yet acked: not asked
+        self.assertNotIn("ask", self.stop())
+
+    def test_acknowledge_records(self):
+        self.quiet()
+        p = self.pi_write(SPEC, E3)
+        res = self.ack(self.stop()["ask_path"])
+        rows = self.acks()
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual((rows[0]["path"], rows[0]["hash"], rows[0]["harness"], rows[0]["session"]),
+                         (p, specdoc.ack_hash(E3), "pi", self.sid))
+        self.assertIn(f"status: acked {today()} #{specdoc.ack_hash(E3)}", res.get("block", ""))
+        self.assertIn(f'commit -m "Spec: Help screen redesign (acked)" -- {SPEC}', res["block"])
+
+    def test_only_exact_label(self):
+        self.quiet()
+        p = self.pi_write(SPEC, E3)
+        self.assert_ack_ask(self.stop(), p, SPEC)
+        for a in ("Request changes", "ack", "Acknowledge (Recommended)", "acknowledge", "Acknowledge, but fix S2", ""):
+            self.assertNotIn("block", self.ack(p, a), a)
+        self.assertEqual(self.acks(), [])
+
+    def test_answer_rechecks_lint(self):
+        self.quiet()
+        p = self.pi_write(SPEC, E3)
+        self.assert_ack_ask(self.stop(), p, SPEC)
+        self.doc(SPEC, E3.replace("Said:\n", ""))  # broken on disk before the click lands
+        self.assertNotIn("block", self.ack(p))
+        self.assertEqual(self.acks(), [])
+
+    def test_answer_other_path(self):
+        self.quiet()
+        p = self.pi_write(SPEC, E3)
+        other = os.path.realpath(self.doc("docs/spec/2026-10-06-other.md", E3))
+        self.assertNotIn("block", self.ack(other))
+        self.assertEqual(self.acks(), [])
+        self.assertIn("block", self.ack(p))
+        self.assertEqual([r["path"] for r in self.acks()], [p])
+
+    def test_no_ui(self):
+        self.quiet(has_ui=False)
+        self.pi_write(SPEC, E3)
+        self.assertNotIn("ask", self.stop(has_ui=False))
+        self.assertEqual(self.acks(), [])
+
+    def test_gate_first(self):
+        self.env["ISA_JEV_BIN"] = os.path.join(self.tmp, "no-jev-here")  # Jev unavailable: the model judges
+        self.assertNotIn("ask", self.pi("prompt", prompt="what does the help screen show?", has_ui=True))
+        p = os.path.realpath(self.doc(SPEC, E3))
+        # the doc bound this prompt without switching the session ON (a write would turn it ON and drop the gate)
+        sess = os.path.join(self.home, "_state", "sessions", f"pi-{self.sid}.json")
+        st = self.pi_session()
+        st["doc"] = {"path": p, "kind": "spec", "pid": "p1"}
+        with open(sess, "w") as f:
+            json.dump(st, f)
+        res = self.stop(context="ISA judge (model): no — a question about the help screen.")
+        self.assertTrue(res.get("ask", "").startswith("ISA is not enabled for this prompt"), res)
+        self.assertNotIn("ask_kind", res)
+        self.assertNotIn("block", self.pi("ask_answer", choice="Continue without ISA"))
+        setup_fake(self, isa_gate=0.1)
+        self.quiet("p2")
+        self.assert_ack_ask(self.stop("p2"), p, SPEC)  # the next completed run asks the ack
+        self.assertNotIn("ask", self.stop("p2"))  # asked once: not again for an unchanged doc
+
+    def test_pi_edit_status_guard(self):
+        self.quiet()  # the Continue pass: only the status-line guard can refuse the edit
+        p = self.pi_write(SPEC, E3)
+        line = f"status: acked {today()} #{specdoc.ack_hash(E3)}"
+        ti = {"path": p, "edits": [{"oldText": "status: draft", "newText": line}]}
+        res = self.pi("pre_tool", tool="edit", tool_input=ti)
+        self.assertIn("Acknowledge", res.get("deny", ""), res)
+        self.assertIn("block", self.ack(self.stop()["ask_path"]))
+        self.assertNotIn("deny", self.pi("pre_tool", tool="edit", tool_input=ti))
+
+    def test_claude_stop_unchanged(self):
+        self.write_doc(SPEC, E3)  # Claude Code: the model asks with AskUserQuestion, never the Stop hook
+        code = ("import json, sys; sys.path.insert(0, sys.argv[1]); from isa import engine; "
+                "print(json.dumps(engine.handle(json.load(sys.stdin))))")
+        ev = {"event": "stop", "harness": "claude", "session": self.sid, "cwd": self.proj, "prompt_id": self.pid,
+              "has_ui": True, "transcript_path": "/dev/null"}
+        p = subprocess.run([sys.executable, "-c", code, os.path.join(ROOT, "runtime")], input=json.dumps(ev),
+                           text=True, capture_output=True, env=self.env, timeout=20)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn("ask", json.loads(p.stdout))
 
 
 class SpecdocAcks(unittest.TestCase):

@@ -2,7 +2,7 @@
 // Drives the extension through a mock `pi` against the real engine in a throwaway ISA_HOME.
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs"
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir, homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -302,5 +302,96 @@ test("M11.2: below jev_quiet, pi asks nothing at input (quiet)", async () => {
     await fire("input", { text: "commit and push", source: "interactive" })
     assert.equal(called, 0)
     assert.ok(notes.some((n) => /continue without ISA \(below 0\.30\)/.test(n)))
+  })
+})
+
+// Plan P8 (spec § 5.6 questions 3–5, pi column): the spec / plan ack, asked at agent_before_settle
+const ACK = { ask: "Acknowledge ~/p/docs/spec/2026-10-06-help.md?", options: ["Acknowledge", "Request changes"],
+  ask_kind: "ack", ask_path: "/p/docs/spec/2026-10-06-help.md" }
+
+function ackStub(stopResult: Record<string, unknown> = ACK) {
+  const calls: Record<string, unknown>[] = []
+  const stub = (payload: Record<string, unknown>) => {
+    calls.push(payload)
+    if (payload.event === "stop") return stopResult
+    if (payload.event === "ask_answer" && payload.ask_kind === "ack" && payload.choice === "Acknowledge")
+      return { block: "Set the status line." }
+    return {}
+  }
+  return { calls, stub, answer: () => calls.find((c) => c.event === "ask_answer") }
+}
+
+test("P8 settle asks the ack and reports the answer with its kind and path", async () => {
+  const { stub, answer } = ackStub()
+  const asked: { title: string; options: string[] }[] = []
+  const select = async (title: string, options: string[]) => { asked.push({ title, options }); return "Acknowledge" }
+  const { fire } = harness("s-p8-ask", stub, [], { select })
+  await fire("before_agent_start", { prompt: "go" })
+  const res = await fire("agent_before_settle", DONE)
+  assert.deepEqual(asked, [{ title: ACK.ask, options: ACK.options }])
+  const a = answer()!
+  assert.deepEqual([a.choice, a.ask_kind, a.ask_path], ["Acknowledge", "ack", ACK.ask_path])
+  assert.equal(res.continue, true)
+  assert.equal(res.entries[0].content, "Set the status line.")
+})
+
+test("P8 Esc on the ack question reports Request changes", async () => {
+  const { stub, answer } = ackStub()
+  const { fire } = harness("s-p8-esc", stub, [], { select: async () => undefined })
+  await fire("before_agent_start", { prompt: "go" })
+  assert.equal(await fire("agent_before_settle", DONE), undefined)
+  assert.deepEqual([answer()!.choice, answer()!.ask_kind], ["Request changes", "ack"])
+})
+
+test("P8 a select error on the ack question reports Request changes", async () => {
+  const { stub, answer } = ackStub()
+  const select = async () => { throw new Error("dialog closed") }
+  const { fire, notes } = harness("s-p8-err", stub, [], { select })
+  await fire("before_agent_start", { prompt: "go" })
+  assert.equal(await fire("agent_before_settle", DONE), undefined)
+  assert.equal(answer()!.choice, "Request changes")
+  assert.ok(notes.some((n) => /could not ask/.test(n) && !/continuing without an ISA/.test(n)))
+})
+
+test("P8 no UI: the ack is not asked and nothing is reported", async () => {
+  const { stub, answer } = ackStub()
+  let called = 0
+  const { fire } = harness("s-p8-noui", stub, [], { select: async () => { called += 1; return "Acknowledge" } }, false)
+  await fire("before_agent_start", { prompt: "go" })
+  assert.equal(await fire("agent_before_settle", DONE), undefined)
+  assert.equal(called, 0)
+  assert.equal(answer(), undefined)
+})
+
+test("P8 Esc on the gate question still reports Continue without ISA", async () => {
+  const { stub, answer } = ackStub({ ask: "ISA is not enabled for this prompt (model: no — x). Continue?",
+    options: ["Continue without ISA", "Enable ISA"] })
+  const { fire } = harness("s-p8-gate", stub, [], { select: async () => undefined })
+  await fire("before_agent_start", { prompt: "go" })
+  await fire("agent_before_settle", DONE)
+  assert.equal(answer()!.choice, "Continue without ISA")
+  assert.equal("ask_kind" in answer()!, false)
+})
+
+test("P8 Acknowledge at settle records the ack and continues the run", async () => {
+  await withJev("0.1", async () => {
+    const spec = execFileSync("python3", ["-c", "from tests.test_specdoc import E3; print(E3, end='')"],
+      { cwd: ROOT, encoding: "utf8" })
+    const path = join(PROJ, "docs", "spec", "2026-10-06-help.md")
+    const asked: string[] = []
+    const select = async (title: string, options: string[]) => { asked.push(title); return options[0] }
+    const { fire } = harness("s-p8-real", undefined, [], { select })
+    await fire("input", { text: "draft the spec for the help screen", source: "interactive" })
+    await fire("before_agent_start", { prompt: "draft the spec for the help screen" })
+    assert.deepEqual(asked, []) // below jev_quiet: no gate question
+    mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, spec)
+    fire("tool_result", { toolName: "write", input: { path, content: spec }, content: [], isError: false })
+    const res = await fire("agent_before_settle", DONE)
+    assert.equal(asked.length, 1)
+    assert.match(asked[0], /^Acknowledge .*docs\/spec\/2026-10-06-help\.md\?$/)
+    assert.equal(res.continue, true)
+    assert.match(res.entries[0].content, /status: acked \d{4}-\d\d-\d\d #[0-9a-f]{8}/)
+    const rows = readFileSync(join(process.env.ISA_HOME!, "_state", "acks.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l))
+    assert.deepEqual(rows.map((r) => [r.path, r.harness, r.session]), [[realpathSync(path), "pi", "s-p8-real"]])
   })
 })

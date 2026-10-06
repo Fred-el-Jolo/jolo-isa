@@ -19,7 +19,11 @@
 //                          judged, and its `ISA judge (model): no|unsure — …` line makes the engine answer
 //                          `ask`: the extension asks here, after the answer; Enable ISA continues the run
 //                          with the ON block). One continuation per prompt, then a warning
-//                          (completed runs only — never after an abort or an error)
+//                          (completed runs only — never after an abort or an error). When the bound spec or
+//                          plan changed this turn and lints clean, the engine answers the ack question instead
+//                          (`ask_kind: "ack"`, plan P8): Acknowledge / Request changes, Esc → Request changes;
+//                          the pick goes back with its `ask_kind` and `ask_path`, and Acknowledge continues the
+//                          run so the model writes the status line
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { spawnSync } from "node:child_process"
 import { homedir } from "node:os"
@@ -30,7 +34,12 @@ const ISA_BIN = process.env.ISA_BIN || join(homedir(), ".local", "share", "isa",
 const TIMEOUT_MS = Number(process.env.ISA_HOOK_TIMEOUT_MS || 15000)
 const CONTEXT_CHARS = 2000
 
-type EngineResult = { context?: string; deny?: string; block?: string; warn?: string; ask?: string; options?: string[] }
+type EngineResult = {
+  context?: string; deny?: string; block?: string; warn?: string
+  ask?: string; options?: string[]; ask_kind?: string; ask_path?: string
+}
+const GATE_DEFAULT = "Continue without ISA"
+const ACK_DEFAULT = "Request changes" // Esc or a failed dialog on the ack is never an ack
 
 export function callEngine(payload: Record<string, unknown>, timeoutMs: number = TIMEOUT_MS): EngineResult {
   const r = spawnSync("python3", [ISA_BIN, "hook", "pi"], {
@@ -116,18 +125,28 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
     const p = run(ctx, "prompt", { prompt, context: lastAssistantText(ctx), has_ui: Boolean(ctx.hasUI) })
     if (p.context) parts.push(p.context)
     if (p.ask && ctx.hasUI) {
-      const res = run(ctx, "ask_answer", { choice: await select(ctx, p.ask, p.options) })
+      const res = await answer(ctx, p)
       if (res.context) parts.push(res.context)
     }
     return parts
   }
-  const select = async (ctx: ExtensionContext, title: string, options?: string[]): Promise<string> => {
+  const select = async (ctx: ExtensionContext, title: string, options?: string[],
+                        fallback: string = GATE_DEFAULT): Promise<string> => {
     try {
-      return (await ctx.ui.select(title, options ?? ["Continue without ISA", "Enable ISA"])) ?? "Continue without ISA"
+      return (await ctx.ui.select(title, options ?? [GATE_DEFAULT, "Enable ISA"])) ?? fallback
     } catch (e) {
-      warn(ctx, `ISA: could not ask (${(e as Error).message}) — continuing without an ISA`)
-      return "Continue without ISA"
+      warn(ctx, `ISA: could not ask (${(e as Error).message}) — ${fallback === GATE_DEFAULT
+        ? "continuing without an ISA" : `answering "${fallback}"`}`)
+      return fallback
     }
+  }
+  // ask the engine's question and report the pick; the ack question carries its kind and path back
+  const answer = async (ctx: ExtensionContext, q: EngineResult): Promise<EngineResult> => {
+    if (q.ask_kind === "ack") {
+      const choice = await select(ctx, q.ask!, q.options, ACK_DEFAULT)
+      return run(ctx, "ask_answer", { choice, ask_kind: q.ask_kind, ask_path: q.ask_path })
+    }
+    return run(ctx, "ask_answer", { choice: await select(ctx, q.ask!, q.options) })
   }
 
   pi.on("input", async (event, ctx) => {
@@ -164,7 +183,7 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
     // only a run that finished normally is checked: never restart one the user aborted or that errored
     if (event.outcome !== "completed" || event.context?.canContinue === false) return
     let res = run(ctx, "stop", { context: lastAssistantText(ctx), has_ui: Boolean(ctx.hasUI) })
-    if (res.ask && ctx.hasUI) res = run(ctx, "ask_answer", { choice: await select(ctx, res.ask, res.options) })
+    if (res.ask && ctx.hasUI) res = await answer(ctx, res)
     if (!res.block) return
     return {
       continue: true,
