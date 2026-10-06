@@ -6,6 +6,7 @@ Real git repos, a fake `jev`. Run: python3 -m unittest tests.test_spec_flow
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,7 +19,7 @@ from tests.test_project_isa import GitCase
 from tests.test_specdoc import E3, E4, PLAN
 
 sys.path.insert(0, os.path.join(ROOT, "runtime"))
-from isa import specdoc  # noqa: E402
+from isa import specdoc, state  # noqa: E402
 
 SPEC = "docs/spec/2026-10-06-help.md"
 E4_SPEC = "docs/spec/2026-10-06-api-migration.md"
@@ -611,11 +612,291 @@ class StageRules(SpecCase):
         self.write_doc(SPEC, E3)
         self.assertNotEqual(self.decision(self.edit_project()[1]), "deny")
 
+    def test_no_spec_passes_gate(self):
+        self.on()
+        self.write_doc(SPEC, E3)
+        self.assertNotEqual(self.decision(self.bash("isa new tweak --no-spec --tier E2")), "deny")
+
     def test_build_unaffected(self):
         self.task()
         self.write_doc(SPEC, E3)
         self.assertEqual(self.stage(), "build")
         self.assertNotEqual(self.decision(self.edit_project()[1]), "deny")
+
+
+GOAL_LINE = "`tool --help` fits one screen and leads with the common tasks."
+
+
+def fm_block(text):
+    return text.split("\n---\n", 1)[0] + "\n---\n"
+
+
+class SpecLinks(unittest.TestCase):
+    """Plan P10: `specdoc.resolve` and `specdoc.seed` (spec § B.5, § 5.4, § 5.5)."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix="isa-p10-links-", dir=os.path.expanduser("~/.cache"))
+        self.addCleanup(shutil.rmtree, self.base, True)
+        for rel, text in ((SPEC, E3), (E4_SPEC, E4), (PLAN_DOC, PLAN)):
+            p = os.path.join(self.base, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as f:
+                f.write(text)
+
+    def resolve(self, link):
+        return specdoc.resolve(link, root=self.base)
+
+    def test_resolve_spec(self):
+        self.assertEqual(self.resolve(f"{SPEC}#S1"), [("S1", "A1"), ("S1", "A2")])
+        self.assertEqual(self.resolve(f"{SPEC}#S2:A1"), [("S2", "A1")])
+        self.assertEqual(self.resolve(f"{SPEC}#S1,S2"), [("S1", "A1"), ("S1", "A2"), ("S2", "A1")])
+        self.assertEqual(self.resolve(SPEC), [("S1", "A1"), ("S1", "A2"), ("S2", "A1")])
+        self.assertEqual(specdoc.resolve(os.path.join(self.base, SPEC) + "#S2"), [("S2", "A1")])
+
+    def test_resolve_plan(self):
+        self.assertEqual(self.resolve(f"{PLAN_DOC}#P2"), [("S2", "A1"), ("S2", "A2"), ("S2", "A3")])
+        self.assertEqual(self.resolve(f"{PLAN_DOC}#P1"), [("S1", "A1"), ("S1", "A2")])
+
+    def test_resolve_errors(self):
+        for link, part in (("docs/spec/2026-10-06-none.md#S1", "2026-10-06-none.md"), (f"{SPEC}#S9", "S9"),
+                           (f"{SPEC}#S1:A9", "S1:A9"), (f"{PLAN_DOC}#P9", "P9")):
+            with self.assertRaisesRegex(ValueError, re.escape(part)):
+                self.resolve(link)
+
+    def test_seed_spec(self):
+        s = specdoc.seed(f"{SPEC}#S1", root=self.base)
+        self.assertEqual(s["goal"], GOAL_LINE)
+        self.assertEqual(s["criteria"], [("S1:A1", "`tool --help | wc -l` prints 24 or less"),
+                                         ("S1:A2", "the first task listed is `tool sync`")])
+        self.assertEqual((s["tier"], s["constraints"], s["review_focus"]),
+                         ("E3", ["At most 24 lines at 80 columns."], []))
+
+    def test_seed_plan(self):
+        s = specdoc.seed(f"{PLAN_DOC}#P3", root=self.base)
+        self.assertEqual((s["goal"], s["tier"]), ("The REST adapter", "E3"))
+        self.assertEqual(s["criteria"], [("S3:A1", "the REST contract tests pass unchanged"),
+                                         ("P3", "the REST contract tests pass unchanged.")])
+        self.assertEqual(s["review_focus"], ["a client sending both REST and GraphQL headers"])
+        self.assertEqual(s["constraints"], ["REST responses stay byte-identical until 2027-04-06."])
+
+
+class NewLinked(SpecCase):
+    """Plan P10: `isa new --spec / --plan / --no-spec` (spec § 5.4 step 5, § 5.5 step 5, § 8 items 7, 17)."""
+
+    def isa_dirs(self):
+        folder = os.path.dirname(os.path.dirname(self.isa_path()))
+        return sorted(os.listdir(folder)) if os.path.isdir(folder) else []
+
+    def new(self, *args):
+        rc, out = self.isa("new", "help", *args)
+        return rc, out
+
+    def new_spec(self, link=f"{SPEC}#S1", *extra, text=None):
+        self.doc(SPEC, text or acked(E3))
+        rc, out = self.new("--spec", link, *extra)
+        self.assertEqual(rc, 0, out)
+        path = out.strip().splitlines()[-1]
+        with open(path) as f:
+            return path, f.read(), out
+
+    def plan_ready(self, plan=None):
+        self.doc(E4_SPEC, acked(E4))
+        self.doc(PLAN_DOC, acked(plan or PLAN.replace("- [ ] P1 — The schema", "- [x] P1 — The schema")))
+
+    def test_spec_not_acked(self):
+        self.doc(SPEC, E3)
+        before = self.isa_dirs()
+        rc, out = self.new("--spec", f"{SPEC}#S1")
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("not acknowledged", out)
+        self.assertEqual(self.isa_dirs(), before)
+
+    def test_spec_changed_since_ack(self):
+        self.doc(SPEC, acked(E3).replace("24 or less", "30 or less"))
+        rc, out = self.new("--spec", f"{SPEC}#S1")
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("changed since its ack", out)
+
+    def test_marks_keep_ack(self):
+        text = acked(E3).replace("- [ ] A1: `tool --help", "- [x] A1: `tool --help").replace(
+            "## S2 — Full reference\n", "## S2 — Full reference\nDone: 2026-10-09 — 1/1 accepted (ISAs x)\n")
+        path, _, _ = self.new_spec(text=text)
+        self.assertEqual(state.frontmatter(path).get("spec"), f"{SPEC}#S1")
+
+    def test_plan_after_open(self):
+        self.plan_ready(PLAN)
+        rc, out = self.new("--plan", f"{PLAN_DOC}#P3")
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("P1", out)
+        rc, out = self.new("--plan", f"{PLAN_DOC}#P1")
+        self.assertEqual(rc, 0, out)
+
+    def test_plan_not_acked(self):
+        self.doc(E4_SPEC, acked(E4))
+        self.doc(PLAN_DOC, PLAN)
+        rc, out = self.new("--plan", f"{PLAN_DOC}#P1")
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("not acknowledged", out)
+        self.doc(E4_SPEC, E4)
+        self.doc(PLAN_DOC, acked(PLAN))
+        rc, out = self.new("--plan", f"{PLAN_DOC}#P1")
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn(E4_SPEC, out)
+
+    def test_seed_goal(self):
+        path, text, _ = self.new_spec()
+        fm = state.frontmatter(path)
+        self.assertEqual((fm.get("spec"), fm.get("stated_goal"), fm.get("stated_goal_source")),
+                         (f"{SPEC}#S1", GOAL_LINE, "spec"))
+        self.assertIn(f"## Goal\n\n{GOAL_LINE}\n", text)
+
+    def test_seed_criteria(self):
+        _, text, _ = self.new_spec(f"{SPEC}#S1,S2")
+        for line in ("- [ ] ISC-1: `tool --help | wc -l` prints 24 or less",
+                     "- [ ] ISC-2: the first task listed is `tool sync`",
+                     "- [ ] ISC-3: every flag of the old help appears in `tool help --all`"):
+            self.assertIn(line + "\n", text)
+        self.assertEqual(re.findall(r'- isc: (ISC-\d+)\n  anchors_to: "([^"]+)"', text),
+                         [("ISC-1", "S1:A1"), ("ISC-2", "S1:A2"), ("ISC-3", "S2:A1")])
+
+    def test_seed_tier(self):
+        e2 = E3.replace("effort: E3", "effort: E2")
+        path, _, _ = self.new_spec(text=acked(e2))
+        self.assertEqual(state.frontmatter(path)["effort"], "E2")
+        path, _, _ = self.new_spec(f"{SPEC}#S1", "--tier", "E4", text=acked(e2))
+        self.assertEqual(state.frontmatter(path)["effort"], "E4")
+
+    def test_pointer_lines(self):
+        _, text, _ = self.new_spec()
+        for sec in ("Problem", "Vision", "Out of Scope", "Constraints"):
+            self.assertIn(f"## {sec}\n\nSee {SPEC}#S1\n", text)
+
+    def test_constraints_printed(self):
+        path, _, out = self.new_spec()
+        self.assertIn("At most 24 lines at 80 columns.", out)
+        self.assertTrue(path.endswith("/ISA.md"), out)
+
+    def test_plan_seed(self):
+        self.plan_ready()
+        rc, out = self.new("--plan", f"{PLAN_DOC}#P3")
+        self.assertEqual(rc, 0, out)
+        fm = state.frontmatter(out.strip().splitlines()[-1])
+        self.assertEqual((fm.get("plan"), fm.get("stated_goal"), fm.get("stated_goal_source"), fm.get("effort")),
+                         (f"{PLAN_DOC}#P3", "The REST adapter", "spec", "E3"))
+
+    def test_plan_review_focus(self):
+        self.plan_ready()
+        rc, out = self.new("--plan", f"{PLAN_DOC}#P3")
+        self.assertEqual(rc, 0, out)
+        with open(out.strip().splitlines()[-1]) as f:
+            text = f.read()
+        self.assertRegex(text, r"- \[ \] ISC-\d+: a client sending both REST and GraphQL headers\n")
+        self.assertNotIn("a list query issuing one SQL query per item", text)
+
+    def test_no_spec(self):
+        rc, out = self.isa("new", "tweak", "--no-spec", "--tier", "E2")
+        self.assertEqual(rc, 0, out)
+        with open(out.strip().splitlines()[-1]) as f:
+            self.assertRegex(f.read(), r"## Decisions\n\n- \d{4}-\d\d-\d\d \d\d:\d\d: no-spec: the user's call\n")
+        self.doc(SPEC, acked(E3))
+        self.doc(E4_SPEC, acked(E4))
+        self.doc(PLAN_DOC, acked(PLAN))
+        for extra in (("--plan", f"{PLAN_DOC}#P1"), ("--no-spec",)):
+            rc, out = self.new("--spec", f"{SPEC}#S1", *extra)
+            self.assertNotEqual(rc, 0, out)
+
+
+FILLED_E2 = """## Problem
+
+See {spec}#S1
+
+## Goal
+
+{goal}
+
+## Criteria
+
+- [ ] ISC-1: `tool --help` prints at most 24 lines.
+- [ ] ISC-2: `tool sync` is the first task `tool --help` lists.
+- [ ] ISC-3: Anti: `tool --help` prints an ANSI escape code.
+
+## Test Strategy
+
+```yaml
+- isc: ISC-1
+  anchors_to: "S1:A1"
+  type: bash
+  kind: behaviour
+  check: line count
+  threshold: exit 0
+  tool: test "$(python3 tool.py --help | wc -l)" -le 24
+- isc: ISC-2
+  anchors_to: "{a2}"
+  type: bash
+  kind: behaviour
+  check: first task
+  threshold: exit 0
+  tool: python3 tool.py --help | grep -m1 -q 'tool sync'
+- isc: ISC-3
+  anchors_to: "Goal"
+  type: bash
+  kind: regression
+  check: no escape code
+  threshold: exit 0
+  tool: "! python3 tool.py --help | grep -q $'\\\\x1b'"
+  fails-when: "an escape code appears in the help output"
+```
+"""
+
+FILLED_E3_EXTRA = """
+## Features
+
+```yaml
+- name: summary
+  description: the short help screen
+  satisfies: [ISC-1, ISC-2, ISC-3]
+  depends_on: []
+  parallelizable: false
+```
+"""
+
+
+class LinkLint(NewLinked):
+    """Plan P10: lint of a linked ISA (spec § B.5 "What lint changes in a linked ISA", § B.6)."""
+
+    def filled(self, tier="E2", a2="S1:A2", goal=GOAL_LINE):
+        path, text, _ = self.new_spec(f"{SPEC}#S1", "--tier", tier)
+        self.assertIn(f"spec: {SPEC}#S1", text)  # the scaffold came out linked
+        fm = fm_block(text).replace("asks: []", "asks: []\ncontext_sufficient: true").replace(
+            f"stated_goal: \"{GOAL_LINE}\"", f"stated_goal: \"{goal}\"").replace("progress: 0/2", "progress: 0/3")
+        body = FILLED_E2.format(spec=SPEC, goal=GOAL_LINE, a2=a2)
+        if tier == "E3":
+            pointers = "".join(f"## {s}\n\nSee {SPEC}#S1\n\n" for s in ("Vision", "Out of Scope", "Constraints"))
+            body = body.replace("## Goal", pointers + "## Goal") + FILLED_E3_EXTRA
+        with open(path, "w") as f:
+            f.write(fm + "\n" + body)
+        return path
+
+    def lint_isa(self, path):
+        return self.isa("lint", path)
+
+    def test_unanchored_bullet(self):
+        rc, out = self.lint_isa(self.filled())
+        self.assertEqual(rc, 0, out)
+        rc, out = self.lint_isa(self.filled(a2="Goal"))
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("S1:A2", out)
+
+    def test_pointer_sections_pass(self):
+        rc, out = self.lint_isa(self.filled("E3"))
+        self.assertEqual(rc, 0, out)
+
+    def test_spec_goal_source(self):
+        rc, out = self.lint_isa(self.filled())  # no logged prompt holds the goal: the spec does
+        self.assertEqual(rc, 0, out)
+        rc, out = self.lint_isa(self.filled(goal="`tool --help` fits two screens and leads with the common tasks."))
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("stated_goal", out)
 
 
 class SpecdocAcks(unittest.TestCase):

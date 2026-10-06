@@ -19,7 +19,7 @@ import shlex
 import subprocess
 import time
 
-from . import config, evidence, fingerprint, isafile, jev, lint, logs, problems, rules, state
+from . import config, evidence, fingerprint, isafile, jev, lint, logs, problems, rules, specdoc, state
 
 TAIL = evidence.TAIL_CHARS
 VAGUE = {"make", "this", "that", "good", "better", "thing", "things", "stuff", "please", "just", "with", "from",
@@ -114,9 +114,10 @@ def project_prompts(key):
 
 def new(args, cwd=None, out=print):
     cwd = cwd or os.getcwd()
-    opts, words, i = {"--tier": None, "--goal": None}, [], 0
+    opts, words, i = {"--tier": None, "--goal": None, "--spec": None, "--plan": None}, [], 0
     path_only = "--path-only" in args
-    args = [a for a in args if a != "--path-only"]
+    no_spec = "--no-spec" in args
+    args = [a for a in args if a not in ("--path-only", "--no-spec")]
     while i < len(args):
         if args[i] in opts and i + 1 < len(args):
             opts[args[i]] = args[i + 1]
@@ -130,7 +131,16 @@ def new(args, cwd=None, out=print):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         out(path)
         return 0
-    tier = (opts["--tier"] or "E3").upper()
+    if len([k for k in ("--spec", "--plan") if opts[k]]) + no_spec > 1:
+        out("isa new: --spec, --plan and --no-spec exclude each other — pick one")
+        return 2
+    seeded, link = None, opts["--spec"] or opts["--plan"]
+    if link:
+        seeded, err = _seed(link, "--spec" if opts["--spec"] else "--plan", cwd)
+        if err:
+            out(f"isa new: {err}")
+            return 1
+    tier = (opts["--tier"] or (seeded or {}).get("tier") or "E3").upper()
     if tier not in lint.TIER_ARTICULATION:
         out(f"isa new: --tier must be E1..E5, got `{opts['--tier']}`")
         return 2
@@ -140,7 +150,9 @@ def new(args, cwd=None, out=print):
         return 2
     prompts = project_prompts(state.project_key(cwd))
     goal, comment, source = None, None, prompts[-1] if prompts else None
-    if opts["--goal"] is not None:
+    if seeded and opts["--goal"] is None and seeded["goal"]:
+        goal = seeded["goal"]  # verbatim from the document: lint checks it against that file (§ B.5)
+    elif opts["--goal"] is not None:
         span = opts["--goal"]
         if not min_content(span):
             out("isa new: --goal fails the minimum-content rule (≥ 6 words with real content) — pick a longer "
@@ -161,22 +173,97 @@ def new(args, cwd=None, out=print):
                    "and log the candidate in Decisions")
     stamp = isafile.now_iso()
     folder = os.path.basename(os.path.dirname(path))
-    lines = ["---", 'task: ""', f"slug: {folder}", f"effort: {tier}", "phase: observe", "progress: 0/0",
-             f"started: {stamp}", f"updated: {stamp}", f"root: {isafile._yaml_value(root)}",
-             f"stated_goal: {isafile._yaml_value(goal)}"]
+    body, n = [], 0
+    if seeded:
+        stored = _link_text(seeded, link, root)
+        body, n = _seed_body(seeded, stored, root)
+    lines = ["---", 'task: ""', f"slug: {folder}", f"effort: {tier}", "phase: observe", f"progress: 0/{n}",
+             f"started: {stamp}", f"updated: {stamp}", f"root: {isafile._yaml_value(root)}"]
+    if seeded:
+        lines.append(f"{'plan' if seeded['step'] else 'spec'}: {stored}")
+    lines.append(f"stated_goal: {isafile._yaml_value(goal)}")
     if goal is not None:
-        lines.append("stated_goal_source: prompt")
+        lines.append("stated_goal_source: " + ("spec" if seeded and opts["--goal"] is None else "prompt"))
     if comment:
         lines.append(comment)
     # SPEC-v2 § 11.2: no model call — the model lists the asks; lint checks each is a verbatim span
     lines += ["asks: []", "# asks: list each explicit ask of the prompt as a verbatim span (lint checks them)"]
     lines += ["---", ""]
+    if no_spec:  # the user's "no spec" (spec 2026-10-06 § 5.4): the flow is E1's, the row records why
+        body = ["## Decisions", "", f"- {time.strftime('%Y-%m-%d %H:%M')}: no-spec: the user's call", ""]
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    isafile.write_atomic(path, "\n".join(lines))
+    isafile.write_atomic(path, "\n".join(lines + body))
+    if seeded:
+        out(f"Seeded from {stored}: {n} draft criteria — rewrite each as an atomic, probe-able end state, add an "
+            "`Anti:` ISC, and fill each Test Strategy entry (type, kind, check, threshold, tool), keeping its "
+            "`anchors_to`.")
+        if seeded["constraints"]:
+            out(f"Constraints ({_rel(seeded['spec_path'], root)}):\n"
+                + "\n".join(f"- {c}" for c in seeded["constraints"]))
     project_isa(state.doc_root(cwd), out)  # the project ISA, when it has none yet (spec 2026-10-06 § A.4)
     logs.note(isa=path)
     out(path)
     return 0
+
+
+def _seed(link, flag, cwd):
+    """→ (seed, None) for a link `isa new` may start from, or (None, why not): the document is the kind the flag
+    names, it (and a plan's spec) reads as acked now, and a step's `after` steps are done (spec § 5.4, § 5.5)."""
+    try:
+        s = specdoc.seed(link, root=cwd)
+    except ValueError as e:
+        return None, str(e)
+    if (flag == "--plan") != bool(s["step"]):
+        return None, f"{link} is a {'plan' if s['step'] else 'spec'} — use {'--plan' if s['step'] else '--spec'}"
+    for p in [s["path"]] + ([s["spec_path"]] if s["step"] else []):
+        if specdoc.acked(p):
+            continue
+        with open(p, encoding="utf-8") as f:
+            h = specdoc.acked_hash(f.read())
+        if h:
+            return None, (f"{_tilde(p)} changed since its ack (#{h} in its status line) — ask the user to "
+                          "acknowledge it again")
+        return None, f"{_tilde(p)} is not acknowledged yet — ask the user's ack first"
+    if s["open_after"]:
+        return None, f"{s['step']} comes after {', '.join(s['open_after'])}, still open — finish it first"
+    return s, None
+
+
+def _tilde(p):
+    h = os.path.expanduser("~")
+    return "~" + p[len(h):] if p == h or p.startswith(h + os.sep) else p
+
+
+def _rel(path, root):
+    rel = os.path.relpath(path, root)
+    return path if rel.startswith("..") else rel
+
+
+def _link_text(s, link, root):
+    """The link as the ISA stores it: the document relative to the ISA's `root:` (absolute outside it)."""
+    frag = str(link).partition("#")[2].strip()
+    return _rel(s["path"], root) + (f"#{frag}" if frag else "")
+
+
+def _seed_body(s, stored, root):
+    """The scaffold of a linked ISA: pointer lines for the context the spec owns, the Goal, one draft criterion
+    per seed (anchored in its Test Strategy entry), the step's Review focus lines (spec § B.5)."""
+    sids = sorted({a.split(":")[0] for a, _ in s["criteria"] if ":" in a}, key=lambda x: int(x[1:]))
+    if s["step"]:
+        pointer = f"See {_rel(s['spec_path'], root)}" + (f"#{','.join(sids)}" if sids else "") + f" (step {stored})"
+    else:
+        pointer = f"See {stored}"
+    seeds = s["criteria"] + [(s["step"], t) for t in s["review_focus"]]
+    body = []
+    for name in ("Problem", "Vision", "Out of Scope", "Constraints"):
+        body += [f"## {name}", "", pointer, ""]
+    body += ["## Goal", "", s["goal"] or "", "", "## Criteria", ""]
+    body += [f"- [ ] ISC-{i}: {t}" for i, (_, t) in enumerate(seeds, 1)]
+    body += ["", "## Test Strategy", "", "```yaml"]
+    for i, (anchor, _) in enumerate(seeds, 1):
+        body += [f"- isc: ISC-{i}", f"  anchors_to: \"{anchor}\""]
+    body += ["```", ""]
+    return body, len(seeds)
 
 
 PROJECT_SKELETON = """---

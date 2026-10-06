@@ -5,7 +5,8 @@ is the template of spec § B.3; the lint checks only what a script can decide (s
 user checks the rest at the ack.
 
 Standard library only (frontmatter via `yamlish`). Entry points: `parse(text)`, `ack_hash(text)`,
-`lint(path, moment)`; the ack records (§ B.4): `record_ack`, `ack_recorded`, `acked`.
+`lint(path, moment)`; the ack records (§ B.4): `record_ack`, `ack_recorded`, `acked`; the ISA links (§ B.5, plan
+P10): `resolve(link)`, `seed(link)`, `link_files(link)`.
 """
 import hashlib
 import json
@@ -367,7 +368,7 @@ def _plan_rules(d, path, text):
         elif target not in steps:
             out.append(f'Review focus: "{txt}" → {target} — no such step')
     rel = str(d["fm"].get("spec"))
-    sp = os.path.expanduser(rel) if os.path.isabs(os.path.expanduser(rel)) else os.path.join(_doc_root(path), rel)
+    sp = _spec_of(path, d["fm"])
     try:
         with open(sp, encoding="utf-8") as f:
             spec_text = _norm(f.read())
@@ -404,6 +405,117 @@ def _plan_rules(d, path, text):
         out.append(f"warn: code blocks are {100 * code // max(plan_bytes, 1)}% of the plan — the plan holds the "
                    "decisions, the step's ISA and the code hold the code")
     return out
+
+
+def _spec_of(plan_path, fm):
+    """The spec a plan names in its frontmatter (`spec:`, relative to the plan's doc root)."""
+    rel = os.path.expanduser(str(fm.get("spec") or ""))
+    return rel if os.path.isabs(rel) else os.path.join(_doc_root(plan_path), rel)
+
+
+# ------------------------------------------------------------------ ISA links (§ B.5, § 5.4, § 5.5; plan P10)
+
+def _link_parts(link, root=None):
+    """`<path>#<fragment>` → (real path, fragment); a relative path is read from `root` (default: the cwd)."""
+    path, _, frag = str(link).partition("#")
+    path = os.path.expanduser(path.strip())
+    if not os.path.isabs(path):
+        path = os.path.join(root or os.getcwd(), path)
+    return os.path.realpath(path), frag.strip()
+
+
+def _read_doc(path, what):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except (OSError, ValueError):
+        raise ValueError(f"{what} {path} not found") from None
+
+
+def _bullets(spec, covers, where):
+    out = []
+    for sid, aid in covers:
+        sec = spec["sections"].get(sid)
+        if sec is None:
+            raise ValueError(f"{where}: no section {sid}")
+        if aid and aid not in sec["bullets"]:
+            raise ValueError(f"{where}: no bullet {sid}:{aid}")
+        if not aid and "[DROPPED" in sec["title"]:
+            continue
+        for a in [aid] if aid else list(sec["bullets"]):
+            if not sec["bullets"][a]["text"].startswith("[DROPPED") and (sid, a) not in out:
+                out.append((sid, a))
+    return out
+
+
+def _link(link, root=None):
+    """→ {path, doc, step, bullets, spec_path, spec} for a spec link (`#S1`, `#S1,S2`, `#S2:A1,A2`, none: every
+    section) or a plan link (`#P<n>`: the bullets the step covers, in the plan's spec)."""
+    path, frag = _link_parts(link, root)
+    d = _parse(_read_doc(path, "link:"))
+    if d["kind"] == "plan":
+        if not re.fullmatch(r"P\d+", frag):
+            raise ValueError(f"{link}: a plan link names one step, `#P<n>`")
+        step = d["steps"].get(frag)
+        if step is None:
+            raise ValueError(f"{link}: no step {frag} in the plan")
+        sp = os.path.realpath(_spec_of(path, d["fm"]))
+        spec = _parse(_read_doc(sp, f"{link}: the plan's spec"))
+        return {"path": path, "doc": d, "step": frag, "bullets": _bullets(spec, step["covers"], f"{link} → {sp}"),
+                "spec_path": sp, "spec": spec}
+    covers = _covers(frag) if frag else [(sid, None) for sid in d["sections"]]
+    if frag and not covers:
+        raise ValueError(f"{link}: `#{frag}` names no section (`#S1`, `#S1,S2`, `#S2:A1,A2`)")
+    return {"path": path, "doc": d, "step": None, "bullets": _bullets(d, covers, link), "spec_path": path, "spec": d}
+
+
+def resolve(link, root=None):
+    """The `(S, A)` bullets a link names, dropped ones left out; ValueError for a missing file, section, bullet
+    or step."""
+    return _link(link, root)["bullets"]
+
+
+def link_files(link, root=None):
+    """The files a link reads: the spec, or the plan and its spec."""
+    k = _link(link, root)
+    return [k["path"]] + ([k["spec_path"]] if k["step"] else [])
+
+
+def _section_lines(d, name):
+    for heading, _, content in _headings(d["_body"]):
+        if heading.lower() == name:
+            return [ln for _, ln in _text(content)]
+    return []
+
+
+def _goal_line(d):
+    for ln in _section_lines(d, "goal"):
+        if ln.strip() not in ("Said:", "Assumed:") and not ln.startswith("- ") and not ln.startswith(" "):
+            return ln.strip()
+    return None
+
+
+def seed(link, root=None):
+    """What `isa new --spec / --plan` scaffolds from (§ 5.4 step 5, § 5.5 step 5): `goal` (the spec's Goal line,
+    or the step line), `criteria` [(anchor, text)] (each linked bullet as `S2:A1`; for a step also its "Done
+    when" lines, anchored `P<n>`), `tier` (`effort:`, or the step's), the spec's `constraints`, and the
+    `review_focus` lines the step owns. Also `path`, `spec_path`, `step` and `open_after` (a step's `after`
+    steps not ticked yet)."""
+    k = _link(link, root)
+    spec = k["spec"]
+    criteria = [(f"{s}:{a}", spec["sections"][s]["bullets"][a]["text"]) for s, a in k["bullets"]]
+    if k["step"]:
+        st = k["doc"]["steps"][k["step"]]
+        goal, tier = st["goal"], st["tier"]
+        criteria += [(k["step"], t) for t in st["done_when"] or []]
+        focus = [t for t, owner in k["doc"]["review_focus"] if owner == k["step"]]
+        open_after = [a for a in st["after"] if not k["doc"]["steps"].get(a, {}).get("ticked")]
+    else:
+        goal, focus, open_after = _goal_line(spec), [], []
+        tier = str(spec["fm"].get("effort") or "").strip().upper() or None
+    constraints = [ln[2:].strip() if ln.startswith("- ") else ln.strip() for ln in _section_lines(spec, "constraints")]
+    return {"goal": goal, "criteria": criteria, "tier": tier, "constraints": constraints, "review_focus": focus,
+            "path": k["path"], "spec_path": k["spec_path"], "step": k["step"], "open_after": open_after}
 
 
 def lint(path, moment="draft"):

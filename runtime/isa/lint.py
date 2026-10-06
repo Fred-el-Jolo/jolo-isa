@@ -50,6 +50,7 @@ def placeholder(tool):
 
 # ISAs started before this date follow the v1 rules where SPEC-v2 § 8 softens a new rule for them
 V2_SINCE = "2026-10-02"
+SPEC_SINCE = "2026-10-06"  # the spec-or-`no-spec:` rule (plan P10): older ISAs get a warning
 
 # SPEC-v2 § 6.1: an entry's `kind:` sets the minimum probe type
 KINDS = {"behaviour", "behavior", "http", "visual", "file", "config", "schema", "doc", "decision", "regression"}
@@ -264,7 +265,7 @@ def lint(path, moment="auto", text=None, prompts=None):
     if len(str(fm.get("task", ""))) > 60:
         r.warn(f"frontmatter: task is {len(str(fm['task']))} chars (max 60)")
     goal = fm.get("stated_goal")
-    if prompts is not None and isinstance(goal, str) and goal.strip():
+    if prompts is not None and isinstance(goal, str) and goal.strip() and fm.get("stated_goal_source") != "spec":
         if not any(goal in p for p in prompts):
             r.err("frontmatter: stated_goal is not a verbatim substring of any logged user prompt "
                   "— copy it byte-for-byte from the prompt, or set it to null and log the candidate in Decisions")
@@ -412,6 +413,15 @@ def lint(path, moment="auto", text=None, prompts=None):
                          if key == "finding" else
                          "`repro-bypass: pure-additive | non-isolable | repro would cause damage — <why>`")
                       + f": {line.strip()[:80]}")
+
+    # --- the spec link (spec 2026-10-06 § B.2, § 5.4; plan P10): from E2, an ISA working in a project starts
+    # from a spec or plan, or records the user's "no spec"
+    if tier != "E1" and fm.get("root") and fm.get("kind") != "project" and not (fm.get("spec") or fm.get("plan")) \
+            and not re.search(r"\bno-spec:", content.get("Decisions", "")):
+        (r.err if str(fm.get("started") or "")[:10] >= SPEC_SINCE else r.warn)(
+            "frontmatter: no `spec:` / `plan:` link and no `no-spec:` Decisions row — from E2 the work starts from "
+            "an acknowledged spec (`isa new --spec <path>#S<n>`, or `--plan <path>#P<n>`); when the user said no "
+            "spec, record it: `no-spec: <their call>`")
 
     # --- ticks vs evidence (any moment, once Verification exists)
     ver = content.get("Verification", "")

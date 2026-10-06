@@ -84,6 +84,33 @@ def closed(text, extra_ver=""):
                                 "- Goal: yes — done\n")
 
 
+LINKED = V2.replace("context_sufficient: true", "context_sufficient: true\nroot: /home/u/dev/app").replace(
+    "started: 2026-10-02T10:00:00Z", "started: 2026-10-06T10:00:00Z")
+
+
+class TestSpecLink(unittest.TestCase):
+    """Plan P10 (spec § B.2, § 5.4): from E2, an ISA in a project needs a spec or plan link, or `no-spec:`."""
+
+    def link_errors(self, text):
+        errs, warns = items(text)
+        return [e for e in errs if "no-spec" in e], [w for w in warns if "no-spec" in w]
+
+    def test_link_required(self):
+        errs, _ = self.link_errors(LINKED)
+        self.assertEqual(len(errs), 1, errs)
+        self.assertIn("spec:", errs[0])
+        self.assertEqual(self.link_errors(LINKED + "\n## Decisions\n\n- 2026-10-06 10:00: no-spec: the user's call\n"),
+                         ([], []))
+        self.assertEqual(self.link_errors(LINKED.replace("root:", "spec: docs/spec/x.md#S1\nroot:")), ([], []))
+        self.assertEqual(self.link_errors(LINKED.replace("root:", "plan: [docs/plan/x.md#P2]\nroot:")), ([], []))
+
+    def test_link_exempt(self):
+        self.assertEqual(self.link_errors(LINKED.replace("effort: E2", "effort: E1"))[0], [])
+        errs, warns = self.link_errors(LINKED.replace("started: 2026-10-06", "started: 2026-10-05"))
+        self.assertEqual((errs, len(warns)), ([], 1))
+        self.assertEqual(self.link_errors(LINKED.replace("root: /home/u/dev/app\n", "")), ([], []))
+
+
 class TestKindRequired(unittest.TestCase):
     def test_by_tier_and_date(self):
         no_kind = V2.replace("  kind: file\n", "")

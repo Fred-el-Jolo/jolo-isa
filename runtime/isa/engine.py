@@ -609,7 +609,8 @@ def _near_miss(ev, base):
 
 
 def _isa_new_tiers(cmd):
-    """The tier of each `isa new` call in a shell command (E3 when `--tier` is absent, as the command defaults)."""
+    """The tier of each `isa new` call in a shell command (E3 when `--tier` is absent, as the command defaults;
+    E1 with `--no-spec`: the user's "no spec" leaves the spec flow, spec § 5.4)."""
     try:
         toks = classify._tokens(classify._drop_heredoc_bodies(cmd).replace("\\\n", " ").replace("\n", " ; "))
     except ValueError:
@@ -617,14 +618,15 @@ def _isa_new_tiers(cmd):
     out, i = [], 0
     while i < len(toks):
         if os.path.basename(toks[i]) == "isa" and i + 1 < len(toks) and toks[i + 1] == "new":
-            tier, j = "E3", i + 2
+            tier, j, no_spec = "E3", i + 2, False
             while j < len(toks) and toks[j] not in classify.SEPARATORS and not all(c in ";&|()" for c in toks[j]):
                 if toks[j] == "--tier" and j + 1 < len(toks):
                     tier = toks[j + 1]
                 elif toks[j].startswith("--tier="):
                     tier = toks[j].split("=", 1)[1]
+                no_spec = no_spec or toks[j] == "--no-spec"
                 j += 1
-            out.append(tier.upper())
+            out.append("E1" if no_spec else tier.upper())
             i = j
         else:
             i += 1

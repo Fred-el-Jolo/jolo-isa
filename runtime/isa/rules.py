@@ -13,12 +13,16 @@ log. `lint.lint` stays a pure file check (examples, tools/lint_isa.py); these ru
   them); an ask in the snapshot taken by the first `isa verify` may be removed only with a `refined:` row.
 
 Errors for ISAs started under v2, warnings for older ones (spec § 8).
+
+- links (spec 2026-10-06 § B.5, § B.6; plan P10): each `spec:` / `plan:` link resolves, every bullet it links is
+  the `anchors_to` of a Test Strategy entry, and a `stated_goal_source: spec` goal is found in a linked file.
+  Always errors (no ISA predates links).
 """
 import json
 import os
 import re
 
-from . import evidence, lint, state
+from . import evidence, lint, specdoc, state
 
 KIND_STRENGTH = {"behaviour": 3, "behavior": 3, "http": 3, "schema": 3, "regression": 2, "config": 2,
                  "visual": 1, "file": 1, "doc": 0, "decision": 0}
@@ -126,7 +130,40 @@ def _asks(isa_path, parsed):
     return out
 
 
+def _links(isa_path, parsed):
+    fm, out = parsed["fm"], []
+    links = []
+    for key in ("spec", "plan"):
+        v = fm.get(key)
+        links += [(key, str(x)) for x in (v if isinstance(v, list) else [v] if v else [])]
+    goal = fm.get("stated_goal") if isinstance(fm.get("stated_goal"), str) else None
+    from_doc = fm.get("stated_goal_source") == "spec"
+    if not links:
+        return ["frontmatter: `stated_goal_source: spec` needs a `spec:` or `plan:` link"] if from_doc and goal else []
+    root = str(fm.get("root") or os.path.dirname(isa_path))
+    anchors = {t for e in parsed["test_strategy"].values()
+               for t in re.split(r"[,\s]+", str(e.get("anchors_to") or "")) if t}
+    texts = []
+    for key, link in links:
+        try:
+            bullets = specdoc.resolve(link, root=root)
+            for p in specdoc.link_files(link, root=root):
+                with open(p, encoding="utf-8") as f:
+                    texts.append(f.read())
+        except (ValueError, OSError) as e:
+            out.append(f"frontmatter: `{key}: {link}` — {e}")
+            continue
+        for s, a in bullets:
+            if f"{s}:{a}" not in anchors:
+                out.append(f"Test Strategy: `{key}: {link}` links {s}:{a}, but no ISC anchors to it "
+                           f"(`anchors_to: \"{s}:{a}\"`)")
+    if from_doc and goal and texts and not any(goal in t for t in texts):
+        out.append("frontmatter: stated_goal (source: spec) is not a verbatim line of the linked spec or plan — "
+                   "copy it from the Goal or the step line")
+    return out
+
+
 def check(isa_path, parsed):
     found = _downgrades(isa_path, parsed) + _waivers(isa_path, parsed) + _asks(isa_path, parsed)
     errs, warns = (found, []) if lint.is_v2(parsed["fm"]) else ([], found)
-    return errs, warns
+    return errs + _links(isa_path, parsed), warns
