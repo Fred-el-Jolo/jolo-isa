@@ -114,7 +114,7 @@ Review focus:
   - after the ack, Stop refuses a turn with no ISA bound, as today;
   - the refusal for a near-miss path names `docs/spec/YYYY-MM-DD-<slug>.md`;
   - `protocol.md` carries the tier rule and the order spec → ack → (plan → ack) → ISA.
-- [ ] P10 — `isa new --spec / --plan`, and the ISA link rules · E3 · covers §8.7, §8.17 · after P7
+- [x] P10 — `isa new --spec / --plan`, and the ISA link rules · E3 · covers §8.7, §8.17 · after P7 · Done: 2026-10-06
   Files: `runtime/isa/commands.py` (change: `new`), `runtime/isa/specdoc.py`, `runtime/isa/lint.py`, `runtime/isa/rules.py`, `tests/test_spec_flow.py`, `tests/test_lint_v2.py`
   Interfaces: `isa new <slug> (--spec <path>#S2[:A1,A2] | --plan <path>#P2 | --no-spec) [--tier E1..E5]`; ISA frontmatter `spec:` / `plan:` (a string or a list), `stated_goal_source: spec`; produces `specdoc.resolve(link) -> list[tuple[str, str]]` (the `(S, A)` bullets a link names) and `specdoc.seed(link) -> dict` (`goal`, `criteria: [(anchor, text)]`, `tier`, `constraints`, `review_focus`)
   Done when:
