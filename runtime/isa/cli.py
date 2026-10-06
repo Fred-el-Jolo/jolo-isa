@@ -6,7 +6,9 @@
                                  its path — the hooks bind it to the session
     isa where                    project key and ISA folder for the current directory
     isa lint [--close] FILE…     recompute progress / nested parents / orphaned generated lines, then
-                                 the mechanical gate check (same engine the hooks use)
+                                 the mechanical gate check (same engine the hooks use); a spec or plan
+                                 (docs/spec/*.md, docs/plan/*.md) gets the spec lint instead
+                                 (`--moment ack`: also the rules that must hold before the ack)
     isa verify [--red] ISA [ISC-N…] [--attest "<evidence>"]
                                  run the probes (cwd = the ISA's root), record them, tick what passed and
                                  untick what regressed; --attest ticks a self-attested ISC; --red records
@@ -29,7 +31,7 @@ import sys
 import time
 import traceback
 
-from . import commands, engine, evidence, logs, state, status
+from . import commands, engine, evidence, logs, specdoc, state, status
 
 
 def main(argv=None):
@@ -63,7 +65,7 @@ def _dispatch(cmd, args):
     if cmd == "hook":
         return hook(args[0] if args else "claude")
     if cmd == "lint":
-        return commands.lint_cmd(args)
+        return _lint(args)
     if cmd == "ls":
         return _ls(args)
     if cmd == "new":
@@ -86,6 +88,45 @@ def _dispatch(cmd, args):
         return 0
     print(f"isa: unknown command `{cmd}` (see `isa --help`)", file=sys.stderr)
     return 2
+
+
+def _spec_doc(p):
+    """A spec or plan: a `.md` directly under a `docs/spec/` or `docs/plan/` folder (until P6's
+    `state.is_spec_path`)."""
+    d = os.path.dirname(os.path.abspath(os.path.expanduser(p)))
+    return p.endswith(".md") and os.path.basename(d) in ("spec", "plan") \
+        and os.path.basename(os.path.dirname(d)) == "docs"
+
+
+def _lint(args):
+    """`isa lint`: specs and plans go to `specdoc.lint`, every other file to the ISA lint, unchanged."""
+    flags, files = [], list(args)
+    if files[:1] == ["--close"]:
+        flags, files = files[:1], files[1:]
+    elif files[:1] == ["--moment"] and len(files) > 1:
+        flags, files = files[:2], files[2:]
+    if not any(_spec_doc(p) for p in files):
+        return commands.lint_cmd(args)
+    moment = "ack" if flags == ["--moment", "ack"] else "draft"
+    rc = 0
+    for p in files:
+        if not _spec_doc(p):
+            rc = max(rc, commands.lint_cmd(flags + [p]))
+            continue
+        try:
+            with open(os.path.expanduser(p), encoding="utf-8") as f:
+                kind = specdoc.parse(f.read())["kind"]
+        except (OSError, ValueError) as e:  # ValueError: not UTF-8
+            print(f"{p}: cannot read ({e})")
+            rc = 1
+            continue
+        items = specdoc.lint(os.path.expanduser(p), moment)
+        errs = [m for m in items if not m.startswith("warn:")]
+        print(f"{p}: {'ok' if not errs else f'{len(errs)} error(s)'} ({kind})")
+        for m in items:
+            print(f"  WARN: {m[len('warn:'):].strip()}" if m.startswith("warn:") else f"  ERROR: {m}")
+        rc = max(rc, 1 if errs else 0)
+    return rc
 
 
 def _ls(args):
