@@ -24,6 +24,9 @@
     isa crypt clean|smudge|process
                                  the git filter driver (registered per clone by `isa new`)
     isa migrate [--dry-run]      move ISA_HOME's ISAs of git repos into each repo's .isa/ (SPEC-v2 § 13.9)
+    isa migrate --home [--dry-run]
+                                 run in a repo: move its .isa/ task ISAs and ledgers back to ISA_HOME, drop
+                                 the .isa git filter; prints the commit to run, commits nothing
     isa purge-logs [--days N] [--dry-run]
                                  delete debug log day files (~/.isa/_state/logs) older than N days (7);
                                  never touches the evidence ledger, sessions, prompts or ISAs
@@ -90,6 +93,8 @@ def _dispatch(cmd, args):
     if cmd == "crypt":
         return crypt.filter_cmd(args)
     if cmd == "migrate":
+        if "--home" in args:
+            return commands.migrate_home([a for a in args if a != "--home"])
         return commands.migrate(args)
     if cmd == "purge-logs":
         return logs.purge_cmd(args)

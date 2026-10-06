@@ -57,14 +57,17 @@ isa-skill-export/
 ├── tests/                        ← unit + end-to-end tests of the hooks, gate, commands, fingerprint, lint rules, installer
 ├── tools/
 │   └── lint_isa.py               ← wrapper around runtime/isa/lint.py (repo convenience)
-└── future/
-    ├── MEMORY.md                 ← Future A: how LifeOS learns from ISAs today + target design
-    ├── STATUSLINE.md             ← Future B: data contract for an ISA status line
-    ├── project-isa/              ← Future C: project ISA idea, what was removed, the Seed workflow
-    ├── JEV.md                    ← Future D: where TypeSafe/Jev judgments plug into the skill
-    ├── SKILL-SPLIT.md            ← spec: move reference material out of SKILL.md to fit the ~5k-token skill body budget
-    ├── ISA-HARDENING.md          ← spec (after SKILL-SPLIT): framework errors seen, fixes H1–H6, issue log for live testing
-    └── SPEC-v2.md                ← the v2 design: gate, commands, evidence, rules (implemented M1–M7)
+├── future/
+│   ├── MEMORY.md                 ← Future A: how LifeOS learns from ISAs today + target design
+│   ├── STATUSLINE.md             ← Future B: data contract for an ISA status line
+│   ├── project-isa/              ← Future C: project ISA idea, what was removed, the Seed workflow
+│   ├── JEV.md                    ← Future D: where TypeSafe/Jev judgments plug into the skill
+│   ├── SKILL-SPLIT.md            ← spec: move reference material out of SKILL.md to fit the ~5k-token skill body budget
+│   ├── ISA-HARDENING.md          ← spec (after SKILL-SPLIT): framework errors seen, fixes H1–H6, issue log for live testing
+│   └── SPEC-v2.md                ← the v2 design: gate, commands, evidence, rules (implemented M1–M7)
+└── docs/
+    ├── spec/2026-10-06-local-isas-spec-driven.md  ← acked spec (not built yet): task ISAs back in ~/.isa (reverts SPEC-v2 § 13), spec → plan → ISA workflow
+    └── plan/2026-10-06-local-isas-spec-driven.md  ← its plan
 ```
 
 ## Install on a fresh machine
@@ -243,6 +246,7 @@ Each removed block was checked against one question: does anything in the skill,
 
 - ~~**`isa run` harness.**~~ Built as `isa verify` (see § Enforcement, "Proven ticks"). It judges by exit code only; `threshold:` stays descriptive, so a non-exit-code threshold must be built into the command.
 - **`[arch]` decision tag.** Recorded as an input for Future A in `future/MEMORY.md`.
+- **Subagent per plan step.** An E4–E5 plan built one step per subagent, with a second agent reviewing (`docs/spec/2026-10-06-local-isas-spec-driven.md` § 9 Later). Waits for subagent support in pi and for single-session testing of the spec-driven flow.
 
 ## Source provenance
 
