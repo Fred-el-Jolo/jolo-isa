@@ -1,5 +1,5 @@
 ---
-status: acked 2026-10-06 #5afe3325
+status: acked 2026-10-06 #008f483e
 spec: docs/spec/2026-10-06-local-isas-spec-driven.md
 ---
 
