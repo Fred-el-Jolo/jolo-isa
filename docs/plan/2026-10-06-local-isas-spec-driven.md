@@ -123,7 +123,7 @@ Review focus:
   - the seeded ISA has its Goal from the spec Goal (or the step line), one draft criterion per linked bullet anchored to it (`anchors_to: "S2:A1"`), the tier from `effort:` (or the step), pointer lines `See <path>#S2` for Problem / Vision / Out of Scope / Constraints, and the spec's Constraints printed;
   - with `--plan Y#P2`, every Review focus line P2 owns is in the new ISA as a criterion;
   - lint: from E2, an ISA in a project with a doc root needs `spec:`, `plan:` or a `no-spec:` Decisions row; a linked bullet that no ISC anchors to is an error; pointer-line sections pass the tier gate; `stated_goal_source: spec` is checked against the linked file instead of the prompt log.
-- [ ] P11 — `isa close` writes the done marks · E3 · covers §8.9, §8.10, §8.11 · after P10
+- [x] P11 — `isa close` writes the done marks · E3 · covers §8.9, §8.10, §8.11 · after P10 · Done: 2026-10-06
   Files: `runtime/isa/commands.py` (change: `close`), `runtime/isa/specdoc.py`, `tests/test_spec_flow.py`
   Interfaces: produces `specdoc.mark_done(path, bullets, slug, date) -> list[str]` (re-reads the file under `<path>.lock`, ticks bullets, appends `  (<date>, ISA <slug>)`, writes or replaces each section's `Done: <date> — <n>/<n> accepted (ISAs <slugs>)` line, ticks plan steps with ` · Done: <date>`, sets `status: done <date>` when every section is done, writes atomically, returns the changed lines)
   Done when:
