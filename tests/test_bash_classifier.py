@@ -39,7 +39,14 @@ GUARDED = [
     "sed -i s/a/b/ docs/2026-10-07-x-01-spec.md", "echo x >> docs/2026-10-07-x-02-plan.md",
     "python3 -c \"open('/home/u/.isa/x/ISA.md', 'w')\"".replace("/home/u", os.path.expanduser("~")),
     "python3 - <<'EOF'\nopen('docs/2026-10-07-x-01-spec.md', 'w').write('x')\nEOF",
-    "git add docs/2026-10-07-x-01-spec.md",
+    "cd ~/.isa/dev-x && ./fix.sh", "node -e \"require('fs').writeFileSync('docs/2026-10-07-x-02-plan.md', '')\"",
+]
+MENTIONS = [  # naming an ISA entity in a known command's text is no write onto it
+    ("git commit -F - <<'EOF'\nMove ~/.isa aside; see docs/2026-10-07-x-01-spec.md\nEOF", "write"),
+    ("git commit -m 'the writers of ~/.isa'", "write"),
+    ("git add docs/2026-10-07-x-01-spec.md", "write"),
+    ("echo 'see ~/.isa/dev-x/1_a/ISA.md'", "read"),
+    ("grep -c ISC ~/.isa/dev-x/1_a/ISA.md | sort", "read"),
 ]
 ISA_CMDS = ["isa ls", "isa write ~/.isa/dev-x/1_a/ISA.md Goal <<'EOF'\nThe goal.\nEOF", "isa verify ~/.isa/x/ISA.md"]
 
@@ -63,6 +70,10 @@ class TestTable(unittest.TestCase):
 
     def test_isa_cmds(self):
         self.check(ISA_CMDS, "isa-cmd")
+
+    def test_mentions_are_not_writes(self):
+        for c, want in MENTIONS:
+            self.assertEqual(classify.bash(c, CWD), want, c)
 
     def test_quoted_substitution_is_text(self):
         self.check(["grep -n 'no `root`' SPEC.md", "rg -n 'uses `isa verify`' docs/", "grep -c '$(' f",

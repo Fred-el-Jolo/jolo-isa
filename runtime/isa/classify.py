@@ -187,11 +187,11 @@ def bash(cmd, cwd, temp_dirs=()):
         worst = _worse(worst, k)
     if subst and worst != "guarded":
         worst = _worse(worst, "unknown")
-    if worst != "guarded" and _refs(raw, cwd):
-        isa_only = all(k == "isa-cmd" for k in kinds)
-        heredoc = bool(_HEREDOC.search(cmd))
-        if not isa_only and (worst != "read" or heredoc or subst):
-            return "guarded"
+    # code that names an ISA entity in its text (a script, `python3 -c`, a heredoc fed to an interpreter) may write it
+    # where no target is visible; a known command's targets were judged above, so a mere mention (a commit message,
+    # an echo) is not a write
+    if worst != "guarded" and (worst == "unknown" or subst) and _refs(raw, cwd):
+        return "guarded"
     return worst
 
 
