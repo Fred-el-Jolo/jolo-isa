@@ -27,6 +27,8 @@ def dirty(root):
             out.append(it[3:])
             if it[0] in "RC":
                 i += 1
+                if it[0] == "R" and i < len(items) and items[i]:
+                    out.append(items[i])  # a rename's old path: its deletion belongs to the same commit
         i += 1
     return sorted(set(out))
 
@@ -45,14 +47,23 @@ def changed_since(root, base_dirty, exclude=()):
 
 
 def commit(root, paths, message):
-    """Commit exactly these paths. → the short sha, or None (outside git, or nothing to commit)."""
+    """Commit exactly these paths. → (short sha, None); (None, None) outside git or with nothing to commit;
+    (None, git's first error line) when the commit fails (a pre-commit hook, signing, identity)."""
     top = repo(root)
     if not top or not paths:
-        return None
+        return None, None
     rel = [os.path.relpath(os.path.realpath(os.path.join(top, p)), top) if not os.path.isabs(p)
            else os.path.relpath(os.path.realpath(p), top) for p in paths]
-    _git(top, "add", "-A", "--", *rel)
+    here = [p for p in rel if os.path.lexists(os.path.join(top, p))]
+    gone = [p for p in rel if p not in here]  # a deletion (a rename's old path): `git add` would refuse the pathspec
+    if here:
+        _git(top, "add", "-A", "--", *here)
+    if gone:
+        _git(top, "rm", "--cached", "-q", "--ignore-unmatch", "--", *gone)
+    if _git(top, "diff", "--cached", "--quiet", "--", *rel).returncode == 0:
+        return None, None
     r = _git(top, "commit", "-q", "-m", message, "--", *rel)
     if r.returncode != 0:
-        return None
-    return _git(top, "rev-parse", "--short", "HEAD").stdout.strip()
+        lines = [ln.strip() for ln in (r.stderr + "\n" + r.stdout).splitlines() if ln.strip()]
+        return None, lines[0] if lines else f"git commit exited {r.returncode}"
+    return _git(top, "rev-parse", "--short", "HEAD").stdout.strip(), None

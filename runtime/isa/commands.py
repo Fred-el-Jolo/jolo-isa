@@ -8,13 +8,38 @@ import re
 import subprocess
 import time
 
-from . import advice, doc, gitops, isafile, lint, spec, state
+from . import advice, classify, doc, gitops, isafile, lint, spec, state
 
 TIERS = ("E1", "E2", "E3", "E4")
+CLOSED = "this ISA is closed; new work gets a new ISA"
 
 
 class Refused(Exception):
     pass
+
+
+def _open_isa(text):
+    """Every command that writes a TASK ISA refuses a closed one."""
+    if isafile.parse(text)["fm"].get("phase") == "complete":
+        raise Refused(CLOSED)
+
+
+def _in_build(p, text, path):
+    """No probe runs before BUILD: from E2, the spec acked and unchanged since the ISA was derived, the ISA acked."""
+    if isafile.tier(p) == "E1":
+        return
+    t = _tilde(path)
+    sp = os.path.join(str(p["fm"].get("root")), str(p["fm"].get("spec") or ""))
+    stext = _read(sp)
+    if not spec.is_acked(stext):
+        raise Refused(f"no probe runs before BUILD: its spec {_tilde(sp)} is reopened — `isa diff` for the user, the "
+                      f"`Spec ack` question, then `isa ack {_tilde(sp)}`")
+    if p["fm"].get("spec_hash") != spec.ack_hash(stext):
+        raise Refused(f"no probe runs before BUILD: the spec changed since this ISA was derived — `isa refine {t}`, "
+                      "then the `ISA ack` question")
+    if not isafile.acked(text):
+        raise Refused(f"no probe runs before BUILD: the ISA is not acked as it is now — `isa show {t} --to Criteria` "
+                      "for the user, then the `ISA ack` question")
 
 
 def _read(path):
@@ -210,8 +235,7 @@ def write(args, stdin_text, out=print):
         _write(path, new)
         out(f"wrote {spec.canonical(part)} in {_tilde(path)}\n{_lint_note(path, new)}")
         return 0
-    if isafile.parse(text)["fm"].get("phase") == "complete":
-        raise Refused("this ISA is closed; new work gets a new ISA")
+    _open_isa(text)
     if re.fullmatch(r"ISC-\d+(\.\d+)*", part):
         new = _write_isc(text, part[4:], " ".join(args) if args else (stdin_text.strip() if not probe else ""),
                          probe, kind_, fails, anchors)
@@ -297,6 +321,9 @@ def _write_isc(text, isc, words, probe, kind_, fails, anchors):
             raise Refused(f"ISC-{isc} is not a criterion yet: `isa write <ISA> ISC-{isc} \"<claim>\"` first")
         if p["iscs"][isc]["children"]:
             raise Refused(f"ISC-{isc} is a parent — its children carry the probes")
+        if probe is not None and classify.bash(probe, str(p["fm"].get("root") or "")) == "guarded":
+            raise Refused(f"ISC-{isc}: the probe `{probe}` writes an ISA, a spec, a plan or ~/.isa — a probe checks "
+                          "the work and never changes an ISA entity")
         q = isafile.parse(text)
         entries = [dict(e) for e in q["tests"]]
         e = isafile.entry(q, isc)
@@ -324,6 +351,7 @@ def drop(args, out=print):
         raise Refused('usage: isa drop <ISA> ISC-N "<why>"')
     isc, why = args[0][4:], " ".join(args[1:])
     text = _read(path)
+    _open_isa(text)
     p = isafile.parse(text)
     if isc not in p["iscs"]:
         raise Refused(f"ISC-{isc} is not a criterion")
@@ -345,6 +373,7 @@ def decide(args, out=print):
     if not args:
         raise Refused('usage: isa decide <ISA> "<text>"')
     text = _read(path)
+    _open_isa(text)
     rows = (isafile.parse(text)["sections"].get("Decisions") or "").strip()
     rows = (rows + "\n" if rows else "") + f"- {isafile.now()}: {' '.join(args)}"
     text = isafile.refresh(doc.set_section(text, "Decisions", rows, isafile.SECTIONS))
@@ -391,6 +420,8 @@ def ack(args, out=print):
     args = list(args)
     path, kind = _file(args, ("spec", "isa"))
     text = _read(path)
+    if kind == "isa":
+        _open_isa(text)
     h = spec.hash_of(path, text)
     if kind == "isa" and isafile.tier(isafile.parse(text)) == "E1":
         raise Refused("an E1 ISA has no ack: build it")
@@ -404,8 +435,10 @@ def ack(args, out=print):
     if kind == "spec":
         text = doc.fm_set(text, "status", f"acked {time.strftime('%Y-%m-%d')} #{h}")
         _write(path, text)
-        sha = gitops.commit(spec.doc_root(path), [path], f"Spec: {doc.title(doc.split(text)[2])} (acked)")
+        sha, err = gitops.commit(spec.doc_root(path), [path], f"Spec: {doc.title(doc.split(text)[2])} (acked)")
         out(f"acked {_tilde(path)} (#{h})" + (f", committed {sha}" if sha else ""))
+        if err:
+            out(f"Not committed: the spec — {err}")
         out("The ack is the go: `isa new --spec " + _tilde(path) + "` (or `isa refine <ISA>` for its open ISA).")
     else:
         text = doc.fm_set(text, "acked", f"{time.strftime('%Y-%m-%d')} #{h}")
@@ -430,6 +463,7 @@ def refine(args, out=print):
     args = list(args)
     path, _ = _file(args, ("isa",))
     text = _read(path)
+    _open_isa(text)
     p = isafile.parse(text)
     sp = os.path.join(str(p["fm"].get("root")), str(p["fm"].get("spec") or ""))
     if not p["fm"].get("spec") or not os.path.isfile(sp):
@@ -498,13 +532,18 @@ def _proved(text, p, results, red):
 def verify(args, out=print):
     args = list(args)
     red = _flag(args, "--red")
-    timeout = int(_opt(args, "--timeout") or 600)
+    timeout = _opt(args, "--timeout")
+    if timeout is not None and not timeout.isdigit():
+        raise Refused("--timeout takes whole seconds")
+    timeout = int(timeout or 600)
     path, _ = _file(args, ("isa",))
     text = _read(path)
+    _open_isa(text)
     errs = lint.errors(text, path)
     if errs:
         raise Refused("the ISA doesn't lint yet, so no probe runs:\n" + "\n".join(f"  - {e}" for e in errs[:12]))
     p = isafile.parse(text)
+    _in_build(p, text, path)
     root = str(p["fm"].get("root"))
     results, failed, advice_lines = {}, [], []
     for isc, e in _probe_set(p, args):
@@ -533,6 +572,7 @@ def attest(args, out=print):
         raise Refused('usage: isa attest <ISA> ISC-N "<evidence>"')
     isc, evidence = args[0][4:], " ".join(args[1:])
     text = _read(path)
+    _open_isa(text)
     p = isafile.parse(text)
     if isc not in isafile.leaves(p) or (isafile.entry(p, isc) or {}).get("kind") != "manual":
         raise Refused(f"ISC-{isc} is not a manual leaf: its probe is a command — `isa verify`")
@@ -547,6 +587,7 @@ def answer(args, out=print):
     args = list(args)
     path, _ = _file(args, ("isa",))
     text = _read(path)
+    _open_isa(text)
     if args[:1] == ["goal"] and len(args) >= 2:
         line = " ".join(args[1:])
         if not re.match(r"^(yes|no)\b", line):
@@ -568,6 +609,7 @@ def close(args, out=print):
     args = list(args)
     path, _ = _file(args, ("isa",))
     text = _read(path)
+    _open_isa(text)
     errs = lint.errors(text, path)
     if errs:
         raise Refused("not closed — the ISA doesn't lint:\n" + "\n".join(f"  - {e}" for e in errs[:12]))
@@ -593,9 +635,12 @@ def close(args, out=print):
                                       q["fm"].get("slug") or os.path.basename(os.path.dirname(path))))
     _write(path, closing)
     work = gitops.changed_since(root, q["fm"].get("base_dirty"), exclude=[x for x in (sp, plan) if x])
-    sha = gitops.commit(root, work, str(q["fm"].get("task") or "ISA task"))
-    psha = gitops.commit(root, [plan], f"Plan: {q['fm'].get('task')}") if plan else None
+    sha, werr = gitops.commit(root, work, str(q["fm"].get("task") or "ISA task"))
+    psha, perr = gitops.commit(root, [plan], f"Plan: {q['fm'].get('task')}") if plan else (None, None)
     out(_summary(path, closing, results, plan, sha, psha))
+    for what, err in (("the work", werr), ("the plan", perr)):
+        if err:
+            out(f"Not committed: {what} — {err}")
     for line in advice.close(isafile.parse(closing)):
         out(line)
     return 0

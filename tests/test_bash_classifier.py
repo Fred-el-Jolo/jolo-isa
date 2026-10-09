@@ -111,5 +111,46 @@ class TestCompositions(unittest.TestCase):
             self.assertEqual(classify.bash(joined, CWD), want, joined)
 
 
+class TestReviewFixes(unittest.TestCase):
+    """docs/2026-10-08-review-fixes-01-spec.md S1 and S8."""
+
+    def check(self, cmds, want):
+        for c in cmds:
+            self.assertEqual(classify.bash(c, CWD), want, c)
+
+    def test_home_paths(self):
+        self.check(["echo x > $HOME/.isa/p/x/ISA.md", "echo x > ${HOME}/.isa/p/x/ISA.md",
+                    "cp /tmp/a $HOME/.isa/p/x/ISA.md", "rm -rf $HOME/.isa", "sed -i s/a/b/ $HOME/.isa/p/x/ISA.md",
+                    "echo x | tee $HOME/.isa/p/x/ISA.md", 'cp /tmp/a "$HOME/.isa/p/x/ISA.md"'], "guarded")
+
+    def test_cd_targets(self):
+        self.check(["cd ~/.isa/p/x && rm ISA.md", "cd ~/.isa/p/x && echo hi > ISA.md",
+                    "cd docs && cp /tmp/a 2026-10-06-x-01-spec.md", "cd $HOME/.isa/p ; mv a b"], "guarded")
+
+    def test_git_dir(self):
+        self.check(["git -C ~/.isa commit -am x", "cd ~/.isa && git add -A", "git --git-dir=$HOME/.isa/.git add x"],
+                   "guarded")
+        self.assertEqual(classify.bash("git -C ~/.isa log", CWD), "read")
+        self.assertEqual(classify.bash("git -C src commit -m x", CWD), "write")
+
+    def test_code_home_lookup(self):
+        self.check(["python3 -c \"import os; open(os.environ['HOME']+'/.isa/x','w')\"",
+                    "python3 -c \"import os; os.remove(os.path.join(os.environ['HOME'], '.isa', 'x'))\""], "guarded")
+
+    def test_cd_elsewhere(self):
+        self.assertEqual(classify.bash("cd src && rm x", CWD), "write")
+        self.assertEqual(classify.bash("cd /tmp && rm x", CWD), "read")
+
+    def test_isa_substitution(self):
+        self.check(['isa show "$(isa ls | head -1)"', 'isa new x --tier E1 && isa show "$(isa where | tail -1)"',
+                    'isa show "$(ls -d ~/.isa/dev-x/* | tail -1)/ISA.md"'], "isa-cmd")
+
+    def test_other_substitution(self):
+        self.assertEqual(classify.bash("rg foo $(cat list)", CWD), "unknown")
+        self.assertNotEqual(classify.bash('isa show "$(rm x)"', CWD), "isa-cmd")
+        self.assertNotEqual(classify.bash('isa show "$(python3 x.py)"', CWD), "isa-cmd")
+        self.assertNotEqual(classify.bash('isa show "$(echo $(rm x))"', CWD), "isa-cmd")
+
+
 if __name__ == "__main__":
     unittest.main()

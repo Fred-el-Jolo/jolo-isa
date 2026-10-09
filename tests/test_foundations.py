@@ -130,13 +130,14 @@ class Case(unittest.TestCase):
                                    tool_input={"file_path": os.path.join(self.proj, rel), "content": "x"})[1])
 
     def click(self, header, question, answer="Acknowledge"):
+        """The model asks (no `answers` at PreToolUse); the user's pick arrives at PostToolUse."""
         ti = {"questions": [{"question": question, "header": header, "multiSelect": False,
                              "options": [{"label": "Acknowledge", "description": "a"},
-                                         {"label": "Request changes", "description": "b"}]}],
-              "answers": {question: answer}}
+                                         {"label": "Request changes", "description": "b"}]}]}
         _, pre, _ = self.hook("PreToolUse", tool_name="AskUserQuestion", tool_input=ti)
         self.assertIsNone(self.deny(pre), "the ack question was refused")
-        return self.hook("PostToolUse", tool_name="AskUserQuestion", tool_input=ti, tool_response={})[1]
+        return self.hook("PostToolUse", tool_name="AskUserQuestion", tool_input=dict(ti, answers={question: answer}),
+                         tool_response={})[1]
 
     def path_of(self, out, kind):
         line = next(ln for ln in out.splitlines() if ln.startswith(kind + ": "))
@@ -608,6 +609,208 @@ class State(Case):
         on = run()
         self.assertTrue(os.listdir(os.path.join(self.home, "_state", "logs")))
         self.assertEqual(off, on)
+
+
+SPY_TESTS = ("- isc: ISC-1.1\n  anchors_to: S1\n  kind: behaviour\n  tool: touch probe-ran; test -f ok\n"
+             "- isc: ISC-1.2\n  anchors_to: S1\n  kind: regression\n  tool: test ! -e bad\n  fails-when: \"bad exists\"\n")
+CLOSED = "this ISA is closed; new work gets a new ISA"
+
+
+class ReviewFixes(Case):
+    """docs/2026-10-08-review-fixes-01-spec.md, S1–S8, through the hooks and the commands."""
+
+    def failing(self, *args, stdin=None):
+        rc, out = self.run_isa(*args, stdin=stdin)
+        self.assertNotEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        return out
+
+    def session(self, change=None):
+        path = os.path.join(self.home, "_state", "sessions", f"claude-{self.sid}.json")
+        st = json.loads(self.read(path))
+        if change:
+            change(st)
+            with open(path, "w") as f:
+                json.dump(st, f)
+        return st
+
+    def closed_e2(self):
+        spec, isa = self.build()
+        self.finish(isa)
+        self.ok("close", isa)
+        return spec, isa
+
+    def pre_commit_fails(self):
+        hook = self.put(".git/hooks/pre-commit", "#!/bin/sh\necho 'blocked by hook' >&2\nexit 1\n")
+        os.chmod(hook, 0o755)
+
+    # S1
+    def test_perimeter_home(self):
+        self.env["HOME"] = os.path.join(self.tmp, "u")
+        self.home = self.env["ISA_HOME"] = os.path.join(self.env["HOME"], ".isa")
+        self.on()
+        isa = self.e1()
+        self.assertIsNone(self.change())  # BUILD
+        key = os.path.basename(os.path.dirname(os.path.dirname(isa)))
+        r = self.deny(self.hook("PreToolUse", tool_name="Bash", tool_input={"command": f"rm -rf $HOME/.isa/{key}"})[1])
+        self.assertIsNotNone(r)
+        self.assertIn("`isa ", r)
+
+    # S2
+    def test_verify_needs_ack(self):
+        self.on()
+        spec = self.spec()
+        self.ack_spec(spec)
+        isa = self.isa_from(spec, tests=SPY_TESTS)
+        before = self.read(isa)
+        for args in (("verify", "--red", isa), ("verify", isa)):
+            out = self.failing(*args)
+            self.assertIn("ISA ack", out)
+            self.assertIn("--to Criteria", out)
+        self.assertEqual(self.read(isa), before)
+        self.assertFalse(os.path.exists(os.path.join(self.proj, "probe-ran")))
+
+    def test_verify_spec_reopened(self):
+        spec, isa = self.build()
+        self.ok("reopen", spec)
+        self.assertIn("Spec ack", self.failing("verify", isa))
+        self.ok("write", spec, "Problem", stdin="The demo tool has no ok file yet.\n")
+        self.ack_spec(spec)
+        self.assertIn("isa refine", self.failing("verify", "--red", isa))
+
+    def test_guarded_probe_write(self):
+        self.on()
+        isa = self.e1()
+        before = self.read(isa)
+        probe = f"rm -rf {self.home}/x"
+        out = self.failing("write", isa, "ISC-1", "--probe", probe)
+        self.assertIn(probe, out)
+        self.assertEqual(self.read(isa), before)
+
+    def test_guarded_probe_run(self):
+        self.on()
+        marker = os.path.join(self.home, "marker")
+        tests = E1_TESTS.replace("tool: test -f ok", f"tool: echo x > {marker}; test -f ok")
+        isa = self.e1(tests=tests)
+        self.put("ok", "")
+        self.assertIn(f"echo x > {marker}", self.failing("verify", isa))
+        self.failing("close", isa)
+        self.assertFalse(os.path.exists(marker))
+
+    # S3
+    def test_close_unbinds(self):
+        self.closed_e2()
+        del self.env["ISA_MODE"]
+        self.fake_jev(0.95)
+        self.prompt("now add a logo to the page", "p9")
+        st = self.session()
+        self.assertFalse(st.get("bound"))
+        self.assertFalse(st.get("doc"))
+        self.assertIn("TRIAGE", self.change())
+
+    def test_finished_spec_not_open(self):
+        spec, _ = self.closed_e2()
+        del self.env["ISA_MODE"]
+        self.session(lambda st: st.update(bound=None, doc=spec))
+        self.fake_jev(0.95)
+        _, out, _ = self.prompt("now add a logo to the page", "p9")
+        self.assertIn("→ ON", out.get("systemMessage", ""))
+        r = self.change()
+        self.assertNotIn("isa new --spec", r or "")
+        self.assertIn("TRIAGE", r)
+
+    # S4
+    def test_closed_isa_frozen(self):
+        _, isa = self.closed_e2()
+        before = self.read(isa)
+        for args, stdin in ((("write", isa, "ISC-1.1", "changed"), None), (("write", isa, "Problem"), "changed\n"),
+                            (("drop", isa, "ISC-1.1", "why"), None), (("decide", isa, "late"), None),
+                            (("verify", isa), None), (("attest", isa, "ISC-1.1", "seen"), None),
+                            (("answer", isa, "goal", "yes — again"), None), (("ack", isa), None),
+                            (("refine", isa), None), (("close", isa), None)):
+            self.assertIn(CLOSED, self.failing(*args, stdin=stdin), args)
+        self.assertEqual(self.read(isa), before)
+
+    def test_closed_isa_readable(self):
+        _, isa = self.closed_e2()
+        for args in (("show", isa), ("diff", isa), ("lint", isa)):
+            self.ok(*args)
+
+    # S5
+    def ask(self, header, question, answers):
+        ti = {"questions": [{"question": question, "header": header, "multiSelect": False,
+                             "options": [{"label": "Acknowledge", "description": "a"},
+                                         {"label": "Request changes", "description": "b"}]}]}
+        if answers:
+            ti["answers"] = answers
+        return self.deny(self.hook("PreToolUse", tool_name="AskUserQuestion", tool_input=ti)[1])
+
+    def test_prefilled_answer_denied(self):
+        self.on()
+        spec = self.spec()
+        q = f"Acknowledge {os.path.relpath(spec, self.proj)}?"
+        r = self.ask("Spec ack", q, {q: "Acknowledge"})
+        self.assertIsNotNone(r)
+        self.assertIn("user", r)
+        gate = "ISA is not enabled for this prompt (Jev: 0.50). Continue?"
+        self.assertIsNotNone(self.ask("ISA gate", gate, {gate: "Continue without ISA"}))
+        self.assertIsNone(self.ask("Spec ack", q, None))
+        rc, out = self.run_isa("ack", spec)
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("click", out)
+
+    def test_ack_click_at_post(self):
+        self.on()
+        spec = self.spec()
+        self.click("Spec ack", f"Acknowledge {os.path.relpath(spec, self.proj)}?")
+        self.ok("ack", spec)
+
+    # S6
+    def test_close_commit_failure(self):
+        spec, isa = self.build()
+        self.pre_commit_fails()
+        self.put("lib.txt", "work\n")
+        self.finish(isa)
+        out = self.ok("close", isa)
+        self.assertIn("Not committed: the work — blocked by hook", out)
+        self.assertIn("Not committed: the plan — blocked by hook", out)
+        self.assertIn("phase: complete", self.read(isa))
+
+    def test_ack_commit_failure(self):
+        self.on()
+        spec = self.spec()
+        self.pre_commit_fails()
+        out = self.ack_spec(spec)
+        self.assertIn("Not committed: the spec — blocked by hook", out)
+        self.assertRegex(self.read(spec), r"(?m)^status: \"?acked ")
+
+    def test_close_nothing_to_commit(self):
+        self.on()
+        self.put("ok", "")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "ok")
+        isa = self.e1()
+        self.ok("verify", isa)
+        self.ok("answer", isa, "goal", "yes — ok")
+        self.assertNotIn("Not committed", self.ok("close", isa))
+
+    # S7
+    def test_rename_committed(self):
+        spec, isa = self.build()
+        self.git("mv", "a.txt", "b.txt")
+        self.finish(isa)
+        self.ok("close", isa)
+        work = self.git("show", "--format=", "--name-status", "--no-renames", "HEAD~1").stdout
+        self.assertRegex(work, r"(?m)^D\ta\.txt$")
+        self.assertRegex(work, r"(?m)^A\tb\.txt$")
+        self.assertEqual(self.git("status", "--porcelain").stdout, "")
+
+    # S8
+    def test_verify_timeout_value(self):
+        self.on()
+        isa = self.e1()
+        out = self.failing("verify", isa, "--timeout", "abc")
+        self.assertIn("--timeout takes whole seconds", out)
 
 
 if __name__ == "__main__":

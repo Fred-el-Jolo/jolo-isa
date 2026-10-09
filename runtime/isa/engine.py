@@ -135,6 +135,11 @@ def _read(p):
         return f.read()
 
 
+def _finished(sp):
+    """A spec whose plan exists: its work is closed, it is never open again."""
+    return _exists(sp) and os.path.exists(spec.plan_path(sp))
+
+
 def stage(st):
     """→ (name, what to do next)."""
     isa, sp = st.get("bound"), st.get("doc")
@@ -165,7 +170,7 @@ def stage(st):
             return "ISA DRAFT", (f"show the user the ISA (`isa show {t} --to Criteria`), then ask the `ISA ack` question "
                                  "(header `ISA ack`, options `Acknowledge` / `Request changes`)")
         return "BUILD", ""
-    if _exists(sp):
+    if _exists(sp) and not _finished(sp):
         if spec.is_acked(_read(sp)):
             return "SPEC ACKED", f"the ack is the go: `isa new --spec {_tilde(sp)}`"
         return "SPEC DRAFT", (f"finish the spec with `isa write {_tilde(sp)} <part>`, `isa lint` it, then ask the "
@@ -179,7 +184,7 @@ def _status_line(st):
     if _exists(isa):
         fm = state.frontmatter(isa)
         return f"ISA bound: {_tilde(isa)} — {fm.get('effort')}, {fm.get('phase')}, progress {fm.get('progress')}"
-    if _exists(st.get("doc")):
+    if _exists(st.get("doc")) and not _finished(st.get("doc")):
         return f"Spec bound: {_tilde(st['doc'])}"
     return "Nothing bound"
 
@@ -217,7 +222,7 @@ def _prompt(ev):
             return {"context": protocol()}
         mode = _mode(st)
         bound_open = _exists(st.get("bound")) and state.frontmatter(st["bound"]).get("phase") != "complete"
-        doc_open = not st.get("bound") and _exists(st.get("doc"))
+        doc_open = not st.get("bound") and _exists(st.get("doc")) and not _finished(st.get("doc"))
     if not prompt.strip() or _mode_env() == "on":
         return {"context": _status_line(st) + f". Stage: {stage(st)[0]}"} if _mode_env() == "on" else {}
     if mode == "on" and (bound_open or doc_open):
@@ -247,9 +252,11 @@ def _q1(ev, prompt):
     with state.session(ev["harness"], ev["session"]) as st:
         if score >= gate:
             st["mode"] = "on"
-            for k in ("bound", "doc"):
-                if _exists(st.get(k)) and k == "bound" and state.frontmatter(st[k]).get("phase") == "complete":
-                    st.pop(k)
+            if _exists(st.get("bound")) and state.frontmatter(st["bound"]).get("phase") == "complete":
+                st.pop("bound")
+                st.pop("doc", None)  # the closed ISA's spec goes with it
+            if _finished(st.get("doc")):
+                st.pop("doc")
             return {"warn": f"ISA gate — Jev {score:.2f} → ON", "context": protocol()}
         if score < quiet or not ask:
             st["pass"] = pid
@@ -306,6 +313,11 @@ def _pre_tool(ev):
     tool = ev.get("tool", "")
     st = state.read_session(ev["harness"], ev["session"])
     if tool == "AskUserQuestion":
+        ti = ev.get("tool_input") or {}
+        gate_q = any(isinstance(q, dict) and ASK_TITLE in str(q.get("question", "")) for q in ti.get("questions") or [])
+        if ti.get("answers") and (gate_q or _ack_questions(ev)):
+            return {"deny": "ISA: the answer to this question is the user's own click — ask it without `answers` "
+                            "and let the user pick"}
         for q in _ack_questions(ev):
             path = _ack_target(q, ev, st)
             if not path:

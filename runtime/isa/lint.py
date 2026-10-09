@@ -9,7 +9,7 @@ and (from E2) both acks holding.
 import os
 import re
 
-from . import doc, isafile, spec, state
+from . import classify, doc, isafile, spec, state
 
 RED_KINDS = ("behaviour",)
 
@@ -95,6 +95,9 @@ def _tests(p, tier):
             out.append(f"Test Strategy: ISC-{i} `kind` is one of {', '.join(isafile.KINDS)}")
         if kind != "manual" and not str(e.get("tool") or "").strip():
             out.append(f"Test Strategy: ISC-{i} has no `tool` (the probe's command)")
+        elif kind != "manual" and classify.bash(str(e["tool"]), str(p["fm"].get("root") or "")) == "guarded":
+            out.append(f"Test Strategy: ISC-{i}'s probe writes an ISA, a spec, a plan or ~/.isa (a probe never "
+                       f"changes an ISA entity): `{e['tool']}`")
         if kind != "manual" and (kind not in RED_KINDS or isafile.is_anti(p, i)) and not e.get("fails-when"):
             out.append(f"Test Strategy: ISC-{i} needs `fails-when` (it can't be seen failing first)")
         if e.get("parallel") is not None:

@@ -29,6 +29,9 @@ _READ_VERB = re.compile(r"(^|[_.-])(read|get|list|search|query|fetch|find|view|s
                         r"guide|status|info|count|check|preview|download|export|authenticate)", re.I)
 _WRITE_VERB = re.compile(r"(^|[_.-])(write|edit|create|update|delete|remove|send|post|push|set|put|"
                          r"move|rename|upload|insert|publish|merge|commit|deploy|batch|apply)", re.I)
+_HOME_VAR = re.compile(r"\$\{HOME\}|\$HOME(?![A-Za-z0-9_])")
+_HOME_LOOKUP = re.compile(r"HOME")
+_ISA_PART = re.compile(r"[/'\"]\.isa(?![\w.-])")
 DOC_REF = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+-0(?:1-spec|2-plan)\.md")
 
 
@@ -37,10 +40,16 @@ def tool_paths(tool_input):
     return [ti[k] for k in ("file_path", "notebook_path", "path") if isinstance(ti.get(k), str) and ti.get(k)]
 
 
-def path_kind(path, cwd, temp_dirs=()):
-    p = os.path.expanduser(path)
+def expand(path):
+    """`~`, `$HOME` and `${HOME}` as the shell expands them."""
+    return os.path.expanduser(_HOME_VAR.sub(lambda m: os.path.expanduser("~"), str(path)))
+
+
+def path_kind(path, cwd, temp_dirs=(), base=None):
+    """`base`: the directory relative paths resolve in (a `cd` earlier in the command); the project is cwd's."""
+    p = expand(path)
     if not os.path.isabs(p):
-        p = os.path.join(cwd or os.getcwd(), p)
+        p = os.path.join(base or cwd or os.getcwd(), p)
     if state.is_isa_path(p) or state.is_doc_path(p):
         return "guarded"
     rp = os.path.realpath(p)
@@ -150,7 +159,36 @@ def _refs(raw, cwd):
     h = os.path.realpath(state.home())
     if state.is_isa_path(cwd or os.getcwd()):
         return True
-    return bool(h in raw or "~/.isa" in raw or "$ISA_HOME" in raw or "${ISA_HOME}" in raw or DOC_REF.search(raw))
+    return bool(h in raw or "~/.isa" in raw or "$ISA_HOME" in raw or "${ISA_HOME}" in raw or DOC_REF.search(raw)
+                or re.search(r"(?:\$\{HOME\}|\$HOME)/\.isa", raw)
+                or (_HOME_LOOKUP.search(raw) and _ISA_PART.search(raw)))  # code: os.environ['HOME'] + '/.isa'
+
+
+def _cd(words, cwd, base):
+    """Where a `cd` / `pushd` segment leaves the shell: the directory, `base` unchanged, or None when unknown."""
+    while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+        words = words[1:]
+    if not words or words[0] not in ("cd", "pushd"):
+        return base
+    args = [a for a in words[1:] if a == "-" or not a.startswith("-")]
+    if not args:
+        return os.path.expanduser("~")
+    t = expand(args[0])
+    if args[0] == "-" or "$" in t:
+        return None
+    return os.path.normpath(t if os.path.isabs(t) else os.path.join(base or cwd or os.getcwd(), t))
+
+
+_SUBST = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
+
+
+def _substitutions(cmd):
+    """The commands inside `$(…)` and backticks (single quotes aside), or None when one is nested."""
+    text = _without_single_quoted(cmd)
+    rest = _SUBST.sub("X", text)
+    if "$(" in rest or "`" in rest:
+        return None
+    return [a or b for a, b in _SUBST.findall(text)]
 
 
 def _segments(cmd):
@@ -179,12 +217,19 @@ def bash(cmd, cwd, temp_dirs=()):
         segs = _segments(re.sub(r"\$\([^)]*\)|`[^`]*`", "X", cmd) if subst else cmd)
     except ValueError:
         return "guarded" if _refs(raw, cwd) else "unknown"
-    worst = "read"
+    worst, base = "read", None
     kinds = []
     for seg in segs:
-        k = _segment(seg, cwd, temp_dirs)
+        k = _segment(seg, cwd, temp_dirs, base)
         kinds.append(k)
         worst = _worse(worst, k)
+        base = _cd(seg, cwd, base)
+    # `isa … "$(isa …)"`: only `isa` and read commands, inside and outside the substitutions, is an `isa` command
+    inner = _substitutions(cmd) if subst and worst in ("read", "isa-cmd") else None
+    if inner:
+        ik = [bash(c, cwd, temp_dirs) for c in inner]
+        if all(k in ("read", "isa-cmd") for k in ik) and "isa-cmd" in kinds + ik:
+            return "isa-cmd"
     if subst and worst != "guarded":
         worst = _worse(worst, "unknown")
     # code that names an ISA entity in its text (a script, `python3 -c`, a heredoc fed to an interpreter) may write it
@@ -216,23 +261,23 @@ def _without_single_quoted(cmd):
     return "".join(out)
 
 
-def _segment(words, cwd, temp_dirs):
+def _segment(words, cwd, temp_dirs, base=None):
     kind, clean, i = "read", [], 0
     while i < len(words):
         w = words[i]
         if w in REDIRECTS or re.match(r"^\d*(>>?|>\|)$", w) or w in ("<", "<<", "<<<"):
             target = words[i + 1] if i + 1 < len(words) else ""
             if not (w in ("<", "<<", "<<<") or re.match(r"^&?\d+$", target) or target in SAFE_TARGETS):
-                pk = path_kind(target, cwd, temp_dirs)
+                pk = path_kind(target, cwd, temp_dirs, base)
                 kind = _worse(kind, "guarded" if pk == "guarded" else "write" if pk == "project" else "read")
             i += 2
             continue
         clean.append(w)
         i += 1
-    return _worse(kind, _command(clean, cwd, temp_dirs))
+    return _worse(kind, _command(clean, cwd, temp_dirs, base))
 
 
-def _command(words, cwd=None, temp_dirs=()):
+def _command(words, cwd=None, temp_dirs=(), base=None):
     while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
         words = words[1:]
     if not words:
@@ -240,7 +285,7 @@ def _command(words, cwd=None, temp_dirs=()):
     cmd, args = os.path.basename(words[0]), words[1:]
     if cmd in WRAPPERS:
         rest = [a for a in args if not a.startswith("-") and not re.match(r"^[A-Za-z_]\w*=|^\d+[smhd]?$", a)]
-        return _command(rest, cwd, temp_dirs) if rest else "read"
+        return _command(rest, cwd, temp_dirs, base) if rest else "read"
     if cmd == "isa":
         return "isa-cmd"
     if args and all(a in ("--version", "-V", "--help", "-h", "version") for a in args):
@@ -249,7 +294,7 @@ def _command(words, cwd=None, temp_dirs=()):
         paths = [a for a in args if not a.startswith("-")]
         if cmd in ("chmod", "chown", "chgrp") and paths:
             paths = paths[1:]
-        kinds = [path_kind(p, cwd, temp_dirs) for p in paths]
+        kinds = [path_kind(p, cwd, temp_dirs, base) for p in paths]
         if "guarded" in kinds:
             return "guarded"
         return "read" if paths and all(k == "temp" for k in kinds) else "write"
@@ -258,15 +303,18 @@ def _command(words, cwd=None, temp_dirs=()):
     if cmd == "sed":
         if not any(a == "-i" or a.startswith("-i") or a.startswith("--in-place") for a in args):
             return "read"
-        return "guarded" if any(path_kind(a, cwd, temp_dirs) == "guarded" for a in args if not a.startswith("-")) \
-            else "write"
+        return "guarded" if any(path_kind(a, cwd, temp_dirs, base) == "guarded"
+                                for a in args if not a.startswith("-")) else "write"
     if cmd == "find":
         return "write" if any(a in ("-delete", "-exec", "-execdir", "-ok", "-okdir") or a.startswith("-fprint")
                               or a == "-fls" for a in args) else "read"
     if cmd in ("awk", "gawk", "mawk"):
         return "unknown" if any("system(" in a or re.search(r"print[^;]*>", a) for a in args) else "read"
     if cmd == "git":
-        return _git(args)
+        k = _git(args)
+        if k != "read" and any(path_kind(d, cwd, temp_dirs, base) == "guarded" for d in _git_dirs(args, base or cwd)):
+            return "guarded"
+        return k
     if cmd == "gh":
         return _gh(args)
     if cmd in READ_CMDS:
@@ -281,6 +329,21 @@ def _command(words, cwd=None, temp_dirs=()):
         flags = "".join(a for a in args[:2] if not a.startswith("--"))
         return "write" if "x" in flags or "c" in flags else "read"
     return "unknown"
+
+
+def _git_dirs(args, here):
+    """The directories a git command acts in: where it runs, `-C <dir>`, `--git-dir`, `--work-tree`."""
+    dirs, i = [here or os.getcwd()], 0
+    while i < len(args) and args[i].startswith("-"):
+        a = args[i]
+        if a in ("-C", "--git-dir", "--work-tree") and i + 1 < len(args):
+            dirs.append(args[i + 1])
+            i += 2
+            continue
+        if a.startswith(("--git-dir=", "--work-tree=")):
+            dirs.append(a.split("=", 1)[1])
+        i += 1
+    return dirs
 
 
 def _git(args):
