@@ -31,7 +31,8 @@ A skill loads only when the model decides to, so hooks enforce it in every sessi
 │       ├── engine.py               ← the hooks: the gate, the lifecycle stages, the perimeter, Stop
 │       ├── isafile.py              ← the TASK ISA: sections, the criteria tree, probes, Verification lines, the ack hash
 │       ├── spec.py                 ← SPEC and PLAN: template, lint, hash, the ack clicks, `isa diff`, the plan render
-│       ├── lint.py                 ← the ISA rules per tier (draft and close)
+│       ├── lint.py                 ← the ISA rules per tier (draft and close), the origins of each leaf
+│       ├── review.py               ← `isa review` (the checklist, Jev's check in one request) and `isa show --trace`
 │       ├── doc.py                  ← frontmatter and `## ` sections (comments blanked outside fences only)
 │       ├── classify.py             ← read / isa-cmd / write / unknown / guarded, for tool calls and Bash
 │       ├── gitops.py               ← the commits: the spec after its ack, the work and the plan after a close
@@ -41,7 +42,7 @@ A skill loads only when the model decides to, so hooks enforce it in every sessi
 ├── adapters/pi/isa.ts              ← pi extension → `isa hook pi` (installed to ~/.pi/agent/extensions/)
 ├── adapters/claude-statusline/     ← Claude Code statusLine (Node): renders `isa status --json`; opt-in
 ├── install.py                      ← install / --uninstall / --dry-run for both harnesses
-├── tests/                          ← test_foundations (the foundations end to end), test_install, test_bash_classifier, test_yamlish
+├── tests/                          ← test_foundations (the foundations end to end), test_derivation (spec → ISA), test_install, test_bash_classifier, test_yamlish
 ├── tools/lint_isa.py               ← lints the examples with the runtime's rules
 ├── future/                         ← design notes for the future tasks (memory, status line, Jev)
 └── docs/spec/                      ← this repo's own specs
@@ -113,7 +114,7 @@ With DEBUG on (`ISA_DEBUG=1`, or `"debug": true` in config.json), the hooks and 
 
 - What installs: `skill/ISA/`, `skill/global-rules.md` (the block), `runtime/`, `adapters/pi/isa.ts`, and with `--statusline`, `adapters/claude-statusline/`.
 - Before installing, run:
-  - `python3 -m unittest tests.test_foundations tests.test_install tests.test_bash_classifier`;
+  - `python3 -m unittest tests.test_foundations tests.test_install tests.test_bash_classifier tests.test_derivation`;
   - `node --test adapters/pi/test/extension.test.ts adapters/claude-statusline/test/renderer.test.ts`;
   - with PyYAML on `PYTHONPATH`, also `tests/test_yamlish.py`.
   No test calls a model or the real `jev`, and no installer test touches the real `~/.isa`, `~/.claude/CLAUDE.md` or `~/.pi/agent/AGENTS.md` (every `install.py` call passes temp paths).

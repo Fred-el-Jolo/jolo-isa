@@ -18,6 +18,7 @@ The task's work notebook: `~/.isa/<project>/<YYYYMMDD-HHMMSS>_<slug>/ISA.md`, lo
 - **Criteria:** the tree of ISCs.
 - **Test Strategy:** one probe per leaf.
 - **Decisions:** one row per decision, dead ends included.
+- **Review** (E2+): the review before the ISA ack, written by `isa review` only.
 - **Verification:** written by the commands only.
 
 E1 has no Vision, Out of Scope or Constraints. From E2 every section up to Test Strategy is required. `<project>` is the git root (else the directory) relative to `$HOME`, with `/` → `-`.
@@ -52,13 +53,19 @@ The command that proves one leaf: its `## Test Strategy` entry, a YAML list item
 
 ```yaml
 - isc: ISC-3.1
-  anchors_to: S2                    # the spec section it serves (E2+), or Goal
+  anchors_to: S2                    # E2+: the section its parent ISC-2 stands for, or Goal / Constraints
   kind: behaviour                   # behaviour | regression | doc | config | file | manual
   tool: python3 -m unittest tests.test_api.Query
   fails-when: "…"                  # what it would see if the claim were false — required unless kind is behaviour
 ```
 
-It passes exactly when it exits 0, run from the project root. A behaviour probe is run red first (`isa verify --red`): it must fail before the build. A passing run with no failed red run of the same command is marked `(no red baseline)`. A `manual` leaf is attested with evidence instead.
+From E2, where a leaf sits says where it came from:
+
+- **under `ISC-k`:** it comes from spec section `Sk` (`anchors_to: Sk`, set when the leaf is added);
+- **under `ISC-0`, Common ground:** a state two or more sections rely on, built first (`serves: S2+S3`, `why:`);
+- **elsewhere:** an Anti anchored to the Goal or the Constraints, or anything else marked `source: context` with its `why:`.
+
+Any leaf the spec doesn't state carries `source: context` and its `why`. It passes exactly when it exits 0, run from the project root. A behaviour probe is run red first (`isa verify --red`): it must fail before the build. A passing run with no failed red run of the same command is marked `(no red baseline)`. A `manual` leaf is attested with evidence instead.
 
 ### SPEC
 What is wanted, in the user's words: `<cwd>/docs/YYYY-MM-DD-<slug>-01-spec.md`, from E2, committed. It holds:
@@ -72,10 +79,10 @@ What is wanted, in the user's words: `<cwd>/docs/YYYY-MM-DD-<slug>-01-spec.md`, 
 Its status is `draft` or `acked YYYY-MM-DD #<hash8>`, with no done marks. It is the TASK ISA's source: the ISA links it (`spec:`), and each probe anchors to one of its sections. When an acked spec changes (`isa reopen`), the ISA must be refined (`isa refine`) and acked again before the work goes on. Writing rules: `SpecDriven.md`.
 
 ### PLAN
-What remains of a task: `<cwd>/docs/YYYY-MM-DD-<slug>-02-plan.md`, written by `isa close` from E2, committed. It copies the closed ISA's sections from Problem through Test Strategy, its Decisions, and its Verification minus the run lines. A spec whose plan exists is finished. The TASK ISA can be deleted afterwards; the plan stays.
+What remains of a task: `<cwd>/docs/YYYY-MM-DD-<slug>-02-plan.md`, written by `isa close` from E2, committed. It copies the closed ISA's sections from Problem through Test Strategy, its Decisions, its Review, and its Verification minus the run lines. A spec whose plan exists is finished. The TASK ISA can be deleted afterwards; the plan stays.
 
 ### Ack
-The user's click on **Acknowledge**, never the model's. It is asked with AskUserQuestion: header `Spec ack` or `ISA ack`, options `Acknowledge` / `Request changes`. Each click is recorded in `~/.isa/<project>/acks.jsonl` with the file's hash. `isa ack <file>` then writes it into the file, and refuses without that click. A spec is acked from E2, and its TASK ISA is acked from E2 as well. Any later change breaks the ack. Before asking again, `isa diff <file>` shows the user what changed.
+The user's click on **Acknowledge**, never the model's. It is asked with AskUserQuestion: header `Spec ack` or `ISA ack`, options `Acknowledge` / `Request changes`. Each click is recorded in `~/.isa/<project>/acks.jsonl` with the file's hash. `isa ack <file>` then writes it into the file, and refuses without that click. A spec is acked from E2, and its TASK ISA is acked from E2 as well. The ISA ack waits for a review of the criteria as they are (`isa review`), with every Jev flag answered, and the user reads `isa show <ISA> --trace` before it. Any later change breaks the ack. Before asking again, `isa diff <file>` shows the user what changed.
 
 ### Session
 One Claude Code or pi session: OFF or ON, at most one bound ISA or spec, and its last prompts (`~/.isa/_state/sessions/`). `isa new` and `isa spec new` bind what they create.
@@ -96,12 +103,14 @@ Project changes go through in BUILD only. Every refusal names the stage and the 
 | Action | Command |
 |---|---|
 | start a spec (E2+) | `isa spec new <slug> --tier E2` (or E3, E4) |
-| start the ISA | `isa new <slug> --tier E1`, or `isa new --spec <spec>` (seeded from it; an open ISA of that spec is bound again) |
-| write a section | `isa write <file> <section>`, the text on stdin (Criteria and Test Strategy: once, as a block) |
-| change, add or drop one ISC | `isa write <ISA> ISC-N "<text>"`, `isa write <ISA> ISC-N --probe "<command>" [--kind K] [--fails-when F] [--anchors S2]`, `isa drop <ISA> ISC-N "<why>"` |
+| start the ISA | `isa new <slug> --tier E1`, or `isa new --spec <spec>` (seeded from it, one parent per section; an open ISA of that spec is bound again) |
+| write a section | `isa write <file> <section>`, the text on stdin (E1: Criteria and Test Strategy once, as a block) |
+| change, add or drop one ISC | `isa write <ISA> ISC-N "<text>"`, `isa write <ISA> ISC-N --probe "<command>" [--kind K] [--fails-when F] [--anchors S2\|Goal\|Constraints]`, `isa drop <ISA> ISC-N "<why>"` |
+| place it, say where it came from | `--before ISC-M` (a new criterion before its sibling), `--serves S2+S3 --why "…"` (under ISC-0), `--source context --why "…"` |
+| review the ISA before its ack (E2+) | `isa review <ISA>` (the six-line checklist on stdin, then Jev's check), `isa review <ISA> --answer R<n> "<answer>"` |
 | the task line, the asks | `isa write <ISA> task "<text>"`, `isa write <ISA> asks` (one verbatim ask per line) |
 | add a decision | `isa decide <ISA> "<text>"` |
-| read | `isa show <file> [--to Criteria]`, `isa lint <file>`, `isa ls`, `isa status`, `isa current`, `isa where` |
+| read | `isa show <file> [--to Criteria \| --trace]`, `isa lint <file>`, `isa ls`, `isa status`, `isa current`, `isa where` |
 | record an ack (after the click) | `isa ack <file>` |
 | change an acked spec | `isa reopen <spec>`, then `isa diff <spec>` for the user, then the ack; then `isa refine <ISA>` |
 | prove | `isa verify <ISA> [--red] [ISC-N…]`, `isa attest <ISA> ISC-N "<evidence>"` |

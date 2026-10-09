@@ -27,6 +27,8 @@ def errors(text, path=None, moment="draft"):
     out += _criteria(p, tier)
     out += _tests(p, tier)
     sp = _spec(p, path, tier, out)
+    if sp:
+        out = _origins(p, sp["ids"], out)
     if moment == "close":
         out += close_errors(p, text, tier, sp)
     return out
@@ -102,8 +104,9 @@ def _tests(p, tier):
             out.append(f"Test Strategy: ISC-{i} needs `fails-when` (it can't be seen failing first)")
         if e.get("parallel") is not None:
             out.append(f"Test Strategy: ISC-{i} `parallel` is reserved for later")
-        if tier != "E1" and not re.fullmatch(r"S\d+|Goal", str(e.get("anchors_to") or "")):
-            out.append(f"Test Strategy: ISC-{i} `anchors_to` names a spec section (`S2`) or `Goal`")
+        if tier != "E1" and not e.get("serves") and not re.fullmatch(r"S\d+|Goal|Constraints",
+                                                                     str(e.get("anchors_to") or "")):
+            out.append(f"Test Strategy: ISC-{i} `anchors_to` names a spec section (`S2`), `Goal` or `Constraints`")
     out += [f"ISC-{i} has no Test Strategy entry" for i in leaves if i not in seen]
     return out
 
@@ -133,7 +136,38 @@ def _spec(p, path, tier, out):
         out.append(f"spec section {s} has no criterion anchored to it")
     for a in sorted(x for x in anchors - secs if x.startswith("S")):
         out.append(f"anchors_to {a}: no such section in the spec")
-    return {"path": sp, "text": stext}
+    return {"path": sp, "text": stext, "ids": {s[1:] for s in secs}}
+
+
+def _origins(p, ids, out):
+    """Where a leaf sits says where it came from (E2–E4): under ISC-k, from Sk; under ISC-0, common ground serving
+    two or more sections; elsewhere, an Anti anchored to the Goal or the Constraints, or context with a why."""
+    empty = {i for i in p["order"] if "." not in i and (i in ids or i == "0") and not p["iscs"][i]["children"]
+             and not p["iscs"][i]["dropped"]}
+    out = [e for e in out if not any(e == f"ISC-{i} has no Test Strategy entry" for i in empty)]
+    out += [f"ISC-{i} (S{i}): no criterion yet" if i != "0" else "ISC-0 (Common ground): no criterion yet"
+            for i in p["order"] if i in empty]
+    for i in isafile.leaves(p):
+        e = isafile.entry(p, i)
+        if e is None or i in empty:
+            continue
+        top, why, anchor = i.split(".")[0], e.get("why"), str(e.get("anchors_to") or "")
+        if e.get("source") == "context" and not why:
+            out.append(f"ISC-{i}: `source: context` needs a `why:`")
+        if top == "0":
+            if len(set(re.findall(r"S\d+", str(e.get("serves") or "")))) < 2:
+                out.append(f"ISC-{i}: `serves:` names two or more sections (ISC-0 is the common ground of sections)")
+            elif not why:
+                out.append(f"ISC-{i}: `serves:` needs a `why:`")
+        elif e.get("serves"):
+            out.append(f"ISC-{i}: `serves:` belongs under ISC-0 (Common ground)")
+        elif top in ids:
+            if anchor != f"S{top}":
+                out.append(f"ISC-{i} sits under ISC-{top} (S{top}): its `anchors_to` is S{top}")
+        elif not ((isafile.is_anti(p, i) and anchor in ("Goal", "Constraints")) or e.get("source") == "context"):
+            out.append(f"ISC-{i} is outside the spec's sections: an Anti anchored to `Goal` or `Constraints`, or "
+                       "`source: context` with a `why:`")
+    return out
 
 
 def close_errors(p, text, tier, sp):

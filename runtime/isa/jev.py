@@ -2,6 +2,7 @@
 
     ask(preset, payload, deadline, **ctx) → {"served", "answer", "answers", "reason", "detail", "ms"}
     ask_many([(preset, payload), …], deadline, **ctx) → the same, in order, run in parallel
+    ask_adhoc(state, {id: question}, deadline, **ctx) → the same, one `jev ask` request of many questions
 
 The engine runs `jev run <preset> --consumer isa` (`ISA_JEV_BIN`, default `jev`) with this folder's
 presets first on `JEV_KIT_PRESETS`, the payload as JSON on stdin, and kills the call at its own
@@ -43,6 +44,20 @@ def enabled():
 
 
 def ask(preset, payload, deadline, **ctx):
+    return _call(["run", preset], payload, deadline, {"preset": preset}, **ctx)
+
+
+def ask_adhoc(state, questions, deadline, **ctx):
+    """One request of many questions over one state (`jev ask`): the review's per-leaf and per-section checks.
+    Served only when every question came back."""
+    res = _call(["ask"], {"state": state, "questions": questions}, deadline,
+                {"preset": "adhoc", "questions": len(questions)}, **ctx)
+    if res["served"] and set(questions) - set(res["answers"]):
+        res.update(served=False, reason="garbled", detail="answers missing for some questions")
+    return res
+
+
+def _call(argv, payload, deadline, row_fields, **ctx):
     exe = binary()
     if not exe:
         return {"served": False, "reason": "off", "detail": "", "answer": None, "answers": {}, "ms": 0}
@@ -51,7 +66,7 @@ def ask(preset, payload, deadline, **ctx):
     t0 = time.time()
     res = {"served": False, "reason": "error", "detail": "", "answer": None, "answers": {}}
     try:
-        r = subprocess.run([exe, "run", preset, "--consumer", "isa"], input=json.dumps(payload), text=True,
+        r = subprocess.run([exe, *argv, "--consumer", "isa"], input=json.dumps(payload), text=True,
                            capture_output=True, timeout=deadline, env=env)
         res.update(_parse(r.returncode, r.stdout, r.stderr))
     except subprocess.TimeoutExpired:
@@ -59,7 +74,7 @@ def ask(preset, payload, deadline, **ctx):
     except OSError as e:
         res.update(reason="error", detail=str(e))
     res["ms"] = int((time.time() - t0) * 1000)
-    row = {"step": "jev", "preset": preset, "served": res["served"], "answer": res["answer"], "ms": res["ms"]}
+    row = {"step": "jev", **row_fields, "served": res["served"], "answer": res["answer"], "ms": res["ms"]}
     if not res["served"]:
         row.update(reason=res["reason"], detail=res["detail"][:200])
     row.update({k: v for k, v in ctx.items() if v is not None})

@@ -19,7 +19,7 @@ import time
 from . import doc, yamlish
 
 SECTIONS = ["Problem", "Vision", "Out of Scope", "Principles", "Constraints", "Goal", "Criteria", "Test Strategy",
-            "Decisions", "Verification"]
+            "Decisions", "Review", "Verification"]
 CONTENT = SECTIONS[:8]  # what the ack covers, and what `isa write` writes as a block
 E1_REQUIRED = ["Problem", "Goal", "Criteria", "Test Strategy"]
 E1_FORBIDDEN = ["Vision", "Out of Scope", "Constraints"]
@@ -64,7 +64,8 @@ def parse(text):
         iscs[i]["children"] = [j for j in order if j.rsplit(".", 1)[0] == i and "." in j]
     tests, tests_error = _tests(secs.get("Test Strategy") or "")
     return {"fm": fm, "body": body, "sections": secs, "iscs": iscs, "order": order, "errors": errors,
-            "tests": tests, "tests_error": tests_error, "ver": _ver(secs.get("Verification") or "")}
+            "tests": tests, "tests_error": tests_error, "ver": _ver(secs.get("Verification") or ""),
+            "review": _review(secs.get("Review") or "", fm)}
 
 
 def _tests(content):
@@ -95,6 +96,54 @@ def _ver(content):
             if a:
                 out["asks"][int(a.group(1))] = ln
     return out
+
+
+CHECKLIST = ("shared", "prerequisites", "contradictions", "drift", "gaps", "context")
+FLAG_LINE = re.compile(r"^- (?P<id>R\d+): (?P<kind>serves|covered) (?P<about>\S+) — no (?P<no>[\d.]+) ≥ "
+                       r"(?P<threshold>[\d.]+) — (?P<question>.*) — answer: (?P<answer>.*)$")
+UNAVAILABLE = "Jev: unavailable — model only"
+
+
+def _review(content, fm):
+    """`## Review`, written by `isa review`: its checklist, Jev's flags with their answers, and the criteria hash
+    it reviewed (`reviewed:` in the frontmatter). None when there is no review."""
+    if not content.strip():
+        return None
+    checklist, flags = {}, []
+    for ln in content.split("\n"):
+        m = FLAG_LINE.match(ln)
+        if m:
+            flags.append(m.groupdict())
+            continue
+        m = re.match(rf"^- ({'|'.join(CHECKLIST)}): (.*)$", ln)
+        if m:
+            checklist[m.group(1)] = m.group(2).strip()
+    return {"checklist": checklist, "flags": flags, "hash": str(fm.get("reviewed") or ""),
+            "jev": UNAVAILABLE not in content}
+
+
+def review_hash(text):
+    """What a review covers: the criteria (ticks ignored) and their probes."""
+    body = doc.split(text)[2]
+    return doc.h8("## Criteria\n" + _neutral(doc.raw_section(body, "Criteria") or "").strip() + "\n## Test Strategy\n"
+                  + (doc.raw_section(body, "Test Strategy") or "").strip())
+
+
+def review_errors(text):
+    """Why the ISA ack can't be asked yet, from the stored review alone (E2–E4): [] when it can."""
+    p = parse(text)
+    if tier(p) == "E1":
+        return []
+    r = p["review"]
+    if not r or not r["hash"]:
+        return ["no review yet: `isa review <ISA>` (the six-line checklist on stdin)"]
+    if r["hash"] != review_hash(text):
+        return ["the criteria changed since its review: `isa review <ISA>` again"]
+    open_ = [f["id"] for f in r["flags"] if f["answer"].strip() == "(open)"]
+    if open_:
+        return [f"{', '.join(open_)} unanswered: `isa review <ISA> --answer R<n> \"rebuttal: …\"` "
+                "(or `fixed:`, `reopen:`)"]
+    return []
 
 
 def leaves(p):
@@ -149,7 +198,7 @@ def progress(p):
 
 
 def render_tests(entries):
-    keys = ("isc", "anchors_to", "kind", "tool", "fails-when")
+    keys = ("isc", "anchors_to", "serves", "kind", "tool", "fails-when", "source", "why")
     out = []
     for e in entries:
         ordered = [k for k in keys if k in e] + [k for k in e if k not in keys]

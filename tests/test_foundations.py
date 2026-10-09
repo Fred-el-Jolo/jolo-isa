@@ -6,6 +6,7 @@ Run: python3 -m unittest tests.test_foundations
 """
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -44,6 +45,7 @@ E1_TESTS = ("- isc: ISC-1\n  kind: behaviour\n  tool: test -f ok\n"
             "- isc: ISC-2\n  kind: regression\n  tool: test ! -e bad\n  fails-when: \"bad exists\"\n")
 E2_CRITERIA = ("- [ ] ISC-1: The ok file is written.\n  - [ ] ISC-1.1: The file ok exists.\n"
                "  - [ ] ISC-1.2: Anti: the file bad exists.\n")
+REVIEW_NONE = "shared: none\nprerequisites: none\ncontradictions: none\ndrift: none\ngaps: none\ncontext: none\n"
 E2_TESTS = ("- isc: ISC-1.1\n  anchors_to: S1\n  kind: behaviour\n  tool: test -f ok\n"
             "- isc: ISC-1.2\n  anchors_to: S1\n  kind: regression\n  tool: test ! -e bad\n  fails-when: \"bad exists\"\n")
 
@@ -161,14 +163,25 @@ class Case(unittest.TestCase):
         return self.ok("ack", path)
 
     def isa_from(self, spec, criteria=E2_CRITERIA, tests=E2_TESTS):
+        """The ISA of an acked spec, written as the model does: the seeded parents kept, then each criterion and
+        each probe one ISC at a time."""
+        from isa import isafile, yamlish
         path = self.path_of(self.ok("new", "--spec", spec), "ISA")
         for section in ("Vision", "Principles"):
             self.ok("write", path, section, stdin=f"The {section.lower()} of the demo.\n")
-        self.ok("write", path, "Criteria", stdin=criteria)
-        self.ok("write", path, "Test Strategy", stdin=tests)
+        seeded = isafile.parse(self.read(path))["iscs"]
+        for i, text in re.findall(r"(?m)^\s*- \[ \] ISC-([\d.]+): (.*)$", criteria):
+            if i not in seeded:
+                self.ok("write", path, f"ISC-{i}", text)
+        for e in yamlish.load(tests):
+            args = ["write", path, e["isc"], "--probe", str(e["tool"]), "--kind", e["kind"]]
+            args += ["--fails-when", e["fails-when"]] if e.get("fails-when") else []
+            args += ["--anchors", e["anchors_to"]] if e.get("anchors_to") else []
+            self.ok(*args)
         return path
 
     def ack_isa(self, path):
+        self.ok("review", path, stdin=REVIEW_NONE)
         self.click("ISA ack", "Acknowledge the ISA of this task?")
         return self.ok("ack", path)
 
@@ -221,7 +234,7 @@ class Tiers(Case):
         lines.append("- [ ] ISC-2: Anti: the file bad exists.")
         leaf = "ISC-" + ".".join(ids)
         tests = (f"- isc: {leaf}\n  anchors_to: S1\n  kind: regression\n  tool: \"true\"\n  fails-when: \"x\"\n"
-                 "- isc: ISC-2\n  anchors_to: S1\n  kind: regression\n  tool: test ! -e bad\n  fails-when: \"bad\"\n")
+                 "- isc: ISC-2\n  anchors_to: Goal\n  kind: regression\n  tool: test ! -e bad\n  fails-when: \"bad\"\n")
         return "\n".join(lines) + "\n", tests
 
     def spec_file(self):
@@ -479,7 +492,7 @@ class Close(Case):
         plan = self.read(self.plan_path(spec))
         heads = [ln[3:] for ln in plan.splitlines() if ln.startswith("## ")]
         self.assertEqual(heads, ["Problem", "Vision", "Out of Scope", "Principles", "Constraints", "Goal", "Criteria",
-                                 "Test Strategy", "Decisions", "Verification"])
+                                 "Test Strategy", "Decisions", "Review", "Verification"])
         self.assertIn("touch was enough", plan)
         self.assertIn("- Goal: yes — the ok file exists", plan)
         self.assertNotRegex(plan, r"ISC-[\d.]+: (verified|red|failed) ")
@@ -537,7 +550,7 @@ class Perimeter(Case):
     """S7: `isa` commands are the only writers."""
 
     COMMANDS = {"spec", "new", "write", "drop", "decide", "show", "lint", "ack", "reopen", "diff", "refine", "verify",
-                "attest", "answer", "close", "ls", "status", "current", "where", "log", "purge-logs", "hook"}
+                "attest", "answer", "close", "ls", "status", "current", "where", "log", "purge-logs", "hook", "review"}
 
     def test_commands_exist(self):
         from isa import cli
@@ -666,7 +679,7 @@ class ReviewFixes(Case):
         for args in (("verify", "--red", isa), ("verify", isa)):
             out = self.failing(*args)
             self.assertIn("ISA ack", out)
-            self.assertIn("--to Criteria", out)
+            self.assertIn("--trace", out)
         self.assertEqual(self.read(isa), before)
         self.assertFalse(os.path.exists(os.path.join(self.proj, "probe-ran")))
 

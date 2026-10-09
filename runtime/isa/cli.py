@@ -7,12 +7,17 @@ Start
 Write
     isa write <file> <section>                   a section, text on stdin (Criteria and Test Strategy: once)
     isa write <ISA> ISC-N "<text>"               change or add one criterion
-    isa write <ISA> ISC-N --probe "<command>" [--kind K] [--fails-when F] [--anchors S2]
+    isa write <ISA> ISC-N --probe "<command>" [--kind K] [--fails-when F] [--anchors S2|Goal|Constraints]
+    isa write <ISA> ISC-N "<text>" --before ISC-M   a new criterion placed just before its sibling ISC-M
+    isa write <ISA> ISC-0.N … --serves S2+S3 --why W   common ground; `--source context --why W`: not in the spec
     isa write <ISA> task|asks                    the task line; the asks (one per line, verbatim)
     isa drop <ISA> ISC-N "<why>"                 a tombstone; the id is never reused
     isa decide <ISA> "<text>"                    one Decisions row
+Review (E2–E4, before the ISA ack)
+    isa review <ISA>                             the six-line checklist on stdin, then Jev's check, into ## Review
+    isa review <ISA> --answer R<n> "<answer>"    answer one flag: `fixed: …`, `reopen: …` or `rebuttal: …`
 Acks
-    isa ack <file>                               write the user's recorded click (spec: then commit it)
+    isa ack <file>                              write the user's recorded click (spec: then commit it)
     isa reopen <spec>                            an acked spec back to draft
     isa diff <file>                              what changed since its last ack
     isa refine <ISA>                             follow a re-acked spec (progress kept; the ISA is acked again)
@@ -22,7 +27,7 @@ Proof
     isa answer <ISA> goal "yes — <evidence>"     the Goal line; `ask N "met — <evidence>"` an Ask line
     isa close <ISA>                              re-prove all, write the plan (E2+), commit the work and the plan
 Read
-    isa show <file> [--to <section>]   isa lint <file>…   isa ls [--all]   isa where
+    isa show <file> [--to <section> | --trace]   isa lint <file>…   isa ls [--all]   isa where
     isa status --session ID [--json]   isa current [--json]   isa log [--session ID] [--prompt ID]
     isa purge-logs [--days N] [--dry-run]        delete old debug log days
     isa hook <claude|pi>                         the hook entry point (event JSON on stdin)
@@ -63,7 +68,13 @@ COMMANDS = {
     "log": lambda a: logs.log_cmd(a),
     "purge-logs": lambda a: logs.purge_cmd(a),
     "hook": lambda a: hook(a[0] if a else "claude"),
+    "review": lambda a: _review(a),
 }
+
+
+def _review(args):
+    from . import review
+    return review.cmd(args, "" if "--answer" in args else _stdin())
 
 
 def _needs_stdin(args):

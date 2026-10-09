@@ -56,6 +56,20 @@ Accepted when:
 - An acked spec changes only after `isa reopen <spec>`. The ISA's work then stops until the spec is acked again. Before asking, show the user `isa diff <spec>`: the title and one line per changed section, so they ack a change they can see. Then `isa refine <ISA>` keeps the progress, you update the criteria the change touches, and the ISA is acked again.
 - To resume an unfinished spec (on another machine, in a fresh session), run `isa new --spec <spec>` when the user asks for it. It rebuilds the ISA from the spec, or binds the open one. `isa verify` then ticks whatever is already built. A spec whose plan exists is finished, and `isa new --spec` refuses it.
 
+## From the spec to the ISA
+
+The criteria come mainly from the spec and partly from context, and the ISA says which is which.
+
+1. **The seed.** `isa new --spec` writes one parent per section, `ISC-k` for `Sk`, with the section's title. Each leaf you add under it (`isa write <ISA> ISC-k.n "<claim>" --probe "<command>"`) is anchored to `Sk` without asking. Write the leaves from the section's Accepted-when lines, as end states a probe can decide.
+2. **What the spec doesn't name.** Read the spec and the ISA whole, and add:
+   - **common ground** two or more sections rely on, under `ISC-0`, built first (`isa write <ISA> ISC-0 "Common ground" --before ISC-1`), each leaf with `--serves S2+S3 --why "…"`;
+   - a section's **prerequisites** as its first children (`--before ISC-k.1`), in the order they must hold;
+   - **Antis** outside the sections, anchored to the Goal or the Constraints (`--anchors Goal`);
+   - anything else the spec doesn't state, marked `source: context` with its `why` (`--source context --why "…"`).
+   A contradiction between two sections is not patched in the ISA: reopen the spec.
+3. **The review.** `isa review <ISA>` records that reading: six lines on stdin, each a finding or `none` (`shared:`, `prerequisites:`, `contradictions:`, `drift:`, `gaps:`, `context:`). Jev then checks, in one request, that each leaf serves the spec's Problem and Goal and that each section's criteria cover its Accepted-when lines. Every flag gets an answer (`isa review <ISA> --answer R<n> "rebuttal: …"`, or `fixed:` / `reopen:`).
+4. **The trace.** `isa show <ISA> --trace` is what the user reads before the `ISA ack`: the common ground, each section with its Accepted-when lines and the criteria and probes under it, the Antis and context items, the review and its answers, and a coverage footer.
+
 ## Red flags
 
 | Thought | Reality |

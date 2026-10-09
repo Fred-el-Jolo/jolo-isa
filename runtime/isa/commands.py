@@ -38,8 +38,8 @@ def _in_build(p, text, path):
         raise Refused(f"no probe runs before BUILD: the spec changed since this ISA was derived — `isa refine {t}`, "
                       "then the `ISA ack` question")
     if not isafile.acked(text):
-        raise Refused(f"no probe runs before BUILD: the ISA is not acked as it is now — `isa show {t} --to Criteria` "
-                      "for the user, then the `ISA ack` question")
+        raise Refused(f"no probe runs before BUILD: the ISA is not acked as it is now — `isa review {t}`, "
+                      f"`isa show {t} --trace` for the user, then the `ISA ack` question")
 
 
 def _read(path):
@@ -199,17 +199,26 @@ def _new_from_spec(sp, goal, asks, out):
     slug = re.sub(r"^\d{4}-\d{2}-\d{2}-|-01-spec\.md$", "", os.path.basename(sp))
     path = state.new_isa_path(root, slug)
     goal_text = (secs.get("Goal") or "").split("\nSaid:")[0].strip()
+    parents = [spec.S_HEAD.match(h) for h in spec.s_sections(stext)]
     seeds = {"Problem": secs.get("Problem", ""), "Out of Scope": secs.get("Out of scope", ""),
-             "Constraints": secs.get("Constraints", ""), "Goal": goal_text}
+             "Constraints": secs.get("Constraints", ""), "Goal": goal_text,
+             "Criteria": "\n".join(f"- [ ] ISC-{m.group(1)}: {m.group(2).strip()}" for m in parents)}
     fm = _fm(slug, str(sfm.get("effort")), root, goal, asks,
              {"task": doc.title(sbody) or slug, "slug": os.path.basename(os.path.dirname(path)), "spec": rel,
               "spec_hash": spec.ack_hash(stext)})
     _write(path, _skeleton(fm, isafile.CONTENT, seeds))
     out(f"ISA: {path}")
-    out("Seeded from the spec: Problem, Out of Scope, Constraints, Goal. Write Vision and Principles, then Criteria "
-        f"(up to {isafile.DEPTH.get(fm['effort']) or 'any number of'} levels, one top-level ISC per spec section) and "
-        "Test Strategy (one entry per leaf, `anchors_to: S<n>`) with `isa write`; then `isa lint`, "
-        "`isa show <ISA> --to Criteria` for the user, and the `ISA ack` question.")
+    out("Seeded from the spec: Problem, Out of Scope, Constraints, Goal, and one parent per section (ISC-k for Sk). "
+        f"Write Vision and Principles, then the criteria one at a time (up to "
+        f"{isafile.DEPTH.get(fm['effort']) or 'any number of'} levels):\n"
+        "  - under its section: `isa write <ISA> ISC-k.n \"<claim>\" --probe \"<command>\"` (anchored to Sk unasked);\n"
+        "  - common ground two sections share: `ISC-0` first (`isa write <ISA> ISC-0 \"Common ground\" --before "
+        "ISC-1`), its leaves with `--serves S2+S3 --why \"…\"`; a section's prerequisites as its first children "
+        "(`--before ISC-k.1`);\n"
+        "  - Antis outside the sections: `--anchors Goal` or `--anchors Constraints`; anything the spec doesn't "
+        "state: `--source context --why \"…\"`.\n"
+        "Then `isa lint`, `isa review <ISA>` (the six-line checklist on stdin), `isa show <ISA> --trace` for the "
+        "user, and the `ISA ack` question.")
     for h in spec.s_sections(stext):
         out(f"  {h}: " + " | ".join(ln[2:] for ln in (secs.get(h) or "").split("Accepted when:")[-1].split("\n")
                                      if ln.startswith("- ")))
@@ -223,6 +232,8 @@ def write(args, stdin_text, out=print):
     stdin_text = stdin_text or ""
     probe, kind_, fails, anchors = (_opt(args, "--probe"), _opt(args, "--kind"), _opt(args, "--fails-when"),
                                     _opt(args, "--anchors"))
+    origin = {"before": _opt(args, "--before"), "serves": _opt(args, "--serves"), "source": _opt(args, "--source"),
+              "why": _opt(args, "--why")}
     path, kind = _file(args, ("spec", "isa"))
     if not args:
         raise Refused("which part? `isa write <file> <section>` (text on stdin), or `isa write <ISA> ISC-N …`")
@@ -238,7 +249,7 @@ def write(args, stdin_text, out=print):
     _open_isa(text)
     if re.fullmatch(r"ISC-\d+(\.\d+)*", part):
         new = _write_isc(text, part[4:], " ".join(args) if args else (stdin_text.strip() if not probe else ""),
-                         probe, kind_, fails, anchors)
+                         probe, kind_, fails, anchors, **origin)
     elif part.lower() in ("task", "asks"):
         value = " ".join(args) if args else stdin_text.strip()
         if part.lower() == "asks":
@@ -267,6 +278,8 @@ def _write_section(text, part, content):
         raise Refused('Decisions grow one row at a time: `isa decide <ISA> "<text>"`')
     if h == "Verification":
         raise Refused("Verification is written by `isa verify`, `isa attest` and `isa answer`")
+    if h == "Review":
+        raise Refused("`## Review` is written by `isa review <ISA>` (the checklist on stdin)")
     p = isafile.parse(text)
     tier = isafile.tier(p)
     if tier == "E1" and h in isafile.E1_FORBIDDEN:
@@ -290,18 +303,29 @@ def _write_section(text, part, content):
     return doc.set_section(text, h, content, isafile.SECTIONS)
 
 
-def _write_isc(text, isc, words, probe, kind_, fails, anchors):
+def _section_ids(p):
+    """The `S<k>` numbers of the ISA's spec ({} for E1, or when the spec can't be read)."""
+    sp = os.path.join(str(p["fm"].get("root")), str(p["fm"].get("spec") or ""))
+    if not p["fm"].get("spec") or not os.path.isfile(sp):
+        return set()
+    with open(sp, encoding="utf-8") as f:
+        return {spec.S_HEAD.match(h).group(1) for h in spec.s_sections(f.read())}
+
+
+def _write_isc(text, isc, words, probe, kind_, fails, anchors, before=None, serves=None, source=None, why=None):
     p = isafile.parse(text)
     cap = isafile.DEPTH.get(isafile.tier(p))
     existing = p["iscs"].get(isc)
     if existing and existing["dropped"]:
         raise Refused(f"ISC-{isc} is dropped; ids are never reused — take a new one")
+    if before and existing:
+        raise Refused(f"ISC-{isc} exists; `--before` places a new criterion (moving one is out of scope)")
+    up = isc.rsplit(".", 1)[0] if "." in isc else None
     if words:
         if existing:
             if words != existing["text"]:
                 existing.update(text=words, box=" ")
         else:
-            up = isc.rsplit(".", 1)[0] if "." in isc else None
             if up and up not in p["iscs"]:
                 raise Refused(f"ISC-{isc}: no ISC-{up} above it")
             level = isc.count(".") + 1
@@ -310,13 +334,26 @@ def _write_isc(text, isc, words, probe, kind_, fails, anchors):
             p["iscs"][isc] = {"id": isc, "level": level, "indent": 2 * (level - 1), "box": " ", "text": words,
                               "dropped": False, "children": []}
             at = len(p["order"])
-            if up:
+            if before:
+                t = before.replace("ISC-", "")
+                if t not in p["iscs"] or (t.rsplit(".", 1)[0] if "." in t else None) != up:
+                    raise Refused(f"ISC-{isc} --before {before}: not a sibling (`--before` names a criterion with the "
+                                  "same parent)")
+                at = p["order"].index(t)
+            elif up:
                 fam = [n for n, j in enumerate(p["order"]) if j == up or j.startswith(up + ".")]
                 at = fam[-1] + 1
-                p["iscs"][up]["children"].append(isc)
+            if up:
+                kids = p["iscs"][up]["children"]
+                kids.insert(kids.index(before.replace("ISC-", "")) if before else len(kids), isc)
             p["order"].insert(at, isc)
+            top = isc.split(".")[0]
+            if up and top != "0" and not anchors and top in _section_ids(p):
+                anchors = f"S{top}"  # a leaf under its section's parent comes from that section
         text = doc.set_section(text, "Criteria", isafile.render_criteria(p), isafile.SECTIONS)
-    if probe is not None or kind_ or fails or anchors:
+    elif before:
+        raise Refused(f"`--before` places a new criterion: `isa write <ISA> ISC-{isc} \"<claim>\" --before {before}`")
+    if probe is not None or kind_ or fails or anchors or serves or source or why:
         if isc not in p["iscs"]:
             raise Refused(f"ISC-{isc} is not a criterion yet: `isa write <ISA> ISC-{isc} \"<claim>\"` first")
         if p["iscs"][isc]["children"]:
@@ -333,7 +370,8 @@ def _write_isc(text, isc, words, probe, kind_, fails, anchors):
         else:
             e = next(x for x in entries if str(x.get("isc", "")).replace("ISC-", "") == isc)
         changed = probe is not None and probe != e.get("tool")
-        for k, v in (("tool", probe), ("kind", kind_), ("fails-when", fails), ("anchors_to", anchors)):
+        for k, v in (("tool", probe), ("kind", kind_), ("fails-when", fails), ("anchors_to", anchors),
+                     ("serves", serves), ("source", source), ("why", why)):
             if v is not None:
                 e[k] = v
         order = {i: n for n, i in enumerate(q["order"])}
@@ -386,9 +424,15 @@ def decide(args, out=print):
 
 def show(args, out=print):
     args = list(args)
-    to = _opt(args, "--to")
+    to, traced = _opt(args, "--to"), _flag(args, "--trace")
     path, kind = _file(args, ("spec", "isa", "plan"))
     text = _read(path)
+    if traced:
+        if kind != "isa":
+            raise Refused("`--trace` shows a TASK ISA against its spec")
+        from . import review
+        out(review.trace(path, text))
+        return 0
     if not to:
         out(text.rstrip("\n"))
         return 0
@@ -425,9 +469,9 @@ def ack(args, out=print):
     h = spec.hash_of(path, text)
     if kind == "isa" and isafile.tier(isafile.parse(text)) == "E1":
         raise Refused("an E1 ISA has no ack: build it")
-    errs = spec.lint(text) if kind == "spec" else lint.errors(text, path)
+    errs = spec.lint(text) if kind == "spec" else lint.errors(text, path) + isafile.review_errors(text)
     if errs:
-        raise Refused("it doesn't lint yet:\n" + "\n".join(f"  - {e}" for e in errs[:12]))
+        raise Refused("it isn't ready for the ack:\n" + "\n".join(f"  - {e}" for e in errs[:12]))
     if not spec.clicked(path, h, text):
         q = "Spec ack" if kind == "spec" else "ISA ack"
         raise Refused(f"no click: ask the user with AskUserQuestion (header `{q}`, options `Acknowledge` / "

@@ -5,6 +5,8 @@
     {"jev_gate": 0.8}           at or above it, the prompt is ISA work
     {"jev_quiet": 0.3}          below it, the prompt goes on without an ISA and without a question
     {"jev_doubt": 0.5}          the advisory line: a probe, goal or ask Jev rates below it is flagged
+    {"jev_serves": 0.7}         `isa review`: a leaf Jev says doesn't serve the Problem and Goal, at least this sure
+    {"jev_covered": 0.7}        `isa review`: a section Jev says its criteria don't cover, at least this sure
     {"debug": false}            DEBUG: write the debug log (`ISA_DEBUG=1` overrides)
 
 A missing file, unreadable JSON or a missing key means the default: a broken config never stops ISA.
@@ -13,7 +15,7 @@ import json
 import os
 
 DEFAULTS = {"ask_without_isa": True, "jev": True, "jev_gate": 0.8, "jev_quiet": 0.3, "jev_doubt": 0.5,
-            "debug": False}
+            "jev_serves": 0.7, "jev_covered": 0.7, "debug": False}
 
 
 def path():

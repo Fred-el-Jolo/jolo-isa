@@ -161,13 +161,18 @@ def stage(st):
         errs = lint.errors(text, isa)
         if errs:
             return "ISA DRAFT", (f"finish the ISA with `isa write` ({len(errs)} to do: `isa lint {t}`)"
-                                 + ("" if isafile.tier(p) == "E1" else ", then show it (`isa show <ISA> --to Criteria`) "
-                                    "and ask the `ISA ack` question"))
+                                 + ("" if isafile.tier(p) == "E1" else f", then `isa review {t}`, `isa show {t} "
+                                    "--trace` for the user, and the `ISA ack` question"))
         if isafile.tier(p) != "E1" and not isafile.acked(text):
+            rerr = isafile.review_errors(text)
+            review = f"{rerr[0].replace('<ISA>', t)}; then " if rerr else ""
             if p["fm"].get("acked"):
-                return "ISA DRAFT", (f"the ISA changed since its ack: show the user `isa diff {t}`, then ask the "
+                return "ISA DRAFT", (f"the ISA changed since its ack: {review}show the user `isa diff {t}` and "
+                                     f"`isa show {t} --trace`, then ask the `ISA ack` question")
+            if rerr:
+                return "ISA DRAFT", (f"review it before the ack — {review}`isa show {t} --trace` for the user and the "
                                      "`ISA ack` question")
-            return "ISA DRAFT", (f"show the user the ISA (`isa show {t} --to Criteria`), then ask the `ISA ack` question "
+            return "ISA DRAFT", (f"show the user the ISA (`isa show {t} --trace`), then ask the `ISA ack` question "
                                  "(header `ISA ack`, options `Acknowledge` / `Request changes`)")
         return "BUILD", ""
     if _exists(sp) and not _finished(sp):
@@ -327,6 +332,10 @@ def _pre_tool(ev):
             if errs:
                 return {"deny": f"ISA ack: {_tilde(path)} doesn't lint yet, so the user can't be asked:\n"
                                 + "\n".join(f"  - {e}" for e in errs[:12])}
+            rerr = isafile.review_errors(text) if spec.kind_of(path) != "spec" else []
+            if rerr:
+                return {"deny": f"ISA ack: {_tilde(path)} isn't reviewed for the ack yet — "
+                                + rerr[0].replace("<ISA>", _tilde(path))}
         return {}
     kind = classify.classify(tool, ev.get("tool_input"), ev.get("cwd"), ev.get("temp_dirs", ()))
     note(kind=kind)
@@ -494,7 +503,7 @@ def _pi_ack(st, name):
     if not _exists(path):
         return None
     text = _read(path)
-    if spec.lint(text) if spec.kind_of(path) == "spec" else lint.errors(text, path):
+    if spec.lint(text) if spec.kind_of(path) == "spec" else lint.errors(text, path) + isafile.review_errors(text):
         return None
     what = _tilde(path) if spec.kind_of(path) == "spec" else f"the ISA {state.frontmatter(path).get('task', '')}"
     return {"ask": f"Acknowledge {what}?", "options": [ACK_YES, ACK_NO], "ask_kind": "ack", "ask_path": path}

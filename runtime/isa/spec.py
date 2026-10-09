@@ -28,7 +28,7 @@ TAIL = ["Decisions", "Open questions"]
 S_HEAD = re.compile(r"^S(\d+)\s+[—–-]\s+(.+)$")
 STATUS = re.compile(r"^(draft|acked (\d{4}-\d{2}-\d{2}) #([0-9a-f]{8}))$")
 PLACEHOLDER = re.compile(r"\b(?:TBD|TODO)\b")
-PLAN_SECTIONS = isafile.CONTENT + ["Decisions", "Verification"]
+PLAN_SECTIONS = isafile.CONTENT + ["Decisions", "Review", "Verification"]
 
 
 def _key(h):
