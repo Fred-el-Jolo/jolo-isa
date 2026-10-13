@@ -29,13 +29,14 @@ fewer than four columns are left for it.
 
 ## Opening the file: `isa open`
 
-To read the spec or the ISA the line is about (before an ack, say), run
-`isa open` in a terminal in the project. It opens the session's spec during
-SPEC DRAFT and SPEC ACKED, and its ISA after that; `isa open spec` or
+To read or edit the spec or the ISA the line is about (before an ack, say),
+run `isa open` in a terminal in the project. It opens the session's spec
+during SPEC DRAFT and SPEC ACKED, and its ISA after that; `isa open spec` or
 `isa open isa` picks one, and `--print` prints the path instead. The editor
-is `$ISA_EDITOR`, `$VISUAL`, `$EDITOR`, else nvim, with `-R` for vi, vim and
-nvim: only `isa` commands write these files. The session is `--session ID`,
-else the one in the environment, else this project's most recent one.
+is `$ISA_EDITOR`, `$VISUAL`, `$EDITOR`, else nvim. Your edit to an acked file
+needs a new ack, like any other change. The model never runs `isa open`: it
+is refused from a tool call. The session is `--session ID`, else the one in
+the environment, else this project's most recent one.
 
 ## How it works
 
@@ -52,7 +53,7 @@ Claude Code statusLine ──stdin {session_id}──► harness.ts render
 
 - **The runtime owns the data.** `isa status` finds the bound ISA through the
   engine's own session state and parses it with the same helpers `isa lint`
-  uses (`collect_iscs`, `leaf_iscs`). The ISC list is exactly the set
+  uses (`isafile.parse`, `isafile.leaves`, `isafile.progress`). The ISC list is exactly the set
   `progress` counts: leaves only, with no dropped or waived ISCs.
 - **This adapter only renders it.** It has no hook and no state file, and it
   never writes anything. Any failure prints nothing and exits 0.

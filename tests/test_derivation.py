@@ -33,7 +33,8 @@ def ans(q):
 print(json.dumps({"ok": True, "answers": {q: {"answer": ans(q)} for q in qs}}))
 '''
 
-CHECK = "shared: none\nprerequisites: none\ncontradictions: none\ndrift: none\ngaps: none\ncontext: none\n"
+CHECK = ("shared: none\nprerequisites: none\ncontradictions: none\ndrift: none\ngaps: none\ncontext: none\n"
+         "redundant: none\n")
 LINES = ["- `ok` exists", "- `ok` is empty", "- `ok` is a plain file"]
 
 
@@ -129,7 +130,7 @@ class Common(Base):
         from isa import isafile
         r = isafile.parse(self.read(isa))["review"]
         self.assertEqual(sorted(r["checklist"]), sorted(["shared", "prerequisites", "contradictions", "drift", "gaps",
-                                                         "context"]))
+                                                         "context", "redundant"]))
         self.assertRegex(r["hash"], r"^[0-9a-f]{8}$")
         rc, out = self.run_isa("write", isa, "Review", stdin="hand-written\n")
         self.assertNotEqual(rc, 0, out)
@@ -187,7 +188,7 @@ class Seed(Base):
         _, isa = self.seeded()
         rc, out = self.run_isa("write", isa, "Criteria", stdin="- [ ] ISC-1: x\n  - [ ] ISC-1.1: y\n")
         self.assertNotEqual(rc, 0, out)
-        self.assertIn("written once", out)
+        self.assertIn("one criterion at a time", out)
 
     def test_leaf_inherits_anchor(self):
         _, isa = self.seeded()
@@ -340,7 +341,7 @@ class Review(Base):
         self.assertTrue(flags)
         self.assertIn("isa review", self.ack_question() or "")
         for f in flags:
-            self.ok("review", isa, "--answer", f, "rebuttal: the probe proves it")
+            self.ok("review", isa, "--answer", f, "keep: without it a missing ok file would pass unnoticed")
         self.click("ISA ack", "Acknowledge the ISA of this task?")
         self.ok("ack", isa)
 
@@ -361,8 +362,8 @@ class Review(Base):
         for bad in ("maybe it is fine", "reopen: the spec is wrong"):
             rc, out = self.run_isa("review", isa, "--answer", f, bad)
             self.assertNotEqual(rc, 0, out)
-        self.ok("review", isa, "--answer", f, "rebuttal: the probe runs the real binary")
-        self.assertIn("rebuttal: the probe runs the real binary", self.read(isa))
+        self.ok("review", isa, "--answer", f, "keep: the probe runs the real binary")
+        self.assertIn("keep: the probe runs the real binary", self.read(isa))
 
     def test_plan_has_review(self):
         self.fake(0.9)

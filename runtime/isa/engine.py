@@ -29,6 +29,9 @@ GUARD = ("ISA: ISAs, specs, plans and everything under ~/.isa are written only b
          "`isa write <file> <section>` (text on stdin), `isa write <ISA> ISC-N \"<text>\"` / `--probe \"<command>\"`, "
          "`isa drop`, `isa decide`, `isa answer`, `isa ack`, `isa reopen`, `isa refine`. Reading is free "
          "(`isa show <file>`, cat, grep).")
+HARNESS_ONLY = ("ISA: only the harness runs `isa hook` (Claude Code and pi feed it their events), and `isa open` is "
+                "for the user's own terminal. An ack is the user's click: ask with AskUserQuestion (header `Spec ack` "
+                "or `ISA ack`), then `isa ack <file>`. `isa open --print` gives the path.")
 
 
 def note(**fields):
@@ -340,11 +343,15 @@ def _pre_tool(ev):
     kind = classify.classify(tool, ev.get("tool_input"), ev.get("cwd"), ev.get("temp_dirs", ()))
     note(kind=kind)
     if kind == "guarded":
+        if tool in classify.SHELL_TOOLS and classify.harness_call(str((ev.get("tool_input") or {}).get("command"))):
+            return {"deny": HARNESS_ONLY}
         return {"deny": GUARD}
     if kind not in ("write", "unknown") or _mode(st) != "on" or st.get("pass") == str(ev.get("prompt_id")):
         return {}
     name, todo = stage(st)
-    if name == "BUILD":
+    # before BUILD only a recognised change waits; an `unknown` call (a script, a test run) goes through, and the
+    # spec's ack lists what it changed outside the spec (`isa ack`)
+    if name == "BUILD" or (kind == "unknown" and name != "CLOSED"):
         return {}
     return {"deny": f"ISA: {name} — this change waits: {todo}."}
 
@@ -405,9 +412,13 @@ def _post_tool(ev):
             path = _ack_target(q, ev, st)
             if path:
                 out.append(_record_ack(ev, path, _answer(ev, str(q.get("question", "")))))
+        qs = [q for q in (ev.get("tool_input") or {}).get("questions") or [] if isinstance(q, dict)]
+        answers = [a for a in (_answer(ev, str(q.get("question", ""))) for q in qs) if a]
         with state.session(ev["harness"], ev["session"]) as s:
             if out:
                 s["ack_asked"] = str(ev.get("prompt_id"))
+            if answers:
+                state.keep_answers(s, answers)
         choice = _choice(ev)
         res = _record_choice(ev, choice) if choice else {}
         if out:

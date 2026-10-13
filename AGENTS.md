@@ -74,8 +74,8 @@ One engine (`runtime/isa/engine.py`), two thin adapters. Every decision is deter
   - with an ISA or spec open, "continuation or new task?" (`isa-continuation`);
   - with Jev unavailable, the model judges with `ISA judge (model): yes|no|unsure — <reason>`;
   - Continue grants a pass for the rest of that prompt.
-- **The lifecycle.** While ON, the stage comes from the bound ISA or spec and its acks: TRIAGE, SPEC DRAFT, SPEC ACKED, ISA DRAFT, ISA REFINE, BUILD, CLOSED. A project change (`write` or `unknown`) goes through in BUILD only, and the refusal names the stage and the next command.
-- **The perimeter (FOUNDATION_2).** In every mode, a `guarded` call is refused: any Write or Edit of an ISA, a spec, a plan or anything under `~/.isa`, and any shell command that writes to them or runs a script on them. Reading is free.
+- **The lifecycle.** While ON, the stage comes from the bound ISA or spec and its acks: TRIAGE, SPEC DRAFT, SPEC ACKED, ISA DRAFT, ISA REFINE, BUILD, CLOSED. Before BUILD a recognised project change (`write`) waits, and the refusal names the stage and the next command; an `unknown` call (a script, a test) runs, and the spec's first ack lists what changed outside the spec since `isa spec new`.
+- **The perimeter (FOUNDATION_2).** In every mode, a `guarded` call is refused: any Write or Edit of an ISA, a spec, a plan or anything under `~/.isa`, any shell command that writes to them or runs a script on them, and `isa hook` or `isa open` run from a tool call (only the harness feeds `isa hook` events; `isa open` is the user's editor). Reading is free.
 - **Stop** refuses once per prompt when the turn ends with the stage asking for something:
   - nothing bound while ON;
   - a spec draft that was neither asked for its ack nor has open questions;

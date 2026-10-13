@@ -98,7 +98,7 @@ def _ver(content):
     return out
 
 
-CHECKLIST = ("shared", "prerequisites", "contradictions", "drift", "gaps", "context")
+CHECKLIST = ("shared", "prerequisites", "contradictions", "drift", "gaps", "context", "redundant")
 FLAG_LINE = re.compile(r"^- (?P<id>R\d+): (?P<kind>serves|covered) (?P<about>\S+) — no (?P<no>[\d.]+) ≥ "
                        r"(?P<threshold>[\d.]+) — (?P<question>.*) — answer: (?P<answer>.*)$")
 UNAVAILABLE = "Jev: unavailable — model only"
@@ -122,6 +122,14 @@ def _review(content, fm):
             "jev": UNAVAILABLE not in content}
 
 
+def subtree_hash(p, about):
+    """What one flag is about, as it is now: `ISC-3.8` (it and its children) or `S2` (everything under ISC-2)."""
+    i = about[4:] if about.startswith("ISC-") else about[1:]
+    rows = [p["iscs"][j]["text"] + repr(sorted((entry(p, j) or {}).items()))
+            for j in p["order"] if j == i or j.startswith(i + ".")]
+    return doc.h8("\n".join(rows))
+
+
 def review_hash(text):
     """What a review covers: the criteria (ticks ignored) and their probes."""
     body = doc.split(text)[2]
@@ -136,19 +144,35 @@ def review_errors(text):
         return []
     r = p["review"]
     if not r or not r["hash"]:
-        return ["no review yet: `isa review <ISA>` (the six-line checklist on stdin)"]
+        return ["no review yet: `isa review <ISA>` (the seven-line checklist on stdin)"]
     if r["hash"] != review_hash(text):
         return ["the criteria changed since its review: `isa review <ISA>` again"]
     open_ = [f["id"] for f in r["flags"] if f["answer"].strip() == "(open)"]
     if open_:
-        return [f"{', '.join(open_)} unanswered: `isa review <ISA> --answer R<n> \"rebuttal: …\"` "
-                "(or `fixed:`, `reopen:`)"]
+        return [f"{', '.join(open_)} unanswered: judge each criterion (necessary? duplicate? malformed?), then "
+                "`isa review <ISA> --answer R<n> \"keep: …\"` (or `drop:`, `fix:`, `reopen:`)"]
     return []
 
 
 def leaves(p):
     """Non-dropped ISCs without children."""
     return [i for i in p["order"] if not p["iscs"][i]["children"] and not p["iscs"][i]["dropped"]]
+
+
+NEVER_FAILED = "never seen failing"
+
+
+def never_failed(p):
+    """Behaviour leaves proven without a failing red run: their proof is weak."""
+    return [i for i in leaves(p) if re.search(rf"\((?:no red baseline|{NEVER_FAILED})\)",
+                                              (p["ver"]["iscs"].get(i) or {}).get("result") or "")]
+
+
+def green(p, isc, cmd):
+    """Is this leaf proven by its current command (ticked, last run passed with `cmd`)?"""
+    m = VER_LINE.match((p["ver"]["iscs"].get(isc) or {}).get("result") or "")
+    run = RUN.match(m.group("rest")) if m and m.group("what") == "verified" else None
+    return p["iscs"][isc]["box"] == "x" and bool(run) and run.group("cmd") == cmd
 
 
 def entry(p, isc):

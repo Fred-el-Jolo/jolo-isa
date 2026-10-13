@@ -67,7 +67,7 @@ The criteria come mainly from the spec and partly from context, and the ISA says
    - **Antis** outside the sections, anchored to the Goal or the Constraints (`--anchors Goal`);
    - anything else the spec doesn't state, marked `source: context` with its `why` (`--source context --why "…"`).
    A contradiction between two sections is not patched in the ISA: reopen the spec.
-3. **The review.** `isa review <ISA>` records that reading: six lines on stdin, each a finding or `none` (`shared:`, `prerequisites:`, `contradictions:`, `drift:`, `gaps:`, `context:`). Jev then checks, in one request, that each leaf serves the spec's Problem and Goal and that each section's criteria cover its Accepted-when lines. Every flag gets an answer (`isa review <ISA> --answer R<n> "rebuttal: …"`, or `fixed:` / `reopen:`).
+3. **The review.** `isa review <ISA>` records that reading: seven lines on stdin, each a finding or `none` (`shared:`, `prerequisites:`, `contradictions:`, `drift:`, `gaps:`, `context:`, `redundant:`). Jev then checks, in one request, that each leaf serves the spec's Problem and Goal and that each section's criteria cover its Accepted-when lines. Every flag gets an answer that judges the criterion itself — Necessary? Duplicate? Malformed? — never where it came from: `keep: <what would go unnoticed>`, `drop: …`, `fix: …` or `reopen: …`.
 4. **The trace.** `isa show <ISA> --trace` is what the user reads before the `ISA ack`: the common ground, each section with its Accepted-when lines and the criteria and probes under it, the Antis and context items, the review and its answers, and a coverage footer.
 
 ## Red flags

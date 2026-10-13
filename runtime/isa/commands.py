@@ -3,6 +3,8 @@
 Every command prints what it did and the next step. A path line `ISA: <path>` or `Spec: <path>` binds that file to
 the session (the PostToolUse hook reads it).
 """
+import difflib
+import json
 import os
 import re
 import subprocess
@@ -107,11 +109,32 @@ def _lint_note(path, text, moment="draft"):
         f"\n  … and {len(errs) - 12} more (`isa lint {_tilde(path)}`)" if len(errs) > 12 else "")
 
 
+def _flat(s):
+    return " ".join(str(s).split())
+
+
 def _verbatim(span, what):
-    prompts = state.session_prompts()
-    if prompts is not None and prompts and not any(span in p for p in prompts):
-        raise Refused(f"{what} \"{span[:60]}\" is not a verbatim span of a prompt of this session — copy the "
-                      "user's words byte for byte")
+    """A goal or an ask is a piece copied from the user's words (prompts and AskUserQuestion answers): parts left
+    out with `…`, spacing ignored, each part copied exactly and in order."""
+    words = state.session_prompts()
+    if not words:
+        return
+    parts = [_flat(x) for x in span.split("…") if x.strip()]
+    for w in map(_flat, words):
+        pos = 0
+        for part in parts:
+            pos = w.find(part, pos)
+            if pos < 0:
+                break
+            pos += len(part)
+        else:
+            if parts:
+                return
+    clauses = [c for w in words for c in re.split(r"(?<=[.!?:;])\s+|\n+", w) if c.strip()]
+    best = sorted(clauses, key=lambda c: -difflib.SequenceMatcher(None, _flat(span).lower(), _flat(c).lower()).ratio())
+    raise Refused(f"{what} \"{span[:80]}\" is not copied from the user's words (this session's prompts and answers). "
+                  "Copy a piece exactly; leave text out with `…`. Closest: "
+                  + " | ".join(f"\"{_flat(c)[:120]}\"" for c in best[:2]))
 
 
 # ------------------------------------------------------------------ start
@@ -129,8 +152,11 @@ def spec_cmd(args, out=print):
     path = os.path.join(os.getcwd(), "docs", f"{time.strftime('%Y-%m-%d')}-{slug}-01-spec.md")
     if os.path.exists(path):
         raise Refused(f"{_tilde(path)} exists already")
+    base = gitops.snapshot(os.getcwd())  # the files already changed: the user's, never listed at the ack
     os.makedirs(os.path.dirname(path), exist_ok=True)
     _write(path, spec.template(slug.replace("-", " ").capitalize(), tier))
+    if base:
+        _baselines(os.getcwd(), {os.path.realpath(path): base["base_dirty"]})
     heads = ["Title", "Problem", "Goal", "Out of scope", "Constraints"] + (["Approaches"] if tier != "E2" else [])
     out(f"Spec: {path}")
     out(f"Write each part with `isa write {_tilde(path)} <part>` (the text on stdin): {', '.join(heads)}, then "
@@ -155,8 +181,10 @@ def new(args, out=print):
     fm = _fm(args[0], "E1", root, goal, asks, {"slug": os.path.basename(os.path.dirname(path))})
     _write(path, _skeleton(fm, isafile.E1_REQUIRED))
     out(f"ISA: {path}")
-    out(f"Write it: `isa write {_tilde(path)} <section>` for Problem, Goal, Criteria (one level, at least one "
-        "`Anti:`), Test Strategy; then `isa lint`, `isa verify --red`, the build, `isa verify`, `isa close`.")
+    out(f"Write it: `isa write {_tilde(path)} Problem` and `Goal` (text on stdin), then one criterion at a time (one "
+        f"level, at least one `Anti:`): `isa write {_tilde(path)} ISC-1 \"<claim>\" --probe \"<command>\" --kind "
+        "behaviour` (an `Anti:` adds `--fails-when \"<what it would see>\"`); then `isa lint`, `isa verify --red`, "
+        "the build, `isa verify`, `isa close`.")
     return 0
 
 
@@ -234,6 +262,7 @@ def write(args, stdin_text, out=print):
                                     _opt(args, "--anchors"))
     origin = {"before": _opt(args, "--before"), "serves": _opt(args, "--serves"), "source": _opt(args, "--source"),
               "why": _opt(args, "--why")}
+    no_probe = _flag(args, "--no-probe")
     path, kind = _file(args, ("spec", "isa"))
     if not args:
         raise Refused("which part? `isa write <file> <section>` (text on stdin), or `isa write <ISA> ISC-N …`")
@@ -249,7 +278,7 @@ def write(args, stdin_text, out=print):
     _open_isa(text)
     if re.fullmatch(r"ISC-\d+(\.\d+)*", part):
         new = _write_isc(text, part[4:], " ".join(args) if args else (stdin_text.strip() if not probe else ""),
-                         probe, kind_, fails, anchors, **origin)
+                         probe, kind_, fails, anchors, path=path, no_probe=no_probe, **origin)
     elif part.lower() in ("task", "asks"):
         value = " ".join(args) if args else stdin_text.strip()
         if part.lower() == "asks":
@@ -284,22 +313,11 @@ def _write_section(text, part, content):
     tier = isafile.tier(p)
     if tier == "E1" and h in isafile.E1_FORBIDDEN:
         raise Refused(f"E1 has no `## {h}`")
-    if h in ("Criteria", "Test Strategy") and (p["sections"].get(h) or "").strip():
-        raise Refused(f"`## {h}` is written once as a block; change one criterion with `isa write <ISA> ISC-N "
-                      '"<text>"`, its probe with `isa write <ISA> ISC-N --probe "<command>"`, or drop it with '
-                      '`isa drop <ISA> ISC-N "<why>"`')
-    if h == "Criteria":
-        q = isafile.parse(doc.set_section(text, h, content, isafile.SECTIONS))
-        if q["errors"]:
-            raise Refused("Criteria: " + "; ".join(q["errors"][:5]))
-        for i in q["order"]:
-            q["iscs"][i]["box"] = " "
-        content = isafile.render_criteria(q)
-    if h == "Test Strategy":
-        q = isafile.parse(doc.set_section(text, h, content, isafile.SECTIONS))
-        if q["tests_error"]:
-            raise Refused(q["tests_error"])
-        content = isafile.render_tests(q["tests"])
+    if h in ("Criteria", "Test Strategy"):
+        raise Refused(f"`## {h}` is written one criterion at a time, in every tier: `isa write <ISA> ISC-N "
+                      '"<claim>" --probe "<command>" --kind behaviour` (an `Anti:` or a non-behaviour kind adds '
+                      '`--fails-when "<what it would see>"`; nothing to run: `--kind manual`, then `isa attest`); '
+                      '`isa drop <ISA> ISC-N "<why>"` removes one')
     return doc.set_section(text, h, content, isafile.SECTIONS)
 
 
@@ -312,7 +330,8 @@ def _section_ids(p):
         return {spec.S_HEAD.match(h).group(1) for h in spec.s_sections(f.read())}
 
 
-def _write_isc(text, isc, words, probe, kind_, fails, anchors, before=None, serves=None, source=None, why=None):
+def _write_isc(text, isc, words, probe, kind_, fails, anchors, before=None, serves=None, source=None, why=None,
+               path="<ISA>", no_probe=False):
     p = isafile.parse(text)
     cap = isafile.DEPTH.get(isafile.tier(p))
     existing = p["iscs"].get(isc)
@@ -321,6 +340,30 @@ def _write_isc(text, isc, words, probe, kind_, fails, anchors, before=None, serv
     if before and existing:
         raise Refused(f"ISC-{isc} exists; `--before` places a new criterion (moving one is out of scope)")
     up = isc.rsplit(".", 1)[0] if "." in isc else None
+    t = _tilde(path)
+    if no_probe:
+        if words or probe is not None or kind_ or fails:
+            raise Refused(f"`--no-probe` removes ISC-{isc}'s probe and nothing else: `isa write {t} ISC-{isc} --no-probe`")
+        if isafile.entry(p, isc) is None:
+            raise Refused(f"ISC-{isc} has no probe")
+        keep = [e for e in p["tests"] if str(e.get("isc", "")).replace("ISC-", "") != isc]
+        return isafile.set_box(doc.set_section(text, "Test Strategy", isafile.render_tests(keep), isafile.SECTIONS),
+                               isc, False)
+    if words and not existing and up in p["iscs"] and not p["iscs"][up]["children"] and isafile.entry(p, up):
+        raise Refused(f"ISC-{up} is a leaf with a probe; a parent has none. Remove it first: `isa write {t} ISC-{up} "
+                      f"--no-probe`, then `isa write {t} ISC-{isc} \"{words}\"` with the probe on the child")
+    claim = words or (existing or {}).get("text") or ""
+    if probe is not None and claim.startswith("Anti:") and not kind_:
+        kind_ = "regression"  # an Anti holds from the start: it is never seen failing
+    if probe is not None and not no_probe:
+        e0 = isafile.entry(p, isc) or {}
+        k = kind_ or e0.get("kind") or "behaviour"
+        if (claim.startswith("Anti:") or k not in ("behaviour", "manual")) and not (fails or e0.get("fails-when")):
+            words_arg = f' "{words}"' if words else ""
+            raise Refused(f"ISC-{isc} {'is an Anti' if claim.startswith('Anti:') else f'is kind {k}'}: its probe "
+                          "passes before the work, so it says what a failure would look like — "
+                          f"`isa write {t} ISC-{isc}{words_arg} --probe \"{probe}\" --kind {k} "
+                          "--fails-when \"<what it would see>\"`")
     if words:
         if existing:
             if words != existing["text"]:
@@ -384,7 +427,9 @@ def _write_isc(text, isc, words, probe, kind_, fails, anchors, before=None, serv
 
 def drop(args, out=print):
     args = list(args)
-    path, _ = _file(args, ("isa",))
+    path, kind = _file(args, ("isa", "spec"))
+    if kind == "spec":
+        return _drop_section(path, args, out)
     if len(args) < 2 or not re.fullmatch(r"ISC-\d+(\.\d+)*", args[0]):
         raise Refused('usage: isa drop <ISA> ISC-N "<why>"')
     isc, why = args[0][4:], " ".join(args[1:])
@@ -402,6 +447,21 @@ def drop(args, out=print):
     text = isafile.refresh(text)
     _write(path, text)
     out(f"dropped ISC-{isc} (a tombstone keeps the id)\n{_lint_note(path, text)}")
+    return 0
+
+
+def _drop_section(path, args, out):
+    if len(args) < 2 or not re.fullmatch(r"S\d+", args[0]):
+        raise Refused('usage: isa drop <spec> S<n> "<why>"')
+    text = _read(path)
+    if spec.status(text) != "draft":
+        raise Refused(f"{_tilde(path)} is acked — `isa reopen {_tilde(path)}` first (the user acks it again)")
+    h = spec.section_by_number(text, args[0][1:])
+    if not h:
+        raise Refused(f"no `## {args[0]} — …` in {_tilde(path)}")
+    text = doc.remove_section(text, h)
+    _write(path, text)
+    out(f"dropped {h} from {_tilde(path)} ({' '.join(args[1:])})\n{_lint_note(path, text)}")
     return 0
 
 
@@ -477,6 +537,13 @@ def ack(args, out=print):
         raise Refused(f"no click: ask the user with AskUserQuestion (header `{q}`, options `Acknowledge` / "
                       f"`Request changes`). `isa ack` records only the user's own click on the file as it is now")
     if kind == "spec":
+        stray = _non_spec_changes(path)
+        if stray:
+            raise Refused("not acked, nothing committed — files changed outside the spec since `isa spec new`:\n"
+                          + "\n".join(f"  - {s}" for s in stray) + "\nBefore BUILD nothing but the spec changes: "
+                          "revert them, or move what belongs to the spec under docs/ with a name starting "
+                          f"`{_spec_prefix(path)}`. The user's click stays recorded: then `isa ack {_tilde(path)}`.")
+        _baselines(spec.doc_root(path), {path: None})  # checked once: a re-ack after `isa reopen` is mid-build
         text = doc.fm_set(text, "status", f"acked {time.strftime('%Y-%m-%d')} #{h}")
         _write(path, text)
         sha, err = gitops.commit(spec.doc_root(path), [path], f"Spec: {doc.title(doc.split(text)[2])} (acked)")
@@ -490,6 +557,46 @@ def ack(args, out=print):
         _write(path, text)
         out(f"acked the ISA (#{h}): BUILD — `isa verify --red`, the work, `isa verify`, `isa close`")
     return 0
+
+
+def _baselines(root, update=None):
+    """{spec path: [files changed before it]}: written by `isa spec new`, read and cleared at its first ack."""
+    p = os.path.join(state.project_dir(root), "spec-baselines.json")
+    with state.lock(p):
+        try:
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            data = {}
+        if update:
+            for k, v in update.items():
+                if v is None:
+                    data.pop(k, None)
+                else:
+                    data[k] = v
+            if data:
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                state.write_atomic(p, json.dumps(data, indent=1) + "\n")
+            elif os.path.exists(p):
+                os.remove(p)  # nothing left to check: no state kept
+    return data
+
+
+def _spec_prefix(path):
+    return re.sub(r"-01-spec\.md$", "", os.path.basename(path))
+
+
+def _non_spec_changes(path):
+    """Files changed since `isa spec new`, other than the spec and its spec-related files (under docs/, a file or
+    folder name starting `<date>-<slug>`, at any depth). [] outside git, or for a spec made before the check."""
+    root = spec.doc_root(path)
+    base = _baselines(root).get(path)
+    top = gitops.repo(root) if base is not None else None
+    if not top:
+        return []
+    docs, prefix = os.path.relpath(os.path.dirname(path), top), _spec_prefix(path)
+    return [f for f in gitops.changed_since(root, base, exclude=[path])
+            if not (f.startswith(docs + "/") and any(x.startswith(prefix) for x in f[len(docs) + 1:].split("/")))]
 
 
 def reopen(args, out=print):
@@ -532,14 +639,31 @@ def _env():
     return {k: v for k, v in os.environ.items() if not k.startswith("ISA_") or k == "ISA_HOME"}
 
 
+TAIL_LINES = 40
+
+
 def _run(cmd, root, timeout=600):
+    """→ (exit code, seconds, output): stdout and stderr in the order they were written."""
     t0 = time.time()
     try:
-        r = subprocess.run(["bash", "-c", cmd], cwd=root, env=_env(), capture_output=True, text=True, timeout=timeout)
-        code = r.returncode
-    except subprocess.TimeoutExpired:
-        code = 124
-    return code, round(time.time() - t0, 2)
+        r = subprocess.run(["bash", "-c", cmd], cwd=root, env=_env(), stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, text=True, errors="replace", timeout=timeout)
+        code, output = r.returncode, r.stdout or ""
+    except subprocess.TimeoutExpired as e:
+        code, output = 124, (e.stdout.decode(errors="replace") if isinstance(e.stdout, bytes) else e.stdout or "")
+        output += f"\n(timed out after {timeout}s)\n"
+    return code, round(time.time() - t0, 2), output
+
+
+def _failure(path, isc, output):
+    """The full output in `<ISA folder>/runs/ISC-N.log`; → its last TAIL_LINES lines, indented, and the log's path."""
+    log = os.path.join(os.path.dirname(path), "runs", f"ISC-{isc}.log")
+    os.makedirs(os.path.dirname(log), exist_ok=True)
+    state.write_atomic(log, output)
+    lines = output.rstrip("\n").split("\n") if output.strip() else []
+    cut = [f"    … {len(lines) - TAIL_LINES} lines before (full output: {_tilde(log)})"] \
+        if len(lines) > TAIL_LINES else [f"    (full output: {_tilde(log)})"]
+    return "\n".join(cut + [f"    | {ln}" for ln in lines[-TAIL_LINES:]])
 
 
 def _probe_set(p, select):
@@ -561,7 +685,8 @@ def _proved(text, p, results, red):
     for isc, (code, cmd) in results.items():
         when = isafile.now()
         if red:
-            text = isafile.set_ver(text, isc, "red", f"- ISC-{isc}: red {when} exit {code} — `{cmd}`")
+            flag = " — red PASS ⚠ not seen failing" if code == 0 else ""
+            text = isafile.set_ver(text, isc, "red", f"- ISC-{isc}: red {when} exit {code} — `{cmd}`{flag}")
             continue
         if code == 0:
             kind = (isafile.entry(p, isc) or {}).get("kind")
@@ -589,21 +714,39 @@ def verify(args, out=print):
     p = isafile.parse(text)
     _in_build(p, text, path)
     root = str(p["fm"].get("root"))
-    results, failed, advice_lines = {}, [], []
-    for isc, e in _probe_set(p, args):
-        code, secs = _run(str(e["tool"]), root, timeout)
+    probes = _probe_set(p, args)
+    if red:  # red runs the behaviour probes only: a regression, an Anti or a doc probe says how it fails instead
+        probes = [(i, e) for i, e in probes if e.get("kind") == "behaviour" and not isafile.is_anti(p, i)]
+    elif not args:  # each probe runs green once: a green probe runs again only when named, or at close
+        probes = [(i, e) for i, e in probes if not isafile.green(p, i, str(e["tool"]))]
+        if not probes:
+            out("nothing to run: every probe is green with its current command (`isa verify <ISA> ISC-N` re-runs "
+                f"one; `isa close` re-runs them all). progress {isafile.progress(p)}")
+            return 0
+    results, failed, passed_red, advice_lines = {}, [], [], []
+    for isc, e in probes:
+        code, secs, output = _run(str(e["tool"]), root, timeout)
         results[isc] = (code, str(e["tool"]))
-        word = ("FAIL (red, as expected)" if code else "PASS at red — this probe can't be seen failing") if red \
-            else ("PASS" if code == 0 else "FAIL")
+        word = ("FAIL (red, as expected)" if code else "PASS at red ⚠") if red else ("PASS" if code == 0 else "FAIL")
         out(f"ISC-{isc} {word}  exit {code}  {secs}s  {e['tool']}")
-        if code and not red:
-            failed.append(isc)
-        if code == 0 and not red:
+        if code:
+            log = _failure(path, isc, output)
+            if not red:
+                out(log)
+                failed.append(isc)
+        elif red:
+            passed_red.append(isc)
+        else:
             advice_lines += advice.probe(p, isc, e)
     for line in advice_lines:
         out(line)
     text = isafile.refresh(_proved(text, p, results, red))
     _write(path, text)
+    if passed_red:
+        out("┌─ ⚠ passed before the build: these probes prove nothing yet\n"
+            + "\n".join(f"│  ISC-{i} passed before the build: this probe proves nothing yet" for i in passed_red)
+            + "\n└─ fix the probe so it can fail, make it `--kind regression --fails-when …`, or drop the criterion "
+              "(each changes the acked ISA: a new ISA ack). Close lists them under \"Never seen failing\".")
     out(f"progress {isafile.progress(isafile.parse(text))}" + (f" — failed: {', '.join('ISC-' + i for i in failed)}. "
                                                               "Claim wrong or code wrong?" if failed else ""))
     return 1 if failed else 0
@@ -659,12 +802,14 @@ def close(args, out=print):
         raise Refused("not closed — the ISA doesn't lint:\n" + "\n".join(f"  - {e}" for e in errs[:12]))
     p = isafile.parse(text)
     root = str(p["fm"].get("root"))
-    results = {}
+    results, bad = {}, []
     for isc, e in _probe_set(p, []):
-        results[isc] = (_run(str(e["tool"]), root)[0], str(e["tool"]))
-    bad = [f"ISC-{i}: exit {c} — `{cmd}`" for i, (c, cmd) in results.items() if c]
+        code, _, output = _run(str(e["tool"]), root)
+        results[isc] = (code, str(e["tool"]))
+        if code:
+            bad.append(f"  - ISC-{isc}: exit {code} — `{e['tool']}`\n{_failure(path, isc, output)}")
     if bad:
-        raise Refused("not closed — nothing written; these probes fail now:\n" + "\n".join(f"  - {b}" for b in bad))
+        raise Refused("not closed — nothing written; these probes fail now:\n" + "\n".join(bad))
     closing = isafile.refresh(_proved(text, p, results, False))
     errs = lint.errors(closing, path, "close")
     if errs:
@@ -694,9 +839,10 @@ def _summary(path, text, results, plan, sha, psha):
     p = isafile.parse(text)
     lines = [f"isa close: {_tilde(path)} — complete, progress {isafile.progress(p)}", "Proven (every probe re-run):"]
     lines += [f"  - ISC-{i}: exit 0 — `{cmd}`" for i, (_, cmd) in results.items()]
-    nored = [i for i in results if "(no red baseline)" in ((p["ver"]["iscs"].get(i) or {}).get("result") or "")]
+    nored = isafile.never_failed(p)
     if nored:
-        lines.append("No red baseline (never seen failing): " + ", ".join(f"ISC-{i}" for i in nored))
+        lines.append("Never seen failing (passed before the build, or no red run): "
+                     + ", ".join(f"ISC-{i}" for i in nored))
     att = [i for i in isafile.leaves(p) if "attested" in ((p["ver"]["iscs"].get(i) or {}).get("result") or "")]
     if att:
         lines.append("Self-attested (check them): " + ", ".join(f"ISC-{i}" for i in att))

@@ -1,9 +1,10 @@
 """The review of an E2–E4 ISA (`isa review`) and the trace the user reads before its ack (`isa show --trace`).
 
     isa review <ISA>                       the model's checklist on stdin, then Jev's check, into `## Review`
-    isa review <ISA> --answer R<n> "<a>"   answer one flag: `fixed: …`, `reopen: …` or `rebuttal: …`
+    isa review <ISA> --answer R<n> "<a>"   answer one flag: `keep: …`, `drop: …`, `fix: …` or `reopen: …`
 
-The checklist is the model's reading of the spec and the ISA whole: six lines, each a finding or `none`.
+The checklist is the model's reading of the spec and the ISA whole: seven lines, each a finding or `none`; the
+seventh, `redundant`, names the criteria that are not needed, duplicated or malformed.
 Jev then asks, in as few requests as the token budget allows (one, for any usual ISA):
     serves   per leaf      does it help solve the spec's Problem and reach its Goal?   flagged at no ≥ jev_serves
     covered  per section   do the criteria under ISC-k cover what Sk accepts?          flagged at no ≥ jev_covered
@@ -20,7 +21,14 @@ from .commands import Refused
 
 DEADLINE = 10.0
 LONGEST_BUDGET, REQUEST_BUDGET = 32000, 64000  # tokens: state + the longest question; state + all questions
-PREFIXES = ("fixed:", "reopen:", "rebuttal:")
+PREFIXES = ("keep:", "drop:", "fix:", "reopen:")
+QUESTIONS = ("Judge the criterion itself, never where it came from: Necessary? (what would go wrong, unnoticed, "
+             "without it) Duplicate? (another criterion, or a test an existing probe already runs, proves the same) "
+             "Malformed? (a vague claim, a probe that misses the claim, the wrong kind)")
+ANSWERS = ("`keep: <what would go unnoticed without it>`, `drop: <duplicate of … / not needed because …>` (after "
+           "`isa drop`), `fix: <what was malformed, and the change>` (after `isa write`), or `reopen: <the spec "
+           "change>`")
+SPEC_REASON = re.compile(r"\bS\d+\b|\bthe spec\b|accepted[ -]when", re.I)
 
 
 # ------------------------------------------------------------------ the command
@@ -31,7 +39,7 @@ def cmd(args, stdin_text, out=print):
     if "--answer" in args:
         i = args.index("--answer")
         if len(args) < i + 3:
-            raise Refused('usage: isa review <ISA> --answer R<n> "<fixed: …|reopen: …|rebuttal: …>"')
+            raise Refused('usage: isa review <ISA> --answer R<n> "<keep: …|drop: …|fix: …|reopen: …>"')
         answer, args = (args[i + 1], " ".join(args[i + 2:])), args[:i]
     path, _ = commands._file(args, ("isa",))
     text = commands._read(path)
@@ -49,8 +57,9 @@ def cmd(args, stdin_text, out=print):
     found = _checklist(stdin_text)
     missing = [k for k in isafile.CHECKLIST if k not in found]
     if missing:
-        raise Refused("the checklist misses " + ", ".join(f"`{k}:`" for k in missing) + " — six lines on stdin, each "
-                      "a finding or `none`: " + ", ".join(f"{k}:" for k in isafile.CHECKLIST))
+        raise Refused("the checklist misses " + ", ".join(f"`{k}:`" for k in missing) + " — seven lines on stdin, "
+                      "each a finding or `none`: " + ", ".join(f"{k}:" for k in isafile.CHECKLIST)
+                      + " (`redundant:` the criteria not needed, duplicated or malformed)")
     if found["contradictions"].lower() != "none" and spec.is_acked(stext):
         raise Refused(f"a contradiction between sections is the spec's to fix: `isa reopen {commands._tilde(sp)}`, "
                       "fix it, ask the `Spec ack` again, then review")
@@ -63,14 +72,15 @@ def cmd(args, stdin_text, out=print):
                   "answer: (open)" for n, f in enumerate(flags, 1)]
     new = doc.set_section(text, "Review", "\n".join(lines), isafile.SECTIONS)
     new = isafile.refresh(doc.fm_set(new, "reviewed", isafile.review_hash(text)))
+    new = doc.fm_set(new, "flag_parts", " ".join(f"{f['about']}={isafile.subtree_hash(p, f['about'])}" for f in flags)
+                     or None)
     commands._write(path, new)
     out(f"reviewed {commands._tilde(path)} — {jev_line}, {len(flags)} flag(s)")
     for ln in lines[len(isafile.CHECKLIST) + 1:]:
         if ln.startswith("- R"):
             out(ln)
-    out("Answer each flag (`isa review <ISA> --answer R<n> \"rebuttal: …\"`), then `isa show <ISA> --trace` for the "
-        "user and the `ISA ack` question." if flags else "Next: `isa show <ISA> --trace` for the user, then the "
-        "`ISA ack` question.")
+    out(f"{QUESTIONS}. Answer each flag: {ANSWERS}. Then `isa show <ISA> --trace` for the user and the `ISA ack` "
+        "question." if flags else "Next: `isa show <ISA> --trace` for the user, then the `ISA ack` question.")
     return 0
 
 
@@ -86,13 +96,26 @@ def _checklist(stdin_text):
 def _answer(path, text, p, stext, sp, flag, answer, out):
     answer = answer.strip()
     if not answer.startswith(PREFIXES):
-        raise Refused("an answer starts with `fixed:` (the ISA changed), `reopen:` (the spec is reopened) or "
-                      "`rebuttal:` (why the flag is wrong)")
+        raise Refused(f"an answer starts with `keep:`, `drop:`, `fix:` or `reopen:`. {QUESTIONS}. Answers: {ANSWERS}")
     if answer.startswith("reopen:") and spec.is_acked(stext):
         raise Refused(f"`reopen:` needs the spec reopened first: `isa reopen {commands._tilde(sp)}`")
     r = p["review"]
     if not r or flag not in [f["id"] for f in r["flags"]]:
         raise Refused(f"no flag {flag} in the review")
+    about = next(f["about"] for f in r["flags"] if f["id"] == flag)
+    t = commands._tilde(path)
+    if answer.startswith("keep:") and SPEC_REASON.search(answer):
+        raise Refused("`keep:` says what would go wrong, unnoticed, without the criterion — not where it came from "
+                      "(a section, the spec, its Accepted-when lines). " + QUESTIONS)
+    if answer.startswith("drop:"):
+        if not about.startswith("ISC-"):
+            raise Refused(f"{flag} is about a section's coverage: answer `keep:`, `fix:` or `reopen:`")
+        if not p["iscs"].get(about[4:], {}).get("dropped"):
+            raise Refused(f"`drop:` once it is dropped: `isa drop {t} {about} \"<why>\"`, then this answer")
+    if answer.startswith("fix:"):
+        before = dict(x.split("=", 1) for x in str(p["fm"].get("flag_parts") or "").split() if "=" in x)
+        if before.get(about) == isafile.subtree_hash(p, about):
+            raise Refused(f"`fix:` once {about} is changed: `isa write {t} …` first (a new review follows)")
     body = (p["sections"].get("Review") or "").split("\n")
     body = [re.sub(r" — answer: .*$", f" — answer: {answer}", ln) if ln.startswith(f"- {flag}: ") else ln
             for ln in body]

@@ -37,7 +37,10 @@ def fm_value(v):
     if v is None:
         return "null"
     s = str(v)
-    if s == "" or re.search(r"[:#\[\]{},&*!|>'\"%@`]|^\s|\s$|^[-?]", s):
+    # a string that would read back as another type (`true`, `no`, `~`, `12345678`) is quoted
+    other_type = isinstance(v, str) and re.fullmatch(r"(?i)true|false|null|yes|no|on|off|~|[-+]?(\d+\.?\d*|\.\d+)"
+                                                     r"([eE][-+]?\d+)?", s)
+    if s == "" or other_type or re.search(r"[:#\[\]{},&*!|>'\"%@`]|^\s|\s$|^[-?]", s):
         return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
     return s
 

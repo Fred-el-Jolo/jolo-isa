@@ -199,8 +199,14 @@ def keep_prompt(st, text, pid):
     st["prompts"] = (st.get("prompts") or [])[-(PROMPTS_KEPT - 1):] + [{"id": pid, "text": text}]
 
 
+def keep_answers(st, answers):
+    """The user's last PROMPTS_KEPT answers to AskUserQuestion: their words too."""
+    st["answers"] = ((st.get("answers") or []) + [str(a) for a in answers])[-PROMPTS_KEPT:]
+
+
 def session_prompts(harness=None, session_id=None):
-    """The prompts of a session; with no session given, the one in the environment (Claude Code, pi)."""
+    """The user's words in a session: its prompts and its AskUserQuestion answers; with no session given, the one in
+    the environment (Claude Code, pi)."""
     if not session_id:
         for var, h in (("CLAUDE_CODE_SESSION_ID", "claude"), ("PI_SESSION_ID", "pi")):
             if os.environ.get(var):
@@ -208,7 +214,8 @@ def session_prompts(harness=None, session_id=None):
                 break
     if not session_id:
         return None
-    return [p.get("text", "") for p in read_session(harness or "claude", session_id).get("prompts") or []]
+    st = read_session(harness or "claude", session_id)
+    return [p.get("text", "") for p in st.get("prompts") or []] + list(st.get("answers") or [])
 
 
 # ---------------------------------------------------------------- transcript

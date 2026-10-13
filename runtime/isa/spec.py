@@ -53,7 +53,18 @@ def set_section(text, name, content):
             return re.sub(r"(?m)^# .*$", "# " + content.strip(), doc.norm(text), count=1)
         m = doc.FM.match(doc.norm(text))
         return doc.norm(text)[:m.end()] + f"\n# {content.strip()}\n" + doc.norm(text)[m.end():]
-    return doc.set_section(text, canonical(name), content, _key)
+    h = canonical(name)
+    m = S_HEAD.match(h)
+    if m:  # a section is its number: `S4 — New` replaces `S4 — Old`
+        old = next((x for x in s_sections(text) if S_HEAD.match(x).group(1) == m.group(1) and x != h), None)
+        if old:
+            text = doc.remove_section(text, old)
+    return doc.set_section(text, h, content, _key)
+
+
+def section_by_number(text, n):
+    """The `S<n> — …` heading of a spec, or None."""
+    return next((h for h in s_sections(text) if S_HEAD.match(h).group(1) == str(n)), None)
 
 
 def canonical(name):
@@ -227,8 +238,9 @@ def render_plan(isa_text, title, spec_name, slug):
     out = [f"---\nspec: {spec_name}\nisa: {slug}\nclosed: {time.strftime('%Y-%m-%d')}\n---\n\n# Plan — {title}\n"]
     for s in PLAN_SECTIONS:
         if s == "Verification":
-            v = p["ver"]
-            content = "\n".join(([v["goal"]] if v["goal"] else []) + [v["asks"][n] for n in sorted(v["asks"])])
+            v, never = p["ver"], isafile.never_failed(p)
+            content = "\n".join(([v["goal"]] if v["goal"] else []) + [v["asks"][n] for n in sorted(v["asks"])]
+                                + ([f"- Never seen failing: {', '.join('ISC-' + i for i in never)}"] if never else []))
         else:
             content = doc.raw_section(p["body"], s)
         if content is not None and content.strip():

@@ -5,35 +5,40 @@ Start
     isa new <slug> --tier E1 [--goal G] [--ask A]…   an E1 TASK ISA (binds it)
     isa new --spec <spec> [--goal G] [--ask A]…      the TASK ISA of an acked spec (binds it; an open one is reused)
 Write
-    isa write <file> <section>                   a section, text on stdin (Criteria and Test Strategy: once)
-    isa write <ISA> ISC-N "<text>"               change or add one criterion
-    isa write <ISA> ISC-N --probe "<command>" [--kind K] [--fails-when F] [--anchors S2|Goal|Constraints]
+    isa write <file> <section>                   a section, text on stdin; a spec's `S<n> — <title>` replaces S<n>
+    isa write <ISA> ISC-N "<text>" --probe "<command>" --kind K [--fails-when F] [--anchors S2|Goal|Constraints]
+                                                 one criterion and its probe, every tier (an `Anti:` is a
+                                                 regression with --fails-when; nothing to run: --kind manual)
+    isa write <ISA> ISC-N --no-probe             remove a leaf's probe (before it gets children)
     isa write <ISA> ISC-N "<text>" --before ISC-M   a new criterion placed just before its sibling ISC-M
     isa write <ISA> ISC-0.N … --serves S2+S3 --why W   common ground; `--source context --why W`: not in the spec
     isa write <ISA> task|asks                    the task line; the asks (one per line, verbatim)
     isa drop <ISA> ISC-N "<why>"                 a tombstone; the id is never reused
+    isa drop <spec> S<n> "<why>"                 remove a section of a draft spec
     isa decide <ISA> "<text>"                    one Decisions row
 Review (E2–E4, before the ISA ack)
-    isa review <ISA>                             the six-line checklist on stdin, then Jev's check, into ## Review
-    isa review <ISA> --answer R<n> "<answer>"    answer one flag: `fixed: …`, `reopen: …` or `rebuttal: …`
+    isa review <ISA>                             the seven-line checklist on stdin, then Jev's check, into ## Review
+    isa review <ISA> --answer R<n> "<answer>"    judge the criterion (necessary? duplicate? malformed?):
+                                                 `keep: …`, `drop: …`, `fix: …` or `reopen: …`
 Acks
     isa ack <file>                              write the user's recorded click (spec: then commit it)
     isa reopen <spec>                            an acked spec back to draft
     isa diff <file>                              what changed since its last ack
     isa refine <ISA>                             follow a re-acked spec (progress kept; the ISA is acked again)
 Proof
-    isa verify <ISA> [--red] [ISC-N…]            run the probes; red: the failing baseline before the build
+    isa verify <ISA> [--red] [ISC-N…]            red: the behaviour probes, failing before the build; then the
+                                                 probes not green yet; ISC-N: re-run these
     isa attest <ISA> ISC-N "<evidence>"          a manual leaf
     isa answer <ISA> goal "yes — <evidence>"     the Goal line; `ask N "met — <evidence>"` an Ask line
     isa close <ISA>                              re-prove all, write the plan (E2+), commit the work and the plan
 Read
     isa show <file> [--to <section> | --trace]   isa lint <file>…   isa ls [--all]   isa where
     isa status --session ID [--json]   isa current [--json]   isa log [--session ID] [--prompt ID]
-    isa open [spec|isa] [--print]                the session's spec or ISA, read-only in $EDITOR (default nvim);
+    isa open [spec|isa] [--print]                the user's: the session's spec or ISA in $EDITOR (default nvim);
                                                  the session: --session ID, else the environment, else this
                                                  project's latest
     isa purge-logs [--days N] [--dry-run]        delete old debug log days
-    isa hook <claude|pi>                         the hook entry point (event JSON on stdin)
+    isa hook <claude|pi>                         the harness's hook entry point (never from a tool call)
 """
 import json
 import os

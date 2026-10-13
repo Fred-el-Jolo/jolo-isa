@@ -1,4 +1,5 @@
-"""Read-only view of a session, for status lines and skills (`isa status`, `isa current`, `isa open`).
+"""A view of a session, for status lines and skills (`isa status`, `isa current`), and `isa open`: the user's editor
+on its spec or ISA. `status` and `current` never write; `open` lets the user edit the file.
 
     view(harness, session) → {"bound": path | None, "mode", "stage", "spec", "task", "effort", "phase",
                               "progress", "iscs": [{"id", "text", "done", "level"}, …]}
@@ -64,9 +65,9 @@ def target(st, which=None):
 
 
 def editor():
-    """$ISA_EDITOR, $VISUAL, $EDITOR, else nvim; vi, vim and nvim read-only (`-R`): only `isa` writes these files."""
-    cmd = shlex.split(os.environ.get("ISA_EDITOR") or os.environ.get("VISUAL") or os.environ.get("EDITOR") or "nvim")
-    return cmd + ["-R"] if os.path.basename(cmd[0]) in ("vi", "vim", "nvim") else cmd
+    """$ISA_EDITOR, $VISUAL, $EDITOR, else nvim, for writing: the user may edit the file by hand (a model never runs
+    `isa open`: the classifier refuses it from a tool call). An edit to an acked file needs a new ack."""
+    return shlex.split(os.environ.get("ISA_EDITOR") or os.environ.get("VISUAL") or os.environ.get("EDITOR") or "nvim")
 
 
 def open_cmd(args, harness=None, sid=None):

@@ -208,7 +208,8 @@ def bash(cmd, cwd, temp_dirs=()):
     if not cmd or not cmd.strip():
         return "read"
     raw = cmd
-    cmd = _drop_heredoc_bodies(cmd)
+    # an escaped backtick or `\$` is text, never a substitution
+    cmd = re.sub(r"\\[`$]", "Q", _drop_heredoc_bodies(cmd))
     if ">(" in cmd:
         return "guarded" if _refs(raw, cwd) else "unknown"
     cmd = cmd.replace("<(", " ; ")
@@ -224,11 +225,13 @@ def bash(cmd, cwd, temp_dirs=()):
         kinds.append(k)
         worst = _worse(worst, k)
         base = _cd(seg, cwd, base)
-    # `isa … "$(isa …)"`: only `isa` and read commands, inside and outside the substitutions, is an `isa` command
-    inner = _substitutions(cmd) if subst and worst in ("read", "isa-cmd") else None
+    inner = _substitutions(cmd) if subst else None
     if inner:
         ik = [bash(c, cwd, temp_dirs) for c in inner]
-        if all(k in ("read", "isa-cmd") for k in ik) and "isa-cmd" in kinds + ik:
+        if "guarded" in ik:
+            return "guarded"
+        # `isa … "$(isa …)"`: only `isa` and read commands, inside and outside the substitutions, is an `isa` command
+        if worst in ("read", "isa-cmd") and all(k in ("read", "isa-cmd") for k in ik) and "isa-cmd" in kinds + ik:
             return "isa-cmd"
     if subst and worst != "guarded":
         worst = _worse(worst, "unknown")
@@ -277,7 +280,20 @@ def _segment(words, cwd, temp_dirs, base=None):
     return _worse(kind, _command(clean, cwd, temp_dirs, base))
 
 
+LOOP_WORDS = {"do", "done", "then", "else", "elif", "fi", "if", "while", "until", "!"}
+
+
+def _loop_body(words):
+    """A loop's or a condition's command without its keywords: `do isa write …` → `isa write …`."""
+    while words and words[0] in LOOP_WORDS:
+        words = words[1:]
+    return words
+
+
 def _command(words, cwd=None, temp_dirs=(), base=None):
+    words = _loop_body(words)
+    if words[:1] == ["for"]:
+        return "read"  # `for x in a b`: the loop's header; its body is the next segments
     while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
         words = words[1:]
     if not words:
@@ -286,8 +302,9 @@ def _command(words, cwd=None, temp_dirs=(), base=None):
     if cmd in WRAPPERS:
         rest = [a for a in args if not a.startswith("-") and not re.match(r"^[A-Za-z_]\w*=|^\d+[smhd]?$", a)]
         return _command(rest, cwd, temp_dirs, base) if rest else "read"
-    if cmd == "isa":
-        return "isa-cmd"
+    isa_args = _isa_args(cmd, args)
+    if isa_args is not None:
+        return "guarded" if harness_only(isa_args) else "isa-cmd"
     if args and all(a in ("--version", "-V", "--help", "-h", "version") for a in args):
         return "read"
     if cmd in PATH_CMDS:
@@ -329,6 +346,45 @@ def _command(words, cwd=None, temp_dirs=(), base=None):
         flags = "".join(a for a in args[:2] if not a.startswith("--"))
         return "write" if "x" in flags or "c" in flags else "read"
     return "unknown"
+
+
+def _isa_args(cmd, args):
+    """The arguments of an `isa` run (the launcher by any path, `python3 -m isa.cli`, `python3 …/isa/cli.py`,
+    `python3 …/bin/isa`), or None when the command isn't `isa`."""
+    if cmd == "isa":
+        return args
+    if not re.fullmatch(r"python[\d.]*", cmd):
+        return None
+    i = 0
+    while i < len(args) and args[i].startswith("-") and args[i] != "-m":
+        i += 1
+    if args[i:i + 2] == ["-m", "isa.cli"]:
+        return args[i + 2:]
+    if i < len(args) and (args[i].endswith("/isa/cli.py") or os.path.basename(args[i]) == "isa"):
+        return args[i + 1:]
+    return None
+
+
+def harness_only(isa_args):
+    """`isa hook` (the harness feeds it events: from a tool call it would forge the user's click) and `isa open`
+    (the user's editor, which writes the file): never from a tool call. `isa open --print` only prints a path."""
+    sub = next((a for a in isa_args if not a.startswith("-")), "")
+    return sub == "hook" or (sub == "open" and "--print" not in isa_args)
+
+
+def harness_call(cmd):
+    """Does this shell command run `isa hook` or `isa open` (anywhere in it)? For the refusal's wording."""
+    try:
+        segs = _segments(_drop_heredoc_bodies(cmd).replace("$(", " ; ").replace("`", " ; "))
+    except ValueError:
+        return False
+    for words in segs:
+        words = _loop_body(words)
+        while words and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]) or os.path.basename(words[0]) in WRAPPERS):
+            words = words[1:]
+        if words and harness_only(_isa_args(os.path.basename(words[0]), words[1:]) or []):
+            return True
+    return False
 
 
 def _git_dirs(args, here):

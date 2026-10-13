@@ -4,7 +4,7 @@ Three foundations, and nothing else:
 
 - **FOUNDATION_0 — the entities.** Each is defined once, below.
 - **FOUNDATION_1 — the decision tree.** No ISA → nothing. ISA → pick the tier: E1 → IMPL; E2–E4 → SPEC → IMPL. Nothing bypasses it.
-- **FOUNDATION_2 — `isa` commands are the only writers.** An ISA, a spec, a plan and anything under `~/.isa` are created, changed and closed by `isa` commands only. A Write, an Edit, a redirect or a script on them is refused. Reading is free.
+- **FOUNDATION_2 — `isa` commands are the only writers.** An ISA, a spec, a plan and anything under `~/.isa` are created, changed and closed by `isa` commands only. A Write, an Edit, a redirect or a script on them is refused. Reading is free. Two commands are never run from a tool call: `isa hook` (only the harness runs it; from a tool call it would forge the user's click — an ack is asked with AskUserQuestion) and `isa open` (the user's editor, in the user's own terminal; `isa open --print` gives the path).
 
 ## FOUNDATION_0 — the entities
 
@@ -96,7 +96,7 @@ What the session is doing; it decides which changes go through:
     E1      TRIAGE → ISA DRAFT → BUILD → CLOSED
     E2–E4   TRIAGE → SPEC DRAFT → SPEC ACKED → ISA DRAFT → BUILD (the ISA acked) → CLOSED
 
-Project changes go through in BUILD only. Every refusal names the stage and the next command. A reopened spec sends the task back to SPEC DRAFT; after its new ack, `isa refine` and a new ISA ack lead back to BUILD.
+Before BUILD only a recognised project change waits: a Write or Edit of a project file, a known write command (`rm`, `mv`, `cp`, `npm`…), a redirect into a project file, `sed -i`, a git write. Any other command runs: a script, a test, a read. What it changed outside the spec is listed at the spec's first ack (`isa ack <spec>` waits until those files are reverted, or moved under `docs/` with a name starting `<date>-<slug>`). Every refusal names the stage and the next command. A reopened spec sends the task back to SPEC DRAFT; after its new ack, `isa refine` and a new ISA ack lead back to BUILD.
 
 ## FOUNDATION_2 — one command per action
 
@@ -104,10 +104,10 @@ Project changes go through in BUILD only. Every refusal names the stage and the 
 |---|---|
 | start a spec (E2+) | `isa spec new <slug> --tier E2` (or E3, E4) |
 | start the ISA | `isa new <slug> --tier E1`, or `isa new --spec <spec>` (seeded from it, one parent per section; an open ISA of that spec is bound again) |
-| write a section | `isa write <file> <section>`, the text on stdin (E1: Criteria and Test Strategy once, as a block) |
-| change, add or drop one ISC | `isa write <ISA> ISC-N "<text>"`, `isa write <ISA> ISC-N --probe "<command>" [--kind K] [--fails-when F] [--anchors S2\|Goal\|Constraints]`, `isa drop <ISA> ISC-N "<why>"` |
+| write a section | `isa write <file> <section>`, the text on stdin (a spec's `S<n> — <title>` replaces S<n>; `isa drop <spec> S<n> "<why>"` removes it) |
+| change, add or drop one ISC (every tier) | `isa write <ISA> ISC-N "<text>" --probe "<command>" --kind K [--fails-when F] [--anchors S2\|Goal\|Constraints]`, `isa write <ISA> ISC-N --no-probe` (before giving a leaf children), `isa drop <ISA> ISC-N "<why>"` |
 | place it, say where it came from | `--before ISC-M` (a new criterion before its sibling), `--serves S2+S3 --why "…"` (under ISC-0), `--source context --why "…"` |
-| review the ISA before its ack (E2+) | `isa review <ISA>` (the six-line checklist on stdin, then Jev's check), `isa review <ISA> --answer R<n> "<answer>"` |
+| review the ISA before its ack (E2+) | `isa review <ISA>` (the seven-line checklist on stdin, then Jev's check), `isa review <ISA> --answer R<n> "keep: …\|drop: …\|fix: …\|reopen: …"` |
 | the task line, the asks | `isa write <ISA> task "<text>"`, `isa write <ISA> asks` (one verbatim ask per line) |
 | add a decision | `isa decide <ISA> "<text>"` |
 | read | `isa show <file> [--to Criteria \| --trace]`, `isa lint <file>`, `isa ls`, `isa status`, `isa current`, `isa where` |
@@ -116,11 +116,12 @@ Project changes go through in BUILD only. Every refusal names the stage and the 
 | prove | `isa verify <ISA> [--red] [ISC-N…]`, `isa attest <ISA> ISC-N "<evidence>"` |
 | answer the goal and the asks | `isa answer <ISA> goal "yes — <evidence>"`, `isa answer <ISA> ask N "met — <evidence>"` |
 | close | `isa close <ISA>`: re-runs every probe, writes the plan (E2+), commits the work, then the plan |
+| open the file in an editor (the user, in a terminal) | `isa open [spec\|isa]`; `isa open --print` gives the path |
 | debug | `isa log` (with DEBUG on), `isa purge-logs` |
 
 **Commits.** In a git repo:
 
-- `isa ack <spec>` commits the spec, alone;
+- `isa ack <spec>` commits the spec, alone; at its first ack it refuses while files changed outside the spec since `isa spec new` (the user's click stays recorded);
 - a passing `isa close` commits the files the task changed (never one the user had changed before `isa new`), then the plan.
 
 Outside git nothing is committed.

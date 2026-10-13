@@ -45,7 +45,8 @@ E1_TESTS = ("- isc: ISC-1\n  kind: behaviour\n  tool: test -f ok\n"
             "- isc: ISC-2\n  kind: regression\n  tool: test ! -e bad\n  fails-when: \"bad exists\"\n")
 E2_CRITERIA = ("- [ ] ISC-1: The ok file is written.\n  - [ ] ISC-1.1: The file ok exists.\n"
                "  - [ ] ISC-1.2: Anti: the file bad exists.\n")
-REVIEW_NONE = "shared: none\nprerequisites: none\ncontradictions: none\ndrift: none\ngaps: none\ncontext: none\n"
+REVIEW_NONE = ("shared: none\nprerequisites: none\ncontradictions: none\ndrift: none\ngaps: none\ncontext: none\n"
+               "redundant: none\n")
 E2_TESTS = ("- isc: ISC-1.1\n  anchors_to: S1\n  kind: behaviour\n  tool: test -f ok\n"
             "- isc: ISC-1.2\n  anchors_to: S1\n  kind: regression\n  tool: test ! -e bad\n  fails-when: \"bad exists\"\n")
 
@@ -189,9 +190,20 @@ class Case(unittest.TestCase):
         path = self.path_of(self.ok("new", "demo", "--tier", "E1"), "ISA")
         self.ok("write", path, "Problem", stdin="No ok file.\n")
         self.ok("write", path, "Goal", stdin="The ok file exists.\n")
-        self.ok("write", path, "Criteria", stdin=criteria)
-        self.ok("write", path, "Test Strategy", stdin=tests)
+        self.criteria(path, criteria, tests)
         return path
+
+    def criteria(self, path, criteria, tests, cwd=None):
+        """Each criterion with its probe, one `isa write` at a time (every tier writes them so)."""
+        from isa import yamlish
+        probes = {str(e["isc"]): e for e in yamlish.load(tests)}
+        for i, text in re.findall(r"(?m)^\s*- \[ \] ISC-([\d.]+): (.*)$", criteria):
+            e = probes.get(f"ISC-{i}") or {}
+            args = ["write", path, f"ISC-{i}", text]
+            if e:
+                args += ["--probe", str(e["tool"]), "--kind", e["kind"]]
+                args += ["--fails-when", e["fails-when"]] if e.get("fails-when") else []
+            self.ok(*args, cwd=cwd)
 
     def build(self):
         """An E2 task through SPEC → ISA → both acks: BUILD."""
@@ -526,8 +538,9 @@ class Close(Case):
         os.makedirs(plain)
         self.env["ISA_MODE"] = "on"
         path = self.path_of(self.ok("new", "demo", "--tier", "E1", cwd=plain), "ISA")
-        for s, t in (("Problem", "p\n"), ("Goal", "g\n"), ("Criteria", E1_CRITERIA), ("Test Strategy", E1_TESTS)):
+        for s, t in (("Problem", "p\n"), ("Goal", "g\n")):
             self.ok("write", path, s, stdin=t, cwd=plain)
+        self.criteria(path, E1_CRITERIA, E1_TESTS, cwd=plain)
         self.put("ok", "", base=plain)
         self.ok("verify", path, cwd=plain)
         self.ok("answer", path, "goal", "yes — ok", cwd=plain)
@@ -704,8 +717,9 @@ class ReviewFixes(Case):
     def test_guarded_probe_run(self):
         self.on()
         marker = os.path.join(self.home, "marker")
-        tests = E1_TESTS.replace("tool: test -f ok", f"tool: echo x > {marker}; test -f ok")
-        isa = self.e1(tests=tests)
+        isa = self.e1()
+        # `isa write` refuses this probe (test_guarded_probe_write): only a hand edit puts it there
+        self.put(isa, self.read(isa).replace("tool: test -f ok", f"tool: \"echo x > {marker}; test -f ok\""))
         self.put("ok", "")
         self.assertIn(f"echo x > {marker}", self.failing("verify", isa))
         self.failing("close", isa)
@@ -860,24 +874,6 @@ class StatusOpen(Case):
         self.assertEqual(self.opened("isa", "--print", "--session", self.sid), isa)
         self.env["CLAUDE_CODE_SESSION_ID"] = self.sid
         self.assertEqual(self.opened("spec", "--print"), spec)
-
-    def test_open_editor_readonly(self):
-        from isa import status
-        self.on()
-        isa = self.e1()
-        self.env["ISA_EDITOR"] = self.stub("nvim")
-        self.opened("--session", self.sid)
-        self.assertEqual(self.read(os.path.join(self.tmp, "args")).strip(), f"-R {isa}")
-        del self.env["ISA_EDITOR"]
-        self.env.update(VISUAL=self.stub("code") + " -w", EDITOR=self.stub("vim"))
-        self.opened("--session", self.sid)
-        self.assertEqual(self.read(os.path.join(self.tmp, "args")).strip(), f"-w {isa}")
-        del self.env["VISUAL"]
-        self.opened("--session", self.sid)
-        self.assertEqual(self.read(os.path.join(self.tmp, "args")).strip(), f"-R {isa}")
-        saved = {k: os.environ.pop(k) for k in ("ISA_EDITOR", "VISUAL", "EDITOR") if k in os.environ}
-        self.addCleanup(os.environ.update, saved)
-        self.assertEqual(status.editor(), ["nvim", "-R"])
 
     def test_open_finds_project_session(self):
         self.on()
