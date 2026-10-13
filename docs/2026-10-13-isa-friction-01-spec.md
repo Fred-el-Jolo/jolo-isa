@@ -1,9 +1,9 @@
 ---
-status: "acked 2026-10-13 #67b549af"
+status: "acked 2026-10-13 #dfd1716e"
 effort: E3
 ---
 
-# ISA friction: unknown commands before BUILD, writing the ISA, test speed, proof output
+# ISA friction: fewer refusals, error-proof writing, probe runs and output, no forged clicks, real reviews
 
 ## Problem
 
@@ -11,9 +11,11 @@ Before BUILD, the PreToolUse gate refuses every `unknown` call, in every tier: a
 
 The user's ack can also be forged. Every `isa` command is allowed at every stage, including `isa hook`, which trusts the event on its stdin. A model can pipe a made-up "the user answered Acknowledge" event into it from Bash, and `isa ack` then accepts it as the user's click.
 
+And the review doesn't remove what isn't needed. Jev flags a criterion that may be unnecessary; the model answers with a `rebuttal:` naming the spec line it came from, and the criterion stays.
+
 ## Goal
 
-Before BUILD, in every tier (E1 to E4), any command runs except a recognised project change. When a spec is acked, the files changed outside the spec since `isa spec new` are listed, and the ack waits until they're gone. The `isa` commands and their docs give every rule before it can be broken. Each probe runs three times: red, green and regression. A failing probe shows why it failed, and a probe never seen failing is flagged. An ack comes only from the user's click: no tool call can feed the hooks an event. The user can edit a spec or an ISA through `isa open`.
+Before BUILD, in every tier (E1 to E4), any command runs except a recognised project change. When a spec is acked, the files changed outside the spec since `isa spec new` are listed, and the ack waits until they're gone. The `isa` commands and their docs give every rule before it can be broken. Each probe runs three times: red, green and regression. A failing probe shows why it failed, and a probe never seen failing is flagged. An ack comes only from the user's click: no tool call can feed the hooks an event. The user can edit a spec or an ISA through `isa open`. The review keeps only the criteria that are needed, not duplicated and well formed.
 Said:
 - "We'll go with option 1": TRIAGE refuses only recognised writes and lets `unknown` run
 - "Do not check with git on every unknown command, check when we are about to commit the spec if other NON-SPEC files have been modified (we could have SPEC-RELATED updated / created files)"
@@ -27,13 +29,15 @@ Said:
 - "i don't want impl to occur before ack, even if the plan probe does bot match the reality. i changed my mind: flag the probe red run in a special way"
 - "some ISX might not need probes": answered with the `manual` kind and `isa attest` (S3)
 - "isa open should open the doc in write mode. As it is in readonly, i cannot update the spec/isa if i need to."
+- "do not link back the items to the spec, but have a realistic review of them. Check if there are necessary, duplicates, or malformed items. Add a section for this in the spec"
 Assumed:
 - "before BUILD" means every stage before it: TRIAGE, SPEC DRAFT, SPEC ACKED, ISA DRAFT and ISA REFINE;
 - E1 has no spec to commit, so it has no check: `isa close` commits only what changed since `isa new`, as today;
 - changes made by `unknown` commands after the spec's ack (ISA DRAFT) are not checked either: `isa close` treats them like the user's own earlier changes and leaves them out of its commit, as today;
 - a green probe isn't re-run by `isa verify` when later work changes the code: `isa close` is its regression run;
 - "the hole" is a tool call running the hook entry point (S6); this repo's own tests, which fake clicks to test the ack, don't change;
-- a hand edit by the user follows the same rules as any change: an edited acked file needs a new ack.
+- a hand edit by the user follows the same rules as any change: an edited acked file needs a new ack;
+- the three questions apply to every criterion, not only to Jev's flags: the checklist's `redundant:` line (S7).
 
 ## Out of scope
 
@@ -93,7 +97,6 @@ Every rule the commands enforce is written down before it can be broken, and eve
 - **Classifier fixes.**
   - Backslash-escaped backticks and `\$(` inside double quotes are not command substitution.
   - `for` and `while` loops are parsed, so the body is classified: a loop of `isa` and read commands is an `isa` command.
-- **Session state without scripts.** `isa status --json --raw` prints the whole session state.
 - **One place for the rules.** protocol.md, injected when a session turns ON, states every rule the commands and lint enforce. The guard on scripts that name an ISA path stays; protocol.md says project files are edited with Edit or Write.
 Accepted when:
 - `--goal "update the status line ISA handler"` is accepted from the prompt "I want you to update the status line ISA handler: …"; `--goal "update the status line … handler"` is accepted; `--goal "update the ISA status line"` is refused with "update the status line ISA handler" quoted as the closest piece
@@ -103,7 +106,6 @@ Accepted when:
 - `isa write <ISA> ISC-4 "x" --kind manual` with no `--probe` lints clean; `isa verify --red`, `isa verify` and `isa close` don't run it; `isa close` refuses until `isa attest <ISA> ISC-4 "<evidence>"`
 - in a draft spec with `## S4 — Old`, `isa write <spec> "S4 — New"` leaves one S4 section, headed `S4 — New`; `isa drop <spec> S4 "x"` removes it; both are refused on an acked spec
 - the classifier rates `isa new x --goal "a \`b\` c"` and `for n in 1 2; do isa write F ISC-$n --probe x; done` as `isa-cmd`, and `for f in a b; do grep x "$f"; done` as `read`
-- `isa status --session ID --json --raw` prints the session state's keys (`bound`, `doc`, `mode`, `gate`, `prompts`)
 - protocol.md states the user's-words rule, the Anti rule, the manual kind with `isa attest`, and the one way to write criteria
 
 ## S4 — Each probe runs three times
@@ -159,12 +161,36 @@ Accepted when:
 - `isa status`, `isa ack <spec>`, `isa lint <spec>` and `grep -n hook runtime/isa/cli.py` are not refused: the word `hook` alone isn't the entry point
 - the harnesses' own calls still record a real click: one Claude Code event and one pi event through the real `isa hook` process each add a row to `acks.jsonl`
 
+## S7 — Answering Jev's flags with a real review
+
+Jev's `serves` flag asks whether a criterion is needed at all. Today it is answered with `rebuttal:`, which `isa review` itself suggests, and the model rebuts by pointing at the spec line the criterion came from. That proves where it came from, not that it is needed: in this task's own review, three of the four flagged criteria, and one unflagged, were not needed.
+
+A flag is answered by judging the criterion itself, on three questions:
+- **Necessary?** What would go wrong, unnoticed, without it?
+- **Duplicate?** Does another criterion, or a test an existing probe already runs, prove the same thing?
+- **Malformed?** Is the claim vague, does the probe miss the claim, or is the kind wrong?
+
+The answers to `isa review <ISA> --answer R<n> "<answer>"` become:
+- `keep: <what would go unnoticed without it>`. A `keep:` that gives the spec as its reason (it names a section `S<n>`, "the spec" or "Accepted when") is refused: where a criterion comes from is not why it is needed;
+- `drop: <duplicate of … | not needed because …>`, accepted only once the ISC is dropped (`isa drop`);
+- `fix: <what was malformed, and the change>`, accepted only once the ISC's text or probe changed since the review;
+- `reopen: <the spec change>`, as today.
+
+`rebuttal:` and `fixed:` are removed. The same three questions apply to every criterion, flagged or not: the checklist gets a seventh line, `redundant:`, naming the criteria the model finds unnecessary, duplicated or malformed, or `none`. `isa review`'s output, protocol.md and SKILL.md give the three questions and the four answers.
+Accepted when:
+- `isa review <ISA> --answer R1 "rebuttal: x"` exits 1, naming `keep:`, `drop:`, `fix:` and `reopen:`
+- `--answer R1 "keep: S3 asks for it"` and `"keep: the spec's Accepted when names it"` are refused; `"keep: without it a broken parser would pass unnoticed"` is accepted
+- `--answer R1 "drop: duplicate of ISC-7"` is refused while the flagged ISC is live, naming `isa drop <ISA> ISC-N`, and accepted after it
+- `--answer R1 "fix: …"` is refused while the flagged ISC is unchanged since the review, and accepted after `isa write` changes it
+- a checklist without a `redundant:` line is refused, naming it
+- `isa review`'s output, protocol.md and SKILL.md name the three questions, and none of them says `rebuttal`
+
 ## Decisions
 
 - 2026-10-13: Approach 1, chosen by the user: `unknown` runs before BUILD in every tier, checked once at the spec's ack, with no git call per command.
 - 2026-10-13: a non-spec change refuses the spec's ack and lists the files (the user's answer).
 - 2026-10-13: spec-related paths are `docs/` files and folders, at any depth, whose name starts with `<date>-<slug>` (the user's answer).
-- 2026-10-13: S1–S6 stay in one spec (the user's answer).
+- 2026-10-13: S1–S7 stay in one spec (the user's answer).
 - 2026-10-13: the goal and the asks stay copied pieces of the user's words, which may leave text out with `…`. The user's answers to questions count as their words (the user's answers).
 - 2026-10-13: one per-criterion `isa write` for every tier, with loops of `isa` commands allowed; a batch command was not chosen (the user's answer).
 - 2026-10-13: each probe runs once red, once green and once at close. A re-run is the exception, asked for by naming the ISC (the user's answer).
@@ -173,5 +199,8 @@ Accepted when:
 - 2026-10-13: S5's failure output (last 40 lines, full log in `runs/ISC-N.log`) and the README fix accepted (the user's answers).
 - 2026-10-13: `isa verify --red` stays after the ISA ack; a behaviour probe that passes there is flagged, never refused, and nothing is run before the ack (the user's answer).
 - 2026-10-13: a criterion with nothing to run is `manual`, ticked with `isa attest` and one line of evidence; no evidence-free "pass" kind (the user's answer).
+- 2026-10-13: `isa open` opens for writing, and only the user runs it; a separate tool was not chosen, since it would need the same guard (the user's answer).
+- 2026-10-13: `isa status --json --raw` removed from S3: `cat` already reads the session state at every stage; it was not needed (the user's answer to the review).
+- 2026-10-13: Jev's flags are answered by judging the criterion (necessary, duplicate, malformed), never by citing the spec (S7, the user's answer).
 
 ## Open questions
