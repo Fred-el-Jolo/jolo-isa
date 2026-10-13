@@ -1,5 +1,5 @@
 ---
-status: "acked 2026-10-13 #dfd1716e"
+status: "acked 2026-10-13 #2e86701f"
 effort: E3
 ---
 
@@ -93,6 +93,7 @@ Every rule the commands enforce is written down before it can be broken, and eve
 - **One way to write criteria, in every tier.** `isa write <ISA> ISC-N "<text>" --probe "<cmd>" --kind K [--fails-when F]` writes a criterion and its probe in one call, E1 to E4. Writing Criteria and Test Strategy as a block is removed, so the model never writes YAML.
 - **An Anti at the first command.** `isa write` on an `Anti:` criterion sets `--kind regression` itself, and refuses a probe without `--fails-when` on the spot, quoting the corrected command.
 - **A criterion with nothing to run.** It is `--kind manual`, with no command: it is never run at red, green or close, and is ticked with `isa attest <ISA> ISC-N "<evidence>"`, one line saying why it holds. There is no kind that passes without evidence. A claim that needs no proof at all is not a criterion: it goes in Decisions, or is dropped.
+- **A leaf that becomes a parent.** Adding the first child under a leaf that has a probe is refused, quoting `isa write <ISA> ISC-k --no-probe`, which removes that leaf's probe. So a parent never keeps a probe that no command can remove.
 - **Spec sections by number.** `isa write <spec> "S4 — <title>"` replaces the section numbered S4, renaming it, instead of adding a second S4. `isa drop <spec> S<n> "<why>"` removes a section from a draft spec.
 - **Classifier fixes.**
   - Backslash-escaped backticks and `\$(` inside double quotes are not command substitution.
@@ -104,6 +105,7 @@ Accepted when:
 - an E1 ISA written only with `isa write <ISA> ISC-N "<text>" --probe …` lints clean, and `isa write <ISA> Criteria` or `Test Strategy` is refused, naming the per-criterion command
 - `isa write <ISA> ISC-3 "Anti: x" --probe "true"` with no `--fails-when` exits 1 and quotes the command with `--fails-when "<what it would see>"`; with it, the entry has `kind: regression`
 - `isa write <ISA> ISC-4 "x" --kind manual` with no `--probe` lints clean; `isa verify --red`, `isa verify` and `isa close` don't run it; `isa close` refuses until `isa attest <ISA> ISC-4 "<evidence>"`
+- with ISC-7 a leaf that has a probe, `isa write <ISA> ISC-7.1 "x"` exits 1 quoting `isa write <ISA> ISC-7 --no-probe`; after that command, ISC-7 has no Test Strategy entry, `isa write <ISA> ISC-7.1 "x" --probe "true"` succeeds, and lint reports no parent probe
 - in a draft spec with `## S4 — Old`, `isa write <spec> "S4 — New"` leaves one S4 section, headed `S4 — New`; `isa drop <spec> S4 "x"` removes it; both are refused on an acked spec
 - the classifier rates `isa new x --goal "a \`b\` c"` and `for n in 1 2; do isa write F ISC-$n --probe x; done` as `isa-cmd`, and `for f in a b; do grep x "$f"; done` as `read`
 - protocol.md states the user's-words rule, the Anti rule, the manual kind with `isa attest`, and the one way to write criteria
@@ -202,5 +204,6 @@ Accepted when:
 - 2026-10-13: `isa open` opens for writing, and only the user runs it; a separate tool was not chosen, since it would need the same guard (the user's answer).
 - 2026-10-13: `isa status --json --raw` removed from S3: `cat` already reads the session state at every stage; it was not needed (the user's answer to the review).
 - 2026-10-13: Jev's flags are answered by judging the criterion (necessary, duplicate, malformed), never by citing the spec (S7, the user's answer).
+- 2026-10-13: a leaf with a probe becomes a parent only after `isa write <ISA> ISC-k --no-probe`, found when ISC-7 turned into S7's parent (the user's answer).
 
 ## Open questions
