@@ -3,9 +3,9 @@
 //
 //   node harness.ts render    stdin: { session_id, cwd, ... }, width via $COLUMNS
 //
-// Shows the ISA bound to this session by the ISA hooks, as reported by
-// `isa status --json`. Pure read: it never writes anything, prints nothing
-// when no ISA is bound, and always exits 0.
+// Shows the ISA (or the spec) bound to this session by the ISA hooks, as
+// reported by `isa status --json`. Pure read: it never writes anything,
+// prints nothing when nothing is bound, and always exits 0.
 
 import * as fs from 'fs';
 import * as path from 'path';

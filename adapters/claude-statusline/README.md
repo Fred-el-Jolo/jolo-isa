@@ -1,25 +1,41 @@
 # ISA statusline
 
-Shows the ISA bound to the current Claude Code session in the
-statusLine: tier, phase, progress, and the ISCs still open. Nothing to keep
-in sync. The ISA hooks already bind one `ISA.md` per session, and this
-only reads it.
+Shows the ISA bound to the current Claude Code session in the statusLine,
+on one row: the tier first, then progress, the lifecycle stage, the current
+ISC and the task. Nothing to keep in sync. The ISA hooks already bind one
+`ISA.md` per session, and this only reads it.
 
 ```
-●●●●●○○○○○○○○○○ 5/15  E3 · build · Rebuild progress-outline as the ISA status line
-○ ISC-6 Wide layout shows progress bar, tier, phase and task on row 1.
-○ ISC-7 Wide layout lists up to two open ISCs, the last with `+N` for the rest.  +8
+E3 - ●●●●●○○○○○○○○○○ 5/15 · BUILD · ISC-3.4.2 · Rebuild progress-outline as the ISA status line
 ```
 
 Compact (under 70 columns, or `mode: "compact"`):
 
 ```
-5/15 build ISC-6 Wide layout shows progress bar, tier, phas…
+E3 - 5/15 BUILD ISC-3.4.2
 ```
 
-With `phase: complete` the open rows become `✔ complete`. With every ISC
-ticked but the ISA not closed yet, they read `✔ all ISCs verified`. If no
-ISA is bound, it prints nothing.
+- **The stage**, not the ISA's phase, without the `ISA ` prefix: DRAFT,
+  REFINE, BUILD, CLOSED.
+- **The current ISC** is the first open leaf in file order, by id only:
+  titles never fit. With every ISC ticked but the ISA not closed, it reads
+  `all verified`; once CLOSED, there is none.
+- **Only a spec bound** (SPEC DRAFT, SPEC ACKED):
+  `E3 - SPEC DRAFT · 2026-10-13-foo-01-spec.md`.
+- **Nothing bound** prints nothing.
+
+The row is cut with `…` at the terminal width; the task is dropped when
+fewer than four columns are left for it.
+
+## Opening the file: `isa open`
+
+To read the spec or the ISA the line is about (before an ack, say), run
+`isa open` in a terminal in the project. It opens the session's spec during
+SPEC DRAFT and SPEC ACKED, and its ISA after that; `isa open spec` or
+`isa open isa` picks one, and `--print` prints the path instead. The editor
+is `$ISA_EDITOR`, `$VISUAL`, `$EDITOR`, else nvim, with `-R` for vi, vim and
+nvim: only `isa` commands write these files. The session is `--session ID`,
+else the one in the environment, else this project's most recent one.
 
 ## How it works
 
@@ -27,9 +43,9 @@ ISA is bound, it prints nothing.
 Claude Code statusLine ──stdin {session_id}──► harness.ts render
                                                    │
                                   isa status --json --session <id>   (runtime/isa/status.py)
-                                                   │  reads ~/.isa/_state/sessions/claude-<id>.json → bound ISA.md
+                                                   │  reads ~/.isa/_state/sessions/claude-<id>.json → bound ISA.md or spec
                                                    ▼
-                                  { task, effort, phase, progress, iteration, iscs[] }
+                                  { stage, spec, task, effort, progress, iscs[] }
                                                    │
                                              renderer.ts ──► stdout
 ```
@@ -40,9 +56,9 @@ Claude Code statusLine ──stdin {session_id}──► harness.ts render
   `progress` counts: leaves only, with no dropped or waived ISCs.
 - **This adapter only renders it.** It has no hook and no state file, and it
   never writes anything. Any failure prints nothing and exits 0.
-- **Open ISCs, not a "current" one.** An ISA has no in-progress marker, so
-  the phase says what is happening and the rows list what's still open, in
-  file order.
+- **The current ISC is the first open one.** An ISA has no in-progress
+  marker, so the stage says what is happening and the first open leaf, in
+  file order, is what comes next.
 - Takes about 35 ms per refresh (one Python start), so there is no cache.
 
 | File | Role |
@@ -82,7 +98,7 @@ install mechanism is covered by `tests.test_install.TestStatusline`.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `mode` | `auto` | `auto` picks compact/wide from `$COLUMNS` (under 70 → compact); `compact`/`wide` pin it |
-| `color` | `true` | `NO_COLOR` in the environment always wins. Without color, glyphs fall back to `[x]`/`[ ]` and the bar to `#`/`-` |
+| `color` | `true` | `NO_COLOR` in the environment always wins. Without color, the bar falls back to `#`/`-` |
 | `isaBin` | `$ISA_BIN`, then `~/.local/bin/isa` | the `isa` launcher |
 
 ## Tests

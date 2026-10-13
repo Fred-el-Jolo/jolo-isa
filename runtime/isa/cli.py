@@ -29,6 +29,9 @@ Proof
 Read
     isa show <file> [--to <section> | --trace]   isa lint <file>…   isa ls [--all]   isa where
     isa status --session ID [--json]   isa current [--json]   isa log [--session ID] [--prompt ID]
+    isa open [spec|isa] [--print]                the session's spec or ISA, read-only in $EDITOR (default nvim);
+                                                 the session: --session ID, else the environment, else this
+                                                 project's latest
     isa purge-logs [--days N] [--dry-run]        delete old debug log days
     isa hook <claude|pi>                         the hook entry point (event JSON on stdin)
 """
@@ -64,6 +67,7 @@ COMMANDS = {
     "ls": lambda a: commands.ls(a),
     "status": lambda a: _status(a),
     "current": lambda a: _current(a),
+    "open": lambda a: _open(a),
     "where": lambda a: commands.where(a),
     "log": lambda a: logs.log_cmd(a),
     "purge-logs": lambda a: logs.purge_cmd(a),
@@ -125,7 +129,8 @@ def _status(args):
     return 0
 
 
-def _current(args):
+def _env_session(args):
+    """(harness, id) from --session / --harness, else from the environment (Claude Code, pi)."""
     o = _opts(args, ("--session", "--harness"))
     sid, harness = o["--session"], o["--harness"]
     if not sid:
@@ -133,6 +138,16 @@ def _current(args):
             if os.environ.get(var):
                 sid, harness = os.environ[var], harness or h
                 break
+    return harness, sid
+
+
+def _open(args):
+    harness, sid = _env_session(args)
+    return status.open_cmd(args, harness, sid)
+
+
+def _current(args):
+    harness, sid = _env_session(args)
     if not sid:
         print("isa current: no session (pass --session ID)", file=sys.stderr)
         return 2

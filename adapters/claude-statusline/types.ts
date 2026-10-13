@@ -8,12 +8,18 @@ export interface Isc {
 }
 
 export interface IsaView {
-  bound: string;
+  // The bound ISA, or null while only a spec is bound.
+  bound: string | null;
+  // The bound spec (a path), whatever the stage.
+  spec?: string | null;
+  // The engine's lifecycle stage: TRIAGE, SPEC DRAFT, SPEC ACKED, ISA DRAFT,
+  // ISA REFINE, BUILD, CLOSED.
+  stage?: string | null;
   task?: string | null;
+  // The tier, E1–E4 (the spec's own while only a spec is bound).
   effort?: string | null;
   phase?: string | null;
   progress?: string | null;
-  iteration?: number | null;
   iscs: Isc[];
 }
 

@@ -550,7 +550,8 @@ class Perimeter(Case):
     """S7: `isa` commands are the only writers."""
 
     COMMANDS = {"spec", "new", "write", "drop", "decide", "show", "lint", "ack", "reopen", "diff", "refine", "verify",
-                "attest", "answer", "close", "ls", "status", "current", "where", "log", "purge-logs", "hook", "review"}
+                "attest", "answer", "close", "ls", "status", "current", "open", "where", "log", "purge-logs", "hook",
+                "review"}
 
     def test_commands_exist(self):
         from isa import cli
@@ -824,6 +825,85 @@ class ReviewFixes(Case):
         isa = self.e1()
         out = self.failing("verify", isa, "--timeout", "abc")
         self.assertIn("--timeout takes whole seconds", out)
+
+
+class StatusOpen(Case):
+    """`isa status` for a spec-only session, and `isa open`: the session's spec or ISA in the editor."""
+
+    def stub(self, name):
+        """An editor that records its arguments in <tmp>/args."""
+        exe = self.put(name, f"#!/bin/sh\necho \"$@\" > {self.tmp}/args\n", base=os.path.join(self.tmp, "bin"))
+        os.chmod(exe, 0o755)
+        return exe
+
+    def opened(self, *args, cwd=None):
+        rc, out = self.isa("open", *args, cwd=cwd)
+        self.assertEqual(rc, 0, out)
+        return out.strip()
+
+    def test_status_spec_only_effort(self):
+        self.on()
+        spec = self.spec(tier="E3")
+        rc, out = self.isa("status", "--session", self.sid, "--json")
+        v = json.loads(out)
+        self.assertEqual((v["bound"], v["spec"], v["stage"], v["effort"]), (None, spec, "SPEC DRAFT", "E3"))
+
+    def test_open_print_by_stage(self):
+        self.on()
+        spec = self.spec()
+        self.assertEqual(self.opened("--print", "--session", self.sid), spec)
+        self.ack_spec(spec)
+        self.assertEqual(self.opened("--print", "--session", self.sid), spec)
+        isa = self.isa_from(spec)
+        self.assertEqual(self.opened("--print", "--session", self.sid), isa)
+        self.assertEqual(self.opened("spec", "--print", "--session", self.sid), spec)
+        self.assertEqual(self.opened("isa", "--print", "--session", self.sid), isa)
+        self.env["CLAUDE_CODE_SESSION_ID"] = self.sid
+        self.assertEqual(self.opened("spec", "--print"), spec)
+
+    def test_open_editor_readonly(self):
+        from isa import status
+        self.on()
+        isa = self.e1()
+        self.env["ISA_EDITOR"] = self.stub("nvim")
+        self.opened("--session", self.sid)
+        self.assertEqual(self.read(os.path.join(self.tmp, "args")).strip(), f"-R {isa}")
+        del self.env["ISA_EDITOR"]
+        self.env.update(VISUAL=self.stub("code") + " -w", EDITOR=self.stub("vim"))
+        self.opened("--session", self.sid)
+        self.assertEqual(self.read(os.path.join(self.tmp, "args")).strip(), f"-w {isa}")
+        del self.env["VISUAL"]
+        self.opened("--session", self.sid)
+        self.assertEqual(self.read(os.path.join(self.tmp, "args")).strip(), f"-R {isa}")
+        saved = {k: os.environ.pop(k) for k in ("ISA_EDITOR", "VISUAL", "EDITOR") if k in os.environ}
+        self.addCleanup(os.environ.update, saved)
+        self.assertEqual(status.editor(), ["nvim", "-R"])
+
+    def test_open_finds_project_session(self):
+        self.on()
+        mine = self.e1()
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(other)
+        self.sid = "s2"
+        self.prompt("build the other tool", "p2")
+        theirs = self.path_of(self.ok("new", "other", "--tier", "E1", cwd=other), "ISA")
+        self.assertEqual(self.opened("--print"), mine)
+        self.assertEqual(self.opened("--print", cwd=other), theirs)
+        nowhere = os.path.join(self.tmp, "nowhere")
+        os.makedirs(nowhere)
+        rc, out = self.isa("open", "--print", cwd=nowhere)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("no session of this project", out)
+
+    def test_open_writes_nothing(self):
+        self.on()
+        isa = self.e1()
+        session = os.path.join(self.home, "_state", "sessions", f"claude-{self.sid}.json")
+        before = {p: (self.read(p), os.stat(p).st_mtime_ns) for p in (isa, session)}
+        self.env["ISA_EDITOR"] = "true"
+        self.opened("--session", self.sid)
+        self.opened("--print")
+        self.assertEqual({p: (self.read(p), os.stat(p).st_mtime_ns) for p in (isa, session)}, before)
 
 
 if __name__ == "__main__":
