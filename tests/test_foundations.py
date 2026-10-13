@@ -4,6 +4,8 @@ hooks, clicks arrive as AskUserQuestion answers, projects are real git repos. No
 
 Run: python3 -m unittest tests.test_foundations
 """
+import contextlib
+import io
 import json
 import os
 import re
@@ -52,6 +54,8 @@ E2_TESTS = ("- isc: ISC-1.1\n  anchors_to: S1\n  kind: behaviour\n  tool: test -
 
 
 class Case(unittest.TestCase):
+    real_process = False  # `isa` runs in this process; RealProcess runs the launcher
+
     def setUp(self):
         self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="isa-f-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
@@ -87,18 +91,46 @@ class Case(unittest.TestCase):
         os.chmod(exe, 0o755)
         self.env.update(ISA_JEV_BIN=exe, FAKE_JEV_P=str(p))
 
+    def call(self, argv, stdin="", cwd=None):
+        """`isa <argv>` → (exit code, stdout, stderr). In this process, with the test's env, cwd and stdin: an
+        `isa` process costs ~50 ms to start, and the suite runs thousands. ISA_TESTS_SUBPROCESS=1 runs the real
+        launcher instead (what `RealProcess` always does)."""
+        cwd = cwd or self.proj
+        if self.real_process or os.environ.get("ISA_TESTS_SUBPROCESS") == "1":
+            p = subprocess.run([sys.executable, ISA, *argv], input=stdin, cwd=cwd, env=self.env, text=True,
+                               capture_output=True, timeout=120)
+            return p.returncode, p.stdout, p.stderr
+        from isa import cli, logs
+        saved_env, saved_cwd, saved_in = dict(os.environ), os.getcwd(), sys.stdin
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            os.environ.clear()
+            os.environ.update(self.env)
+            os.chdir(cwd)
+            sys.stdin = io.StringIO(stdin)
+            logs._ON = None  # read per process: DEBUG follows this call's env
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                try:
+                    rc = cli.main(list(argv))
+                except SystemExit as e:
+                    rc = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
+        finally:
+            sys.stdin = saved_in
+            os.chdir(saved_cwd)
+            os.environ.clear()
+            os.environ.update(saved_env)
+        return rc or 0, out.getvalue(), err.getvalue()
+
     def isa(self, *args, stdin=None, cwd=None):
-        p = subprocess.run([sys.executable, ISA, *args], input=stdin or "", cwd=cwd or self.proj, env=self.env, text=True,
-                           capture_output=True, timeout=120)
-        return p.returncode, p.stdout + p.stderr
+        rc, out, err = self.call(args, stdin or "", cwd)
+        return rc, out + err
 
     def hook(self, name, cwd=None, **kw):
         d = {"hook_event_name": name, "session_id": self.sid, "cwd": cwd or self.proj, "prompt_id": self.pid,
              "transcript_path": "/dev/null"}
         d.update(kw)
-        p = subprocess.run([sys.executable, ISA, "hook", "claude"], input=json.dumps(d), text=True,
-                           capture_output=True, env=self.env, timeout=60)
-        return p.returncode, (json.loads(p.stdout) if p.stdout.strip() else {}), p.stderr
+        rc, out, err = self.call(["hook", "claude"], json.dumps(d), cwd)
+        return rc, (json.loads(out) if out.strip() else {}), err
 
     def run_isa(self, *args, stdin=None, cwd=None):
         """An `isa` command as the model runs it: PreToolUse, the command, PostToolUse."""
@@ -904,3 +936,39 @@ class StatusOpen(Case):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RealProcess(Case):
+    """The rest of the suite runs `isa` in its own process (fast); these run the real launcher, for what only a
+    real process proves: its exit code, stdin and stdout, and the hooks' JSON."""
+
+    real_process = True
+
+    def test_help(self):
+        rc, out = self.isa("--help")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("isa write", out)
+
+    def test_hook_claude(self):
+        self.env["ISA_MODE"] = "on"
+        self.prompt("build the demo tool", "p1")
+        rc, out, err = self.hook("PreToolUse", tool_name="Write",
+                                 tool_input={"file_path": os.path.join(self.proj, "b.txt"), "content": "x"})
+        self.assertEqual(rc, 0, err)
+        self.assertIn("TRIAGE", self.deny(out))
+
+    def test_hook_pi(self):
+        ev = {"event": "pre_tool", "session": "s1", "cwd": self.proj, "prompt_id": "p1", "tool": "bash",
+              "tool_input": {"command": "isa hook claude"}}
+        p = subprocess.run([sys.executable, ISA, "hook", "pi"], input=json.dumps(ev), text=True, capture_output=True,
+                           env=self.env, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("only the harness runs `isa hook`", json.loads(p.stdout).get("deny", ""))
+
+    def test_e1_start_to_close(self):
+        self.on()
+        isa = self.e1()
+        self.put("ok", "")
+        self.ok("verify", isa)
+        self.ok("answer", isa, "goal", "yes — the ok file exists")
+        self.assertIn("complete", self.ok("close", isa))
