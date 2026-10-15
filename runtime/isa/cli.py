@@ -37,6 +37,8 @@ Read
     isa open [spec|isa] [--print]                the user's: the session's spec or ISA in $EDITOR (default nvim);
                                                  the session: --session ID, else the environment, else this
                                                  project's latest
+    isa serve [spec|isa|<file>] [--port N] [--host H]   the same file as HTML at http://127.0.0.1:8765/, read
+                                                 again on each request (the page reloads on change); Ctrl+C stops
     isa purge-logs [--days N] [--dry-run]        delete old debug log days
     isa hook <claude|pi>                         the harness's hook entry point (never from a tool call)
 """
@@ -73,6 +75,7 @@ COMMANDS = {
     "status": lambda a: _status(a),
     "current": lambda a: _current(a),
     "open": lambda a: _open(a),
+    "serve": lambda a: _serve(a),
     "where": lambda a: commands.where(a),
     "log": lambda a: logs.log_cmd(a),
     "purge-logs": lambda a: logs.purge_cmd(a),
@@ -149,6 +152,12 @@ def _env_session(args):
 def _open(args):
     harness, sid = _env_session(args)
     return status.open_cmd(args, harness, sid)
+
+
+def _serve(args):
+    from . import serve
+    harness, sid = _env_session(args)
+    return serve.serve_cmd(args, harness, sid)
 
 
 def _current(args):

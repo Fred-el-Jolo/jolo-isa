@@ -596,7 +596,7 @@ class Perimeter(Case):
 
     COMMANDS = {"spec", "new", "write", "drop", "decide", "show", "lint", "ack", "reopen", "diff", "refine", "verify",
                 "attest", "answer", "close", "ls", "status", "current", "open", "where", "log", "purge-logs", "hook",
-                "review"}
+                "review", "serve"}
 
     def test_commands_exist(self):
         from isa import cli
@@ -932,6 +932,37 @@ class StatusOpen(Case):
         self.opened("--session", self.sid)
         self.opened("--print")
         self.assertEqual({p: (self.read(p), os.stat(p).st_mtime_ns) for p in (isa, session)}, before)
+
+    def test_serve_renders_the_bound_file(self):
+        """`isa serve`: the file as HTML at the root, read again on each request."""
+        import http.server
+        import threading
+        import urllib.request
+        from isa import serve
+        self.on()
+        isa = self.e1()
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), serve._handler(lambda: isa))
+        get = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            url = f"http://127.0.0.1:{server.server_address[1]}/"
+            page = get(url).read().decode()
+            self.assertIn("<!doctype html>", page)
+            self.assertIn('<li class="open"><span class="box">', page)
+            self.assertIn(isa, get(url + "version").read().decode())
+        finally:
+            server.shutdown()
+            server.server_close()
+        html = serve.body_html("- [x] ISC-1: a `<b>`\n  - [2/3] ISC-1.1: *x* [l](u)\n\n| a | b |\n|---|---|\n| 1 | 2 |")
+        self.assertIn('<li class="done"><span class="box">✓</span><span>ISC-1: a <code>&lt;b&gt;</code>', html)
+        self.assertIn('<ul><li class="open"><span class="count">2/3</span><span>ISC-1.1: <em>x</em> <a href="u">l</a>',
+                      html)
+        self.assertIn("<td>1</td><td>2</td>", html)
+        nowhere = os.path.join(self.tmp, "nowhere")
+        os.makedirs(nowhere)
+        rc, out = self.isa("serve", cwd=nowhere)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("no session of this project", out)
 
 
 if __name__ == "__main__":

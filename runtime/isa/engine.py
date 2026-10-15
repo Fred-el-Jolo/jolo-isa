@@ -29,8 +29,8 @@ GUARD = ("ISA: ISAs, specs, plans and everything under ~/.isa are written only b
          "`isa write <file> <section>` (text on stdin), `isa write <ISA> ISC-N \"<text>\"` / `--probe \"<command>\"`, "
          "`isa drop`, `isa decide`, `isa answer`, `isa ack`, `isa reopen`, `isa refine`. Reading is free "
          "(`isa show <file>`, cat, grep).")
-HARNESS_ONLY = ("ISA: only the harness runs `isa hook` (Claude Code and pi feed it their events), and `isa open` is "
-                "for the user's own terminal. An ack is the user's click: ask with AskUserQuestion (header `Spec ack` "
+HARNESS_ONLY = ("ISA: only the harness runs `isa hook` (Claude Code and pi feed it their events), and `isa open` and "
+                "`isa serve` are for the user's own terminal. An ack is the user's click: ask with AskUserQuestion (header `Spec ack` "
                 "or `ISA ack`), then `isa ack <file>`. `isa open --print` gives the path.")
 
 

@@ -414,10 +414,10 @@ class S6(Friction):
 
     def test_open_from_tool_call_refused(self):
         def check(stage):
-            for cmd in ("isa open", "isa open spec", "ISA_EDITOR=sed isa open isa"):
+            for cmd in ("isa open", "isa open spec", "ISA_EDITOR=sed isa open isa", "isa serve", "isa serve --port 9000"):
                 r = self.bash(cmd)
                 self.assertIsNotNone(r, f"{stage}: {cmd}")
-                self.assertIn("`isa open` is for the user's own terminal", r)
+                self.assertIn("`isa open` and `isa serve` are for the user's own terminal", r)
             self.assertIsNone(self.bash("isa open --print"), stage)
         self.stages(check)
 

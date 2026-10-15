@@ -4,7 +4,7 @@ Three foundations, and nothing else:
 
 - **FOUNDATION_0 — the entities.** Each is defined once, below.
 - **FOUNDATION_1 — the decision tree.** No ISA → nothing. ISA → pick the tier: E1 → IMPL; E2–E4 → SPEC → IMPL. Nothing bypasses it.
-- **FOUNDATION_2 — `isa` commands are the only writers.** An ISA, a spec, a plan and anything under `~/.isa` are created, changed and closed by `isa` commands only. A Write, an Edit, a redirect or a script on them is refused. Reading is free. Two commands are never run from a tool call: `isa hook` (only the harness runs it; from a tool call it would forge the user's click — an ack is asked with AskUserQuestion) and `isa open` (the user's editor, in the user's own terminal; `isa open --print` gives the path).
+- **FOUNDATION_2 — `isa` commands are the only writers.** An ISA, a spec, a plan and anything under `~/.isa` are created, changed and closed by `isa` commands only. A Write, an Edit, a redirect or a script on them is refused. Reading is free. Three commands are never run from a tool call: `isa hook` (only the harness runs it; from a tool call it would forge the user's click — an ack is asked with AskUserQuestion) `isa open` (the user's editor, in the user's own terminal; `isa open --print` gives the path) and `isa serve` (a server in the user's terminal until Ctrl+C).
 
 ## FOUNDATION_0 — the entities
 
@@ -117,6 +117,7 @@ Before BUILD only a recognised project change waits: a Write or Edit of a projec
 | answer the goal and the asks | `isa answer <ISA> goal "yes — <evidence>"`, `isa answer <ISA> ask N "met — <evidence>"` |
 | close | `isa close <ISA>`: re-runs every probe, writes the plan (E2+), commits the work, then the plan |
 | open the file in an editor (the user, in a terminal) | `isa open [spec\|isa]`; `isa open --print` gives the path |
+| read it rendered in a browser (the user, in a terminal) | `isa serve [spec\|isa\|<file>] [--port N]`: http://127.0.0.1:8765/ until Ctrl+C |
 | debug | `isa log` (with DEBUG on), `isa purge-logs` |
 
 **Commits.** In a git repo:

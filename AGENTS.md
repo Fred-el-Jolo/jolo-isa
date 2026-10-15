@@ -37,6 +37,7 @@ A skill loads only when the model decides to, so hooks enforce it in every sessi
 │       ├── classify.py             ← read / isa-cmd / write / unknown / guarded, for tool calls and Bash
 │       ├── gitops.py               ← the commits: the spec after its ack, the work and the plan after a close
 │       ├── advice.py               ← Jev's advice at verify and close (printed, never blocking)
+│       ├── serve.py                ← `isa serve`: the spec or ISA as HTML on a local server, until Ctrl+C
 │       ├── state.py, config.py, logs.py, status.py, skills.py, jev.py, jev/, yamlish.py
 │       └── protocol.md             ← the ON block injected when a session turns ON
 ├── adapters/pi/isa.ts              ← pi extension → `isa hook pi` (installed to ~/.pi/agent/extensions/)
@@ -75,7 +76,7 @@ One engine (`runtime/isa/engine.py`), two thin adapters. Every decision is deter
   - with Jev unavailable, the model judges with `ISA judge (model): yes|no|unsure — <reason>`;
   - Continue grants a pass for the rest of that prompt.
 - **The lifecycle.** While ON, the stage comes from the bound ISA or spec and its acks: TRIAGE, SPEC DRAFT, SPEC ACKED, ISA DRAFT, ISA REFINE, BUILD, CLOSED. Before BUILD a recognised project change (`write`) waits, and the refusal names the stage and the next command; an `unknown` call (a script, a test) runs, and the spec's first ack lists what changed outside the spec since `isa spec new`.
-- **The perimeter (FOUNDATION_2).** In every mode, a `guarded` call is refused: any Write or Edit of an ISA, a spec, a plan or anything under `~/.isa`, any shell command that writes to them or runs a script on them, and `isa hook` or `isa open` run from a tool call (only the harness feeds `isa hook` events; `isa open` is the user's editor). Reading is free.
+- **The perimeter (FOUNDATION_2).** In every mode, a `guarded` call is refused: any Write or Edit of an ISA, a spec, a plan or anything under `~/.isa`, any shell command that writes to them or runs a script on them, and `isa hook`, `isa open` or `isa serve` run from a tool call (only the harness feeds `isa hook` events; `isa open` is the user's editor; `isa serve` runs until the user's Ctrl+C). Reading is free.
 - **Stop** refuses once per prompt when the turn ends with the stage asking for something:
   - nothing bound while ON;
   - a spec draft that was neither asked for its ack nor has open questions;

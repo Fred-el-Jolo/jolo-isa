@@ -30,8 +30,8 @@ unnoticed, without it) Duplicate? (another criterion or an existing test proves 
 that misses it, the wrong kind). Answer `keep: <what would go unnoticed>`, `drop: …` after `isa drop`, `fix: …`
 after `isa write`, or `reopen: …` — never where the criterion came from.
 Acks: ask with AskUserQuestion, header `Spec ack` or `ISA ack`, options `Acknowledge` / `Request changes`; the click
-is the user's — then `isa ack <file>`. Only the harness runs `isa hook`, and `isa open` is for the user's terminal:
-both are refused from a tool call (`isa open --print` gives the path). An acked spec changes only after
+is the user's — then `isa ack <file>`. Only the harness runs `isa hook`; `isa open` and `isa serve` are for the user's
+terminal: all are refused from a tool call (`isa open --print` gives the path). An acked spec changes only after
 `isa reopen <spec>`; show the user `isa diff <file>` before asking again; then `isa refine <ISA>`. Any criterion
 change after the ISA's ack needs a new ack.
 BUILD: `isa verify --red <ISA>` (the behaviour probes must fail first; one that passes is flagged ⚠), the work,

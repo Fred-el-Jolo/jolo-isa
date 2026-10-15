@@ -366,14 +366,15 @@ def _isa_args(cmd, args):
 
 
 def harness_only(isa_args):
-    """`isa hook` (the harness feeds it events: from a tool call it would forge the user's click) and `isa open`
-    (the user's editor, which writes the file): never from a tool call. `isa open --print` only prints a path."""
+    """`isa hook` (the harness feeds it events: from a tool call it would forge the user's click), `isa open`
+    (the user's editor, which writes the file) and `isa serve` (a server in the foreground until the user's Ctrl+C):
+    never from a tool call. `isa open --print` only prints a path."""
     sub = next((a for a in isa_args if not a.startswith("-")), "")
-    return sub == "hook" or (sub == "open" and "--print" not in isa_args)
+    return sub in ("hook", "serve") or (sub == "open" and "--print" not in isa_args)
 
 
 def harness_call(cmd):
-    """Does this shell command run `isa hook` or `isa open` (anywhere in it)? For the refusal's wording."""
+    """Does this shell command run `isa hook`, `isa open` or `isa serve` (anywhere in it)? For the refusal's wording."""
     try:
         segs = _segments(_drop_heredoc_bodies(cmd).replace("$(", " ; ").replace("`", " ; "))
     except ValueError:
