@@ -6,7 +6,6 @@ const HEX_OPEN = '#38bdf8'; // vivid sky blue
 
 const TEXT_MID = '#7d8590';
 const TEXT_BRIGHT = '#f4f6f8';
-const TEXT_RULE = '#2a323d'; // empty progress-bar dots
 
 const AUTO_WIDE_THRESHOLD = 70;
 const WIDE_BAR_CAP = 20;
@@ -75,7 +74,7 @@ function progressBar(done: number, total: number, color: boolean): Piece[] {
   }
   return [
     [(color ? '●' : '#').repeat(Math.max(0, filled)), HEX_DONE],
-    [(color ? '○' : '-').repeat(Math.max(0, empty)), TEXT_RULE],
+    [(color ? '○' : '-').repeat(Math.max(0, empty)), TEXT_MID],
   ];
 }
 
