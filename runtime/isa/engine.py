@@ -1,6 +1,7 @@
 """The hooks' decisions, harness-neutral (FOUNDATION_1 and FOUNDATION_2).
 
-Events: session_start, prompt (the gate), pre_tool, post_tool, tool_failed, stop, compacted, ask_answer (pi).
+Events: session_start, prompt (the gate), pre_tool, post_tool, tool_failed, stop, compacted, ask_answer and switch (pi).
+A session the user switched off (`/isa-off`) gets nothing from any of them until `/isa-on`.
 The gate judges each prompt once — Jev, else the running model — and whatever is not a yes goes to the user.
 While ON, the lifecycle decides what a project change needs:
 
@@ -29,6 +30,11 @@ GUARD = ("ISA: ISAs, specs, plans and everything under ~/.isa are written only b
          "`isa write <file> <section>` (text on stdin), `isa write <ISA> ISC-N \"<text>\"` / `--probe \"<command>\"`, "
          "`isa drop`, `isa decide`, `isa answer`, `isa ack`, `isa reopen`, `isa refine`. Reading is free "
          "(`isa show <file>`, cat, grep).")
+SWITCH = {"/isa-off": "off", "/isa-on": "on"}  # the user's typed prompt; pi: its registered commands
+SWITCH_LINES = {("off", False): "ISA OFF for this session — /isa-on turns it back on",
+                ("on", True): "ISA ON again — the next prompt goes through the gate",
+                ("off", True): "ISA is already OFF for this session",
+                ("on", False): "ISA is already ON for this session"}
 HARNESS_ONLY = ("ISA: only the harness runs `isa hook` (Claude Code and pi feed it their events), and `isa open` and "
                 "`isa serve` are for the user's own terminal. An ack is the user's click: ask with AskUserQuestion (header `Spec ack` "
                 "or `ISA ack`), then `isa ack <file>`. `isa open --print` gives the path.")
@@ -45,7 +51,7 @@ def handle(ev):
     if logs.on():
         row = {"step": ev.get("event"), "harness": ev.get("harness"), "session": ev.get("session"),
                "prompt_id": ev.get("prompt_id"), "ms": int((time.time() - t0) * 1000),
-               "decision": "+".join(k for k in ("deny", "block", "warn", "context", "ask") if res.get(k)) or "none"}
+               "decision": "+".join(k for k in ("deny", "block", "warn", "context", "ask", "halt") if res.get(k)) or "none"}
         if ev.get("tool"):
             row["tool"] = ev["tool"]
         row.update(_NOTE)
@@ -54,7 +60,11 @@ def handle(ev):
 
 
 def _handle(ev):
-    if _mode_env() == "off":
+    to = ev.get("to") if ev.get("event") == "switch" else \
+        SWITCH.get(str(ev.get("prompt") or "").strip()) if ev.get("event") == "prompt" else None
+    if to in ("off", "on"):
+        return _switch(ev, to)
+    if _mode_env() == "off" or disabled(state.read_session(ev["harness"], ev["session"])):
         return {}
     fn = {"session_start": _session_start, "prompt": _prompt, "pre_tool": _pre_tool, "post_tool": _post_tool,
           "stop": _stop, "compacted": _compacted, "ask_answer": _ask_answer}.get(ev.get("event"))
@@ -70,6 +80,27 @@ def _mode_env():
 
 def _mode(st):
     return "on" if _mode_env() == "on" else st.get("mode") or "off"
+
+
+def disabled(st):
+    """The user switched this session off (`/isa-off`); ISA_MODE, when set, wins."""
+    return _mode_env() == "auto" and bool(st.get("disabled"))
+
+
+def _switch(ev, to):
+    """`/isa-off` / `/isa-on`: only the user's typed prompt (or pi's command) gets here, never a tool call. The prompt
+    ends with the line, no model turn. `mode` and the binding are left as they are, so `/isa-on` resumes them."""
+    if _mode_env() != "auto":
+        return {"halt": f"ISA_MODE={_mode_env()} decides for this process"}
+    with state.session(ev["harness"], ev["session"]) as st:
+        was = bool(st.get("disabled"))
+        if to == "off":
+            st["disabled"] = True
+        else:
+            st.pop("disabled", None)
+            st["pass"] = str(ev.get("prompt_id"))  # this prompt ends here: nothing left for Stop to ask
+    note(switch=to)
+    return {"halt": SWITCH_LINES[(to, was)]}
 
 
 def _tilde(p):

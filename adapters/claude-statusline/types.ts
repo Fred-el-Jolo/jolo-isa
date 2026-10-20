@@ -10,6 +10,8 @@ export interface Isc {
 export interface IsaView {
   // The bound ISA, or null while only a spec is bound.
   bound: string | null;
+  // off (the gate judges each prompt), on, or disabled (the user's /isa-off).
+  mode?: string | null;
   // The bound spec (a path), whatever the stage.
   spec?: string | null;
   // The engine's lifecycle stage: TRIAGE, SPEC DRAFT, SPEC ACKED, ISA DRAFT,

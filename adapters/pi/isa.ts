@@ -24,6 +24,9 @@
 //                          (`ask_kind: "ack"`): Acknowledge / Request changes, Esc → Request changes; the pick
 //                          goes back with its `ask_kind` and `ask_path`, and Acknowledge continues the run so the
 //                          model runs `isa ack <file>`
+//   /isa-off, /isa-on   → engine "switch" (registered commands: pi runs them before any input handler, without
+//                          the model); the line is shown with notify. While off, the engine answers every event
+//                          with nothing, so every handler here goes on as if ISA weren't installed
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { spawnSync } from "node:child_process"
 import { homedir } from "node:os"
@@ -36,7 +39,7 @@ const CONTEXT_CHARS = 2000
 
 type EngineResult = {
   context?: string; deny?: string; block?: string; warn?: string
-  ask?: string; options?: string[]; ask_kind?: string; ask_path?: string
+  ask?: string; options?: string[]; ask_kind?: string; ask_path?: string; halt?: string
 }
 const GATE_DEFAULT = "Continue without ISA"
 const ACK_DEFAULT = "Request changes" // Esc or a failed dialog on the ack is never an ack
@@ -102,6 +105,24 @@ export default function isaExtension(pi: ExtensionAPI, engine: typeof callEngine
       warn(ctx, `ISA hook error (not enforced for this event): ${(e as Error).message}`)
       return {}
     }
+  }
+
+  const SWITCHES = [["isa-off", "off", "Turn ISA off for this session (every ISA hook silent until /isa-on)"],
+                    ["isa-on", "on", "Turn ISA back on for this session (after /isa-off)"]] as const
+  for (const [name, to, description] of SWITCHES) {
+    pi.registerCommand(name, {
+      description,
+      handler: async (_args: string, ctx: ExtensionContext) => {
+        const res = run(ctx, "switch", { to })
+        if (!res.halt) return
+        try {
+          if (ctx.hasUI) ctx.ui.notify(res.halt, "info")
+          else console.log(res.halt)
+        } catch {
+          console.log(res.halt)
+        }
+      },
+    })
   }
 
   pi.on("session_compact", (_event, ctx) => {

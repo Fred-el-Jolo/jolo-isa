@@ -1,10 +1,10 @@
 # Foundations
 
-Three foundations, and nothing else:
+Three foundations, and nothing else. They hold in every session but one the user switched off with `/isa-off` (see Session):
 
 - **FOUNDATION_0 — the entities.** Each is defined once, below.
-- **FOUNDATION_1 — the decision tree.** No ISA → nothing. ISA → pick the tier: E1 → IMPL; E2–E4 → SPEC → IMPL. Nothing bypasses it.
-- **FOUNDATION_2 — `isa` commands are the only writers.** An ISA, a spec, a plan and anything under `~/.isa` are created, changed and closed by `isa` commands only. A Write, an Edit, a redirect or a script on them is refused. Reading is free. Three commands are never run from a tool call: `isa hook` (only the harness runs it; from a tool call it would forge the user's click — an ack is asked with AskUserQuestion) `isa open` (the user's editor, in the user's own terminal; `isa open --print` gives the path) and `isa serve` (a server in the user's terminal until Ctrl+C).
+- **FOUNDATION_1 — the decision tree.** No ISA → nothing. ISA → pick the tier: E1 → IMPL; E2–E4 → SPEC → IMPL. Nothing bypasses it, except the user's `/isa-off`.
+- **FOUNDATION_2 — `isa` commands are the only writers.** An ISA, a spec, a plan and anything under `~/.isa` are created, changed and closed by `isa` commands only. A Write, an Edit, a redirect or a script on them is refused. Reading is free. The one exception is a session the user switched off with `/isa-off`. Three commands are never run from a tool call: `isa hook` (only the harness runs it; from a tool call it would forge the user's click — an ack is asked with AskUserQuestion) `isa open` (the user's editor, in the user's own terminal; `isa open --print` gives the path) and `isa serve` (a server in the user's terminal until Ctrl+C).
 
 ## FOUNDATION_0 — the entities
 
@@ -85,7 +85,7 @@ What remains of a task: `<cwd>/docs/YYYY-MM-DD-<slug>-02-plan.md`, written by `i
 The user's click on **Acknowledge**, never the model's. It is asked with AskUserQuestion: header `Spec ack` or `ISA ack`, options `Acknowledge` / `Request changes`. Each click is recorded in `~/.isa/<project>/acks.jsonl` with the file's hash. `isa ack <file>` then writes it into the file, and refuses without that click. A spec is acked from E2, and its TASK ISA is acked from E2 as well. The ISA ack waits for a review of the criteria as they are (`isa review`), with every Jev flag answered, and the user reads `isa show <ISA> --trace` before it. Any later change breaks the ack. Before asking again, `isa diff <file>` shows the user what changed.
 
 ### Session
-One Claude Code or pi session: OFF or ON, at most one bound ISA or spec, and its last prompts (`~/.isa/_state/sessions/`). `isa new` and `isa spec new` bind what they create.
+One Claude Code or pi session: OFF or ON, at most one bound ISA or spec, and its last prompts (`~/.isa/_state/sessions/`). `isa new` and `isa spec new` bind what they create. The user can switch a session off by typing `/isa-off`: from then on every ISA hook of that session is silent (no gate, no stage, no Stop check, no perimeter: FOUNDATION_1 and FOUNDATION_2 don't apply) until `/isa-on` brings it back as it was. Only the user's typed command flips it, never a tool call; a new session starts with ISA on.
 
 ### Gate
 Each prompt is judged once, by Jev, else by the running model (`ISA judge (model): yes|no|unsure — <reason>`), on one question: is this a TASK? A yes turns the session ON. A clear no lets the prompt go on. Anything else goes to the user, *Continue without ISA* or *Enable ISA*, and that question can't be skipped. With an ISA or spec open, the gate asks instead whether the prompt continues it or starts a new task.

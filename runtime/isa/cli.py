@@ -216,6 +216,9 @@ def _claude_in(d):
 
 def _claude_out(ev, res):
     name, out = ev.get("_name"), {}
+    if res.get("halt") and name == "UserPromptSubmit":  # `/isa-off`, `/isa-on`: the prompt ends here, no model turn
+        print(json.dumps({"decision": "block", "reason": res["halt"]}))
+        return 0
     if res.get("warn"):
         out["systemMessage"] = res["warn"]
     if res.get("block") and name == "Stop":

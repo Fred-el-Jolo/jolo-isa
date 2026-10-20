@@ -95,3 +95,9 @@ test('bar is capped at 20 dots for large ISAs', () => {
   const iscs = Array.from({ length: 40 }, (_, n) => ({ id: `ISC-${n + 1}`, text: 't', done: n < 10 }));
   assert.ok(plain(view({ iscs, progress: '10/40' })).startsWith('E3 - #####--------------- 10/40'));
 });
+
+test('a DISABLED session shows only that, bound or not', () => {
+  assert.equal(plain(view({ mode: 'disabled' })), 'ISA DISABLED');
+  assert.equal(plain(view({ bound: null, spec: null, stage: 'TRIAGE', iscs: [], mode: 'disabled' }), 40, 'compact'), 'ISA DISABLED');
+  assert.ok(plain(view({ mode: 'on' })).startsWith('E3 - '));
+});

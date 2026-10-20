@@ -20,10 +20,10 @@ export function loadView(sessionId: string, isaBin: string, harness = 'claude'):
     encoding: 'utf-8',
     timeout: TIMEOUT_MS,
   });
-  if (r.error || r.status !== 0 || !r.stdout) return null;
+  if (r.error || (r.status !== 0 && r.status !== 1) || !r.stdout) return null; // 1: nothing bound
   try {
     const v = JSON.parse(r.stdout);
-    if (!v || (typeof v.bound !== 'string' && typeof v.spec !== 'string')) return null;
+    if (!v || (typeof v.bound !== 'string' && typeof v.spec !== 'string' && v.mode !== 'disabled')) return null;
     return { ...v, iscs: Array.isArray(v.iscs) ? v.iscs : [] };
   } catch {
     return null;

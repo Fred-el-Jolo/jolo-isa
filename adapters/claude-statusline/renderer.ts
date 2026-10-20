@@ -107,9 +107,11 @@ function renderWide(view: IsaView, columns: number, color: boolean): string {
   return fit(pieces, columns, color);
 }
 
-// One row. Nothing bound (and no spec in its draft or acked stage) renders nothing.
+// One row. Nothing bound (and no spec in its draft or acked stage) renders nothing; a session the user switched
+// off (/isa-off) renders only that.
 export function renderStatusLine(view: IsaView | null, columns: number, mode: StatusLineMode, color: boolean): string {
   if (!view) return '';
+  if (view.mode === 'disabled') return fit([['ISA DISABLED', TEXT_MID]], columns, color);
   if (!view.bound) {
     return view.spec && String(view.stage || '').startsWith('SPEC ') ? renderSpec(view, columns, color) : '';
   }

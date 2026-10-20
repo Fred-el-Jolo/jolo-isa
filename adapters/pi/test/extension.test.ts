@@ -18,24 +18,29 @@ const { default: isaExtension, callEngine } = await import("../isa.ts")
 
 type Result = Record<string, unknown>
 
-function harness(answers: Record<string, Result | (() => Result)>, ui: Record<string, Function> = {}, hasUI = true) {
+function harness(answers: Record<string, Result | (() => Result)>, ui: Record<string, Function> = {}, hasUI = true,
+                 opts: { real?: boolean, sid?: string } = {}) {
   const handlers: Record<string, Function> = {}
   const notes: string[] = []
   const calls: Record<string, unknown>[] = []
   const engine = (payload: Record<string, unknown>) => {
     calls.push(payload)
+    if (opts.real) return callEngine(payload)
     const a = answers[payload.event as string]
     return (typeof a === "function" ? a() : a) ?? {}
   }
-  const pi = { on: (name: string, fn: Function) => { handlers[name] = fn; return () => {} } }
+  const commands: Record<string, { description?: string, handler: Function }> = {}
+  const pi = { on: (name: string, fn: Function) => { handlers[name] = fn; return () => {} },
+               registerCommand: (name: string, opts: { handler: Function }) => { commands[name] = opts } }
   const ctx = {
     cwd: "/tmp/proj", hasUI, mode: "tui",
     ui: { notify: (m: string) => notes.push(m), ...ui },
-    sessionManager: { getSessionId: () => "s1", getBranch: () => [] },
+    sessionManager: { getSessionId: () => opts.sid ?? "s1", getBranch: () => [] },
   }
   isaExtension(pi as any, engine as any)
   const fire = (name: string, event: Record<string, unknown> = {}) => handlers[name]?.(event, ctx)
-  return { fire, notes, calls }
+  const command = (name: string) => commands[name].handler("", ctx)
+  return { fire, notes, calls, commands, command }
 }
 
 test("input: session start once, then the gate; its context reaches the model at before_agent_start", async () => {
@@ -109,6 +114,34 @@ test("an engine failure fails open: a warning, no block", async () => {
   const res = await h.fire("tool_call", { toolName: "write", input: { path: "x" } })
   assert.equal(res, undefined)
   assert.ok(h.notes.some((n) => /ISA hook error/.test(n) && /boom/.test(n)))
+})
+
+test("isa-off command: both registered; each handler sends its switch for the session and shows the line", async () => {
+  const h = harness({ switch: () => ({ halt: `line ${h.calls.at(-1)!.to}` }) })
+  assert.deepEqual(Object.keys(h.commands).sort(), ["isa-off", "isa-on"])
+  await h.command("isa-off")
+  await h.command("isa-on")
+  assert.deepEqual(h.calls.map((c) => [c.event, c.to, c.session]), [["switch", "off", "s1"], ["switch", "on", "s1"]])
+  assert.deepEqual(h.notes, ["line off", "line on"])
+})
+
+test("a disabled session: the real engine answers nothing, every handler goes on", async () => {
+  const h = harness({}, {}, true, { real: true, sid: "pi-off" })
+  await h.command("isa-off")
+  assert.deepEqual(h.notes, ["ISA OFF for this session — /isa-on turns it back on"])
+  await h.fire("input", { text: "refactor the parser, then its tests", source: "interactive" })
+  assert.equal(await h.fire("before_agent_start", { prompt: "refactor the parser, then its tests" }), undefined)
+  const isa = join(process.env.ISA_HOME!, "dev-x", "20260101-000000_t", "ISA.md")
+  assert.equal(await h.fire("tool_call", { toolName: "write", input: { path: isa, content: "x" } }), undefined)
+  assert.equal(await h.fire("agent_before_settle", { outcome: "completed" }), undefined)
+  assert.equal(h.notes.length, 1)
+})
+
+test("isa-off handler error: caught and shown as a warning", async () => {
+  const h = harness({ switch: () => { throw new Error("boom") } })
+  await h.command("isa-off")
+  await h.command("isa-on")
+  assert.equal(h.notes.filter((n) => /ISA hook error/.test(n) && /boom/.test(n)).length, 2)
 })
 
 test("the real engine refuses a write onto an ISA file", () => {

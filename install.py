@@ -11,6 +11,9 @@ What it does:
   skill     skill/ISA/          → ~/.claude/skills/ISA         (replaced wholesale)
   claude    ~/.claude/settings.json: adds the ISA hook entries and permissions, keeps every other
             entry, backs the file up first (settings.json.isa-backup-<time>) — only when it changes
+  commands  adapters/claude-commands/isa-off.md, isa-on.md → ~/.claude/commands/ (beside --claude-settings): stubs
+            for autocomplete, never run by the model (disable-model-invocation); the hook handles the prompt.
+            A file there the installer didn't write is kept; --uninstall removes only ours
   pi        adapters/pi/isa.ts  → ~/.pi/agent/extensions/isa.ts (only when ~/.pi/agent exists)
   rules     skill/global-rules.md (spec-driven work, between <!-- isa:spec-driven:begin/end --> markers)
             → ~/.claude/CLAUDE.md (created when missing) and ~/.pi/agent/AGENTS.md (only when ~/.pi/agent
@@ -285,6 +288,42 @@ def uninstall_rules(claude_md, pi_dir, dry):
         write_text_if_changed(p, new if new else None, dry)  # a file left empty was the install's own
 
 
+COMMANDS_SRC = os.path.join(REPO, "adapters", "claude-commands")
+COMMAND_MARK = "<!-- isa:command"
+
+
+def _ours(path):
+    return COMMAND_MARK in _read_or_empty(path)
+
+
+def install_commands(cmd_dir, dry):
+    for name in sorted(os.listdir(COMMANDS_SRC)):
+        dst = os.path.join(cmd_dir, name)
+        if os.path.exists(dst) and not _ours(dst):
+            print(f"  kept       {dst} (not the installer's: /{name[:-3]} still works, the hook handles it)")
+            continue
+        with open(os.path.join(COMMANDS_SRC, name)) as f:
+            new = f.read()
+        if _read_or_empty(dst) == new:
+            print(f"  unchanged  {dst}")
+        elif dry:
+            print(f"  would copy {dst}")
+        else:  # ours, so no backup
+            os.makedirs(cmd_dir, exist_ok=True)
+            with open(dst, "w") as f:
+                f.write(new)
+            print(f"  copied     {dst}")
+
+
+def uninstall_commands(cmd_dir, dry):
+    for name in sorted(os.listdir(COMMANDS_SRC)):
+        dst = os.path.join(cmd_dir, name)
+        if os.path.isfile(dst) and _ours(dst):
+            print(f"  {'would remove' if dry else 'removed'}    {dst}")
+            if not dry:
+                os.remove(dst)
+
+
 def copy_tree(src, dst, dry):
     if dry:
         print(f"  would copy {src} → {dst}")
@@ -326,6 +365,7 @@ def main(argv=None):
                     help="also wire the ISA statusLine (needs node >= 23.6), keeping an existing statusLine")
     a = ap.parse_args(argv)
     claude_md = a.claude_md or os.path.join(os.path.dirname(os.path.abspath(a.claude_settings)), "CLAUDE.md")
+    cmd_dir = os.path.join(os.path.dirname(os.path.abspath(a.claude_settings)), "commands")
 
     runtime = os.path.join(a.prefix, "share", "isa", "runtime")
     launcher = os.path.join(a.prefix, "bin", "isa")
@@ -343,6 +383,7 @@ def main(argv=None):
         print("Removing ISA enforcement (ISAs under ~/.isa are kept):")
         write_json_if_changed(a.claude_settings, strip_statusline(strip_settings(settings)), a.dry_run)
         uninstall_rules(claude_md, a.pi_dir, a.dry_run)
+        uninstall_commands(cmd_dir, a.dry_run)
         for p in (ext, launcher):
             if os.path.lexists(p):
                 print(f"  {'would remove' if a.dry_run else 'removed'}    {p}")
@@ -377,6 +418,7 @@ def main(argv=None):
         else:
             print("  skipped statusline (no node binary: checked `mise which node` and PATH)")
     write_json_if_changed(a.claude_settings, new, a.dry_run)
+    install_commands(cmd_dir, a.dry_run)
     if os.path.isdir(a.pi_dir):
         src = os.path.join(REPO, "adapters", "pi", "isa.ts")
         same = os.path.isfile(ext) and open(ext).read() == open(src).read()

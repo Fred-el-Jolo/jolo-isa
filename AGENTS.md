@@ -40,10 +40,11 @@ A skill loads only when the model decides to, so hooks enforce it in every sessi
 │       ├── serve.py                ← `isa serve`: the spec or ISA as HTML on a local server, until Ctrl+C
 │       ├── state.py, config.py, logs.py, status.py, skills.py, jev.py, jev/, yamlish.py
 │       └── protocol.md             ← the ON block injected when a session turns ON
-├── adapters/pi/isa.ts              ← pi extension → `isa hook pi` (installed to ~/.pi/agent/extensions/)
+├── adapters/pi/isa.ts              ← pi extension → `isa hook pi` (installed to ~/.pi/agent/extensions/); registers /isa-off, /isa-on
+├── adapters/claude-commands/       ← isa-off.md, isa-on.md: stub commands for autocomplete (installed to ~/.claude/commands/)
 ├── adapters/claude-statusline/     ← Claude Code statusLine (Node): renders `isa status --json`; opt-in
 ├── install.py                      ← install / --uninstall / --dry-run for both harnesses
-├── tests/                          ← test_foundations (the foundations end to end), test_derivation (spec → ISA), test_friction (one test per criterion of the friction ISA), test_install, test_bash_classifier, test_yamlish
+├── tests/                          ← test_foundations (the foundations end to end), test_derivation (spec → ISA), test_friction (one test per criterion of the friction ISA), test_isa_off (one per criterion of the /isa-off ISA), test_install, test_bash_classifier, test_yamlish
 ├── tools/lint_isa.py               ← lints the examples with the runtime's rules
 ├── future/                         ← design notes for the future tasks (memory, status line, Jev)
 └── docs/spec/                      ← this repo's own specs
@@ -63,6 +64,7 @@ Needs `python3` (standard library only) and, for pi, the pi agent at `~/.pi/agen
 - copies the runtime and the skill, and links `~/.local/bin/isa`;
 - merges the hook entries and permissions into `~/.claude/settings.json`, keeping every other entry and backing the file up first;
 - copies the pi extension;
+- puts the stub commands `isa-off.md` and `isa-on.md` in `~/.claude/commands/` (`disable-model-invocation: true`; a file there it didn't write is kept, and `--uninstall` removes only its own);
 - writes the rule block of `skill/global-rules.md` into `~/.claude/CLAUDE.md` and `~/.pi/agent/AGENTS.md`, between markers, leaving your text around it untouched;
 - moves a `~/.isa` from before the foundations aside, once (`~/.isa.legacy-<time>/`).
 
@@ -76,7 +78,7 @@ One engine (`runtime/isa/engine.py`), two thin adapters. Every decision is deter
   - with Jev unavailable, the model judges with `ISA judge (model): yes|no|unsure — <reason>`;
   - Continue grants a pass for the rest of that prompt.
 - **The lifecycle.** While ON, the stage comes from the bound ISA or spec and its acks: TRIAGE, SPEC DRAFT, SPEC ACKED, ISA DRAFT, ISA REFINE, BUILD, CLOSED. Before BUILD a recognised project change (`write`) waits, and the refusal names the stage and the next command; an `unknown` call (a script, a test) runs, and the spec's first ack lists what changed outside the spec since `isa spec new`.
-- **The perimeter (FOUNDATION_2).** In every mode, a `guarded` call is refused: any Write or Edit of an ISA, a spec, a plan or anything under `~/.isa`, any shell command that writes to them or runs a script on them, and `isa hook`, `isa open` or `isa serve` run from a tool call (only the harness feeds `isa hook` events; `isa open` is the user's editor; `isa serve` runs until the user's Ctrl+C). Reading is free.
+- **The perimeter (FOUNDATION_2).** In every mode, except a session the user switched off with `/isa-off`, a `guarded` call is refused: any Write or Edit of an ISA, a spec, a plan or anything under `~/.isa`, any shell command that writes to them or runs a script on them, and `isa hook`, `isa open` or `isa serve` run from a tool call (only the harness feeds `isa hook` events; `isa open` is the user's editor; `isa serve` runs until the user's Ctrl+C). Reading is free.
 - **Stop** refuses once per prompt when the turn ends with the stage asking for something:
   - nothing bound while ON;
   - a spec draft that was neither asked for its ack nor has open questions;
@@ -86,14 +88,15 @@ One engine (`runtime/isa/engine.py`), two thin adapters. Every decision is deter
   The second time, the turn ends with a warning.
 - **The commands own the state.** `isa verify` runs probes from the ISA's root and writes run lines into the ISA's Verification. `isa close` re-proves everything, writes the plan (E2+) and commits. `isa ack` writes an ack only on the user's recorded click. No hook writes an ISA; no hook runs a probe.
 - **Failure policy:** a hook that crashes fails open with a visible message (and a debug row with DEBUG on). pi's extension catches its own errors, since pi blocks a tool when a handler throws.
-- **`ISA_MODE=off|on`** is the user's override (off: every hook silent; on: ON from the first prompt, no judge).
+- **`/isa-off` and `/isa-on`** switch one session off and back on. In Claude Code the `UserPromptSubmit` hook recognises a prompt that is exactly `/isa-off` or `/isa-on`, sets or clears the session's `disabled` key, and blocks the prompt with one line (no model turn); the stub command files only make the commands show in autocomplete, and their `disable-model-invocation: true` keeps the model's Skill tool off them. In pi the extension registers both commands (engine event `switch`). While disabled, every event of that session returns nothing: no gate, no Jev, no stage, no Stop, no perimeter. `mode` and the binding stay as they were, so `/isa-on` resumes them. `isa status` and the status line show `DISABLED`. No tool call and no `isa` command sets the flag.
+- **`ISA_MODE=off|on`** is the user's override for a whole process (off: every hook silent; on: ON from the first prompt, no judge). It wins over `/isa-off`: with it set, the commands record nothing and say so.
 
 **State.** `~/.isa` holds:
 
 - `<project>/<YYYYMMDD-HHMMSS>_<slug>/ISA.md`, one folder per TASK ISA;
 - `<project>/acks.jsonl`, the user's clicks;
 - `config.json`;
-- `_state/sessions/<harness>-<id>.json` (mode, the bound ISA or spec, the last 20 prompts for the verbatim checks).
+- `_state/sessions/<harness>-<id>.json` (mode, `disabled` after `/isa-off`, the bound ISA or spec, the last 20 prompts for the verbatim checks).
 
 With DEBUG on (`ISA_DEBUG=1`, or `"debug": true` in config.json), the hooks and commands also write `_state/logs/YYYY-MM-DD.jsonl`, read with `isa log` and pruned with `isa purge-logs`. With DEBUG off nothing else is written, and the text the model gets is the same. Specs and plans live in `<cwd>/docs/` and are committed in a git repo; TASK ISAs never are.
 
@@ -113,9 +116,9 @@ With DEBUG on (`ISA_DEBUG=1`, or `"debug": true` in config.json), the hooks and 
 
 ## Working rules for this folder
 
-- What installs: `skill/ISA/`, `skill/global-rules.md` (the block), `runtime/`, `adapters/pi/isa.ts`, and with `--statusline`, `adapters/claude-statusline/`.
+- What installs: `skill/ISA/`, `skill/global-rules.md` (the block), `runtime/`, `adapters/pi/isa.ts`, `adapters/claude-commands/`, and with `--statusline`, `adapters/claude-statusline/`.
 - Before installing, run:
-  - `python3 -m unittest tests.test_foundations tests.test_install tests.test_bash_classifier tests.test_derivation tests.test_friction` (about 12 s: the tests call `isa` and its hooks inside the test process; `RealProcess` runs the real launcher, and `ISA_TESTS_SUBPROCESS=1` runs every call as a real process, about 4 min);
+  - `python3 -m unittest tests.test_foundations tests.test_install tests.test_bash_classifier tests.test_derivation tests.test_friction tests.test_isa_off` (about 12 s: the tests call `isa` and its hooks inside the test process; `RealProcess` runs the real launcher, and `ISA_TESTS_SUBPROCESS=1` runs every call as a real process, about 4 min);
   - `node --test adapters/pi/test/extension.test.ts adapters/claude-statusline/test/renderer.test.ts`;
   - with PyYAML on `PYTHONPATH`, also `tests/test_yamlish.py`.
   No test calls a model or the real `jev`, and no installer test touches the real `~/.isa`, `~/.claude/CLAUDE.md` or `~/.pi/agent/AGENTS.md` (every `install.py` call passes temp paths).

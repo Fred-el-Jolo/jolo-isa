@@ -13,8 +13,10 @@ Work with several dependent steps goes wrong quietly: a mistake in one step reac
 ## The three foundations
 
 1. **The entities** are the ones in `Foundations.md`: TASK, TASK ISA, Tier, ISC, Probe, SPEC, PLAN, Ack, Session, Gate, Lifecycle. There is nothing else.
-2. **The decision tree:** no ISA → nothing; E1 → ISA → build; E2–E4 → spec → ack → ISA → ack → build. Nothing bypasses it.
+2. **The decision tree:** no ISA → nothing; E1 → ISA → build; E2–E4 → spec → ack → ISA → ack → build. Nothing bypasses it, except the user's `/isa-off`.
 3. **`isa` commands are the only writers** of ISAs, specs, plans and `~/.isa`. You write content through them: `isa write <file> <section>` with the text on stdin, `isa write <ISA> ISC-N`, `isa decide`, `isa answer`. You never write those files with Write, Edit or a script; the hooks refuse it. `isa --help` lists every command.
+
+The one exception to 2 and 3 is a session the user switched off by typing `/isa-off` (back with `/isa-on`): its hooks are silent. Only the user switches it; when they want ISA out of the way, tell them to type `/isa-off`.
 
 ## State the tier, then follow its lifecycle
 
